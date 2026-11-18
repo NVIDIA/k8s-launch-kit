@@ -48,7 +48,7 @@ type hostNetworkLeaseFence struct {
 // runHostWorkloadNetworkStage consumes successful activation bindings without
 // resolving a second SSH authority. Each effect gets fresh API fences; neither
 // those reads nor the host-local journal make the two systems atomic.
-func runHostWorkloadNetworkStage(ctx context.Context, client activationStageClient, prepared *preparedControlPlaneRun,
+func runHostWorkloadNetworkStage(ctx context.Context, client activationBoundaryReader, prepared *preparedControlPlaneRun,
 	controlPlane controlPlaneReceipts, workload workloadPreparationReceipt, activation activationStageReceipt,
 	journal *executionJournal, requestTimeout time.Duration, readLeases hostLeaseSnapshotReader, configure, inspect hostNetworkConfigurer,
 ) ([]HostWorkloadNetworkResult, error) {
@@ -130,24 +130,21 @@ func runHostWorkloadNetworkStage(ctx context.Context, client activationStageClie
 		subject := item.item.device.Serial + " @ " + item.host.InputRef
 		apply := configure
 		action, reason, message := "configure", "HOST_NETWORK_CONFIGURATION_STARTED", "Configure only the selected p0 MTU, reserved workload address and workload-pool route; preserve management and other ports."
-		if prepared.operation != nil {
-			prior, known := prepared.operation.state.Hosts[item.item.device.Serial]
-			if known {
-				if !sameOperationRequest(prior.Request, request) {
-					return fail("HOST_NETWORK_OPERATION_CHANGED", "Saved host request differs from fresh cohort; no host write permitted.", nil)
-				}
-				if inspect == nil {
-					return fail("HOST_NETWORK_INSPECTION_REQUIRED", "Recovery requires inspect-only host transport.", nil)
-				}
-				apply = inspect
-				action, reason, message = "inspect", "HOST_NETWORK_INSPECTION_STARTED", "Inspect the original host transaction without configuration fallback; reverify current persistent/runtime state and allocation."
-			} else {
-				prepared.operation.state.Hosts[item.item.device.Serial] = operationHost{Request: request}
-				if err := prepared.operation.save(ctx); err != nil {
-					return results, err
-				}
-			}
+		known, err := prepared.operation.recordHostIntent(ctx, item.item.device.Serial, request)
+		if errors.Is(err, errOperationHostChanged) {
+			return fail("HOST_NETWORK_OPERATION_CHANGED", "Saved host request differs from fresh cohort; no host write permitted.", nil)
 		}
+		if err != nil {
+			return results, err
+		}
+		if known {
+			if inspect == nil {
+				return fail("HOST_NETWORK_INSPECTION_REQUIRED", "Recovery requires inspect-only host transport.", nil)
+			}
+			apply = inspect
+			action, reason, message = "inspect", "HOST_NETWORK_INSPECTION_STARTED", "Inspect the original host transaction without configuration fallback; reverify current persistent/runtime state and allocation."
+		}
+
 		if err := journal.record(executionEvent{Stage: hostWorkloadNetworkStage, Operation: action, Subject: subject, State: "attempted", ReasonCode: reason, Message: message}); err != nil {
 			return results, err
 		}
@@ -177,14 +174,10 @@ func runHostWorkloadNetworkStage(ctx context.Context, client activationStageClie
 		}
 		results[len(results)-1].LeaseReverified = true
 		confirmedResult := results[len(results)-1]
-		if prepared.operation != nil && prepared.operation.state.Hosts[item.item.device.Serial].Result == nil {
-			value := prepared.operation.state.Hosts[item.item.device.Serial]
-			value.Result = &confirmedResult
-			prepared.operation.state.Hosts[item.item.device.Serial] = value
-			if err := prepared.operation.save(ctx); err != nil {
-				return results, err
-			}
+		if err := prepared.operation.confirmHostNetwork(ctx, item.item.device.Serial, request, confirmedResult); err != nil {
+			return results, err
 		}
+
 		if err := journal.record(executionEvent{Stage: hostWorkloadNetworkStage, Operation: action, Subject: subject, State: "confirmed",
 			ReasonCode: "HOST_NETWORK_CONFIGURATION_VERIFIED", Message: "Host runtime and persistent file checks passed and the selected allocation cohort was reverified; BGP and traffic remain untested.", HostNetwork: &confirmedResult}); err != nil {
 			return results, err

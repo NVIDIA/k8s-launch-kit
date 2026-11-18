@@ -376,15 +376,15 @@ func (f *hostNetworkStageFailingJournalFile) Sync() error {
 
 func TestHostNetworkAllocationBindingSeparatesSemanticIdentityFromReadFences(t *testing.T) {
 	fixture, activation, snapshot := hostNetworkStageFixture(t)
-	deployment, err := retainedDeploymentObject(fixture.prepared.execution)
+	deployment, err := retainedDeploymentObject(fixture.prepared.execution.verificationInputs())
 	if err != nil {
 		t.Fatal(err)
 	}
-	observed, err := observeActivationScope(fixture.ctx, fixture.client, fixture.prepared.execution, deployment, activation.DeploymentUID, activation.selected, activation.progress)
+	observed, err := observeActivationScope(fixture.ctx, fixture.client, fixture.prepared.execution.verificationInputs(), deployment, activation.DeploymentUID, activation.selected, activation.progress)
 	if err != nil {
 		t.Fatal(err)
 	}
-	leases, err := resolveHostWorkloadLeases(fixture.prepared.execution.plan, fixture.prepared.execution.reconciler, activation.selected, observed, fixture.workload, snapshot)
+	leases, err := resolveHostWorkloadLeases(fixture.prepared.execution.plan, fixture.prepared.execution.reconciler, activation.selected, observed, fixture.workload.BundleDigest, fixture.workload.Resources, snapshot)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -501,6 +501,22 @@ func hostNetworkStageFixtureFromExecution(t *testing.T, execution *managementExe
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
 	t.Cleanup(cancel)
 	fixture.ctx = ctx
+	enrichHostNetworkFixtureIdentities(t, &fixture)
+	rebooter := RebooterFunc(func(_ context.Context, request ActivationRequest) (ActivationObservation, error) {
+		for _, node := range request.DPUNodes {
+			fixture.client.completeReboot(node.NodeName)
+		}
+		return ActivationObservation{HostSystemUUID: request.HostSystemUUID, HostAdapterSerial: request.HostAdapterSerial, PreviousBootID: "before", CurrentBootID: "after", Reconnected: true}, nil
+	})
+	activation, err := runActivationStage(fixture.ctx, fixture.client, fixture.prepared, fixture.controlPlane, fixture.workload, fixture.inventory, fixture.request, fixture.journal, time.Millisecond, time.Second, rebooter)
+	if err != nil {
+		t.Fatalf("actual fixture activation: %v\nreport: %s", err, fixture.journal.file.(*managementMemoryFile).String())
+	}
+	return fixture, activation, hostNetworkFixtureLeaseSnapshot(t, fixture, activation)
+}
+
+func enrichHostNetworkFixtureIdentities(t *testing.T, fixture *activationIntegrationFixture) {
+	t.Helper()
 	for i := range fixture.hosts {
 		host := fixture.hosts[i]
 		pciBus := 0x21 + i
@@ -524,16 +540,10 @@ func hostNetworkStageFixtureFromExecution(t *testing.T, execution *managementExe
 		fixture.inventory.Hosts[i] = host
 	}
 	fixture.host = fixture.hosts[0]
-	rebooter := RebooterFunc(func(_ context.Context, request ActivationRequest) (ActivationObservation, error) {
-		for _, node := range request.DPUNodes {
-			fixture.client.completeReboot(node.NodeName)
-		}
-		return ActivationObservation{HostSystemUUID: request.HostSystemUUID, HostAdapterSerial: request.HostAdapterSerial, PreviousBootID: "before", CurrentBootID: "after", Reconnected: true}, nil
-	})
-	activation, err := runActivationStage(fixture.ctx, fixture.client, fixture.prepared, fixture.controlPlane, fixture.workload, fixture.inventory, fixture.request, fixture.journal, time.Millisecond, time.Second, rebooter)
-	if err != nil {
-		t.Fatalf("actual fixture activation: %v\nreport: %s", err, fixture.journal.file.(*managementMemoryFile).String())
-	}
+}
+
+func hostNetworkFixtureLeaseSnapshot(t *testing.T, fixture activationIntegrationFixture, activation activationStageReceipt) hostWorkloadLeaseSnapshot {
+	t.Helper()
 	plan := fixture.prepared.execution.plan
 	desiredIPAM, err := retainedWorkloadIPAM(plan)
 	if err != nil {
@@ -543,7 +553,7 @@ func hostNetworkStageFixtureFromExecution(t *testing.T, execution *managementExe
 	if err != nil {
 		t.Fatal(err)
 	}
-	pool, err := fixture.client.getTenantWorkloadChild(fixture.ctx, fixture.client.tenant, ipam)
+	pool, err := fixture.client.workloadChild(fixture.ctx, fixture.client.tenant, ipam)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -560,7 +570,7 @@ func hostNetworkStageFixtureFromExecution(t *testing.T, execution *managementExe
 			"status": map[string]any{"conditions": []any{conditionMap("Ready", "True", "Success", 1)}},
 		}})
 	}
-	return fixture, activation, hostWorkloadLeaseSnapshot{DPUServiceIPAM: ipam, CIDRPool: pool, TenantNodes: nodes}
+	return hostWorkloadLeaseSnapshot{DPUServiceIPAM: ipam, CIDRPool: pool, TenantNodes: nodes}
 }
 
 func cloneHostNetworkStageSnapshot(source hostWorkloadLeaseSnapshot) hostWorkloadLeaseSnapshot {

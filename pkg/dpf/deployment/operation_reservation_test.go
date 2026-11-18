@@ -16,6 +16,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/nvidia/k8s-launch-kit/pkg/dpf/deployment/internal/controllercontract"
 	"github.com/nvidia/k8s-launch-kit/pkg/dpf/inventory"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -28,7 +29,7 @@ type reservationTenantReader struct {
 	err error
 }
 
-func (r *reservationTenantReader) observeTenantSources(ctx context.Context, expected TenantReadinessExpected) (tenantSources, error) {
+func (r *reservationTenantReader) observeTenantSources(ctx context.Context, expected controllercontract.TenantReadinessExpected) (tenantSources, error) {
 	if r.err != nil {
 		return tenantSources{}, r.err
 	}
@@ -43,7 +44,7 @@ func reservationWorkload(t *testing.T, execution *managementExecution) (workload
 	tenantUID := types.UID(sources.observed.DPUCluster.GetUID())
 	return workloadPreparationReceipt{BundleDigest: digest, ControlPlane: controlPlaneReceipts{
 		management: managementBootstrapReceipt{BundleDigest: digest, NamespaceUIDs: map[string]string{namespace: "namespace-one"}},
-		tenant:     tenantStageReceipt{ClusterUID: tenantUID, Client: &tenantClient{source: reader, expected: expected, systemUID: "tenant-system-one"}},
+		tenant:     tenantStageReceipt{ClusterUID: tenantUID, Client: &tenantClient{rules: testRules(t), source: reader, expected: expected, systemUID: "tenant-system-one"}},
 		enrollment: enrollmentStageReceipt{BundleDigest: digest, TenantUID: tenantUID, Secret: enrollmentSecretReceipt{UID: "bmc-secret-one"}, Devices: []enrolledDeviceReceipt{{Serial: "SERIAL-A", DeviceUID: "device-one", DPUNodeUID: "node-one"}}},
 	}, Software: softwareVerificationReceipt{SoftwareUID: "software-one"}, Resources: []workloadResourceReceipt{{Kind: "DPUFlavor", Namespace: namespace, Name: "flavor-one", UID: "flavor-one", Generation: 1}}}, reader
 }
@@ -205,7 +206,7 @@ func TestReservationFailuresRetainSafeReasonWithoutAdoption(t *testing.T) {
 			if tc.name == "canceled" && !errors.Is(runErr, context.Canceled) {
 				t.Fatal("cancellation lost")
 			}
-			check := operationReservationCheck(execution, runErr)
+			check := operationReservationCheck(execution.verificationInputs(), runErr)
 			if check.ReasonCode != tc.want || !strings.Contains(check.Message, tc.observation) {
 				t.Fatalf("safe check=%+v", check)
 			}

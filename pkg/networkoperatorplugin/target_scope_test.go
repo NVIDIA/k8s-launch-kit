@@ -18,6 +18,7 @@ import (
 
 	"github.com/nvidia/k8s-launch-kit/pkg/bundle"
 	"github.com/nvidia/k8s-launch-kit/pkg/config"
+	"github.com/nvidia/k8s-launch-kit/pkg/hostplatform"
 	"github.com/nvidia/k8s-launch-kit/pkg/networkoperatorplugin/crstate"
 	"github.com/onsi/ginkgo/v2"
 	"github.com/onsi/gomega"
@@ -168,7 +169,7 @@ var _ = ginkgo.Describe("hardware target scope", func() {
 				return nil
 			},
 		}).Build()
-		opts := DeployOptions{Config: cfg, OverwriteExisting: true, RestConfig: &rest.Config{}, NetworkOperator: &config.NetworkOperatorConfig{HelmRepoURL: "https://example.invalid", Version: "v1"}}
+		opts := DeployOptions{Platform: hostplatform.Kubernetes, Config: cfg, OverwriteExisting: true, RestConfig: &rest.Config{}, NetworkOperator: &config.NetworkOperatorConfig{HelmRepoURL: "https://example.invalid", Version: "v1"}}
 		installer := func(context.Context, *rest.Config, *config.NetworkOperatorConfig, []byte, map[string]any, string, bool, time.Duration, bool) error {
 			installs++
 			return nil
@@ -184,12 +185,12 @@ var _ = ginkgo.Describe("hardware target scope", func() {
 		scheme := runtime.NewScheme()
 		gomega.Expect(corev1.AddToScheme(scheme)).To(gomega.Succeed())
 		c := fake.NewClientBuilder().WithScheme(scheme).WithObjects(live, &workers[0], &workers[1], &workers[2]).Build()
-		results, err := ValidateBundleWithConfig(ctx, c, scopeBundle(desired, false), cfg)
+		results, err := ValidateBundle(ctx, c, scopeBundle(desired, false), cfg, hostplatform.Kubernetes)
 		gomega.Expect(err).NotTo(gomega.HaveOccurred())
 		gomega.Expect(results).To(gomega.HaveLen(1))
 		gomega.Expect(results[0].State).To(gomega.Equal(crstate.StateError))
 		gomega.Expect(results[0].Reason).To(gomega.ContainSubstring("extra=[dpu-control]"))
-		err = pollUntilTerminal(ctx, c, crstate.NewDefault(), desired, "policy", "", cfg)
+		err = pollUntilTerminal(ctx, c, crstate.NewDefault(), desired, "policy", "", cfg, hostplatform.Kubernetes)
 		gomega.Expect(err).To(gomega.MatchError(gomega.ContainSubstring("extra=[dpu-control]")))
 	})
 	ginkgo.DescribeTable("retries temporary scope reads before evaluating readiness", func(pool, nodeRead bool, readErr error) {
@@ -241,7 +242,7 @@ var _ = ginkgo.Describe("hardware target scope", func() {
 		})
 		pollCtx, cancel := context.WithTimeout(ctx, time.Second)
 		defer cancel()
-		err := pollUntilTerminalWithRetryableErrorTimeout(pollCtx, c, registry, desired, "resource", "", 0, time.Millisecond, cfg)
+		err := pollUntilTerminalWithRetryableErrorTimeout(pollCtx, c, registry, desired, "resource", "", 0, time.Millisecond, cfg, hostplatform.Kubernetes)
 		gomega.Expect(err).NotTo(gomega.HaveOccurred())
 		gomega.Expect(validations).To(gomega.Equal(1))
 		gomega.Expect(writes).To(gomega.BeZero())
@@ -284,7 +285,7 @@ var _ = ginkgo.Describe("hardware target scope", func() {
 			validations++
 			return crstate.Result{State: crstate.StateSuccess}, nil
 		})
-		err := pollUntilTerminalWithRetryableErrorTimeout(ctx, c, registry, desired, "resource", "", 0, time.Millisecond, cfg)
+		err := pollUntilTerminalWithRetryableErrorTimeout(ctx, c, registry, desired, "resource", "", 0, time.Millisecond, cfg, hostplatform.Kubernetes)
 		gomega.Expect(err).To(gomega.HaveOccurred())
 		gomega.Expect(reads).To(gomega.Equal(1))
 		gomega.Expect(validations).To(gomega.BeZero())
@@ -315,7 +316,7 @@ var _ = ginkgo.Describe("hardware target scope", func() {
 			validations++
 			return crstate.Result{State: crstate.StateSuccess}, nil
 		})
-		err := pollUntilTerminalWithRetryableErrorTimeout(ctx, c, registry, desired, "policy", "", 0, time.Millisecond, cfg)
+		err := pollUntilTerminalWithRetryableErrorTimeout(ctx, c, registry, desired, "policy", "", 0, time.Millisecond, cfg, hostplatform.Kubernetes)
 		gomega.Expect(err).To(gomega.MatchError(gomega.ContainSubstring("extra=[dpu-control]")))
 		gomega.Expect(reads).To(gomega.Equal(2))
 		gomega.Expect(validations).To(gomega.BeZero())
@@ -344,7 +345,7 @@ var _ = ginkgo.Describe("hardware target scope", func() {
 			pollCtx, cancel = context.WithTimeout(ctx, 30*time.Millisecond)
 		}
 		defer cancel()
-		err := pollUntilTerminalWithRetryableErrorTimeout(pollCtx, c, registry, desired, "policy", "", 0, time.Millisecond, cfg)
+		err := pollUntilTerminalWithRetryableErrorTimeout(pollCtx, c, registry, desired, "policy", "", 0, time.Millisecond, cfg, hostplatform.Kubernetes)
 		if cancelDuringRead {
 			gomega.Expect(err).To(gomega.MatchError(context.Canceled))
 			gomega.Expect(reads).To(gomega.Equal(1))
@@ -385,7 +386,7 @@ var _ = ginkgo.Describe("hardware target scope", func() {
 				return nil
 			},
 		}).Build()
-		err := ApplyBundle(ctx, c, scopeBundle(desired, false), DeployOptions{Config: cfg, SkipHelmChart: true})
+		err := ApplyBundle(ctx, c, scopeBundle(desired, false), DeployOptions{Platform: hostplatform.Kubernetes, Config: cfg, SkipHelmChart: true})
 		gomega.Expect(err).To(gomega.MatchError(gomega.ContainSubstring("extra=[dpu-control]")))
 		gomega.Expect(applies).To(gomega.Equal(1))
 		gomega.Expect(desired.GetAnnotations()[SourceGroupsAnnotation]).To(gomega.Equal(`["source"]`))
@@ -421,7 +422,7 @@ var _ = ginkgo.Describe("hardware target scope", func() {
 		registry.Register(desired.GroupVersionKind(), func(context.Context, client.Client, *unstructured.Unstructured) (crstate.Result, error) {
 			return crstate.Result{State: crstate.StateNotDeployed}, nil
 		})
-		err := pollUntilTerminalWithRetryableErrorTimeout(ctx, c, registry, desired, "policy", "", 0, time.Millisecond, cfg)
+		err := pollUntilTerminalWithRetryableErrorTimeout(ctx, c, registry, desired, "policy", "", 0, time.Millisecond, cfg, hostplatform.Kubernetes)
 		gomega.Expect(err).To(gomega.MatchError(gomega.ContainSubstring("extra=[dpu-control]")))
 		gomega.Expect(applies).To(gomega.Equal(1))
 		gomega.Expect(desired.Object).To(gomega.Equal(original.Object))
@@ -461,7 +462,7 @@ var _ = ginkgo.Describe("hardware target scope", func() {
 	ginkgo.It("keeps selector-only scope visible alongside ordinary resource readiness", func() {
 		pool := &unstructured.Unstructured{Object: map[string]interface{}{"apiVersion": "nv-ipam.nvidia.com/v1alpha1", "kind": "IPPool", "metadata": map[string]interface{}{"name": "pool"}}}
 		c := fake.NewClientBuilder().WithObjects(pool).Build()
-		results, err := ValidateBundleWithConfig(ctx, c, scopeBundle(pool, false), nil)
+		results, err := ValidateBundle(ctx, c, scopeBundle(pool, false), nil, hostplatform.Kubernetes)
 		gomega.Expect(err).NotTo(gomega.HaveOccurred())
 		gomega.Expect(results).To(gomega.HaveLen(1))
 		gomega.Expect(results[0].State).To(gomega.Equal(crstate.StateSuccess))
@@ -474,7 +475,7 @@ var _ = ginkgo.Describe("hardware target scope", func() {
 		}}).Build()
 		err := checkBundleTargetScopes(ctx, c, scopeBundle(desired, false), cfg)
 		gomega.Expect(err).To(gomega.MatchError(gomega.ContainSubstring("forbidden nodes")))
-		results, err := ValidateBundleWithConfig(ctx, c, scopeBundle(desired, false), cfg)
+		results, err := ValidateBundle(ctx, c, scopeBundle(desired, false), cfg, hostplatform.Kubernetes)
 		gomega.Expect(err).NotTo(gomega.HaveOccurred())
 		gomega.Expect(results[0].State).To(gomega.Equal(crstate.StateError))
 	})
@@ -644,9 +645,9 @@ func TestTargetScopeUnnamedSourceLifecycle(t *testing.T) {
 					return nil
 				},
 			}).Build()
-			require.NoError(t, ApplyBundle(context.Background(), c, targets, DeployOptions{Config: cfg, SkipHelmChart: true}))
+			require.NoError(t, ApplyBundle(context.Background(), c, targets, DeployOptions{Platform: hostplatform.Kubernetes, Config: cfg, SkipHelmChart: true}))
 			require.Equal(t, len(targetFiles), applies)
-			results, err := ValidateBundleWithConfig(context.Background(), c, targets, cfg)
+			results, err := ValidateBundle(context.Background(), c, targets, cfg, hostplatform.Kubernetes)
 			require.NoError(t, err)
 			for _, result := range results {
 				require.Equal(t, crstate.StateSuccess, result.State)
@@ -656,9 +657,9 @@ func TestTargetScopeUnnamedSourceLifecycle(t *testing.T) {
 			require.NoError(t, c.Get(context.Background(), client.ObjectKey{Name: "other"}, extra))
 			extra.Labels["cohort"] = "gpu"
 			require.NoError(t, c.Update(context.Background(), extra))
-			require.ErrorContains(t, ApplyBundle(context.Background(), c, targets, DeployOptions{Config: cfg, SkipHelmChart: true}), "extra=[other]")
+			require.ErrorContains(t, ApplyBundle(context.Background(), c, targets, DeployOptions{Platform: hostplatform.Kubernetes, Config: cfg, SkipHelmChart: true}), "extra=[other]")
 			require.Equal(t, len(targetFiles), applies, "drift must block before another apply")
-			results, err = ValidateBundleWithConfig(context.Background(), c, targets, cfg)
+			results, err = ValidateBundle(context.Background(), c, targets, cfg, hostplatform.Kubernetes)
 			require.NoError(t, err)
 			for _, result := range results {
 				require.Equal(t, crstate.StateError, result.State)

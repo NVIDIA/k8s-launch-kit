@@ -30,6 +30,7 @@ import (
 
 	nicop "github.com/Mellanox/nic-configuration-operator/api/v1alpha1"
 	"github.com/nvidia/k8s-launch-kit/pkg/config"
+	"github.com/nvidia/k8s-launch-kit/pkg/hostplatform"
 	"github.com/nvidia/k8s-launch-kit/pkg/kubeclient"
 	"github.com/nvidia/k8s-launch-kit/pkg/networkoperatorplugin/internal/pciids"
 	"github.com/nvidia/k8s-launch-kit/pkg/networkoperatorplugin/internal/pfutil"
@@ -111,6 +112,13 @@ func isDualPortBlueField3(deviceID, model string) bool {
 // KeepNamespace, CollapseNicRails) come in via Options instead of as
 // functional DiscoverOptions.
 func DiscoverClusterConfig(ctx context.Context, c client.Client, restConfig *rest.Config, cfg *config.LaunchKitConfig, opts Options) error {
+	if cfg == nil {
+		return fmt.Errorf("launch kit config must not be nil")
+	}
+	platform, err := hostplatform.Select(cfg.Flavor)
+	if err != nil {
+		return err
+	}
 	uiOutput := ui.FromContext(ctx)
 	presetCatalog, err := resolvePresetCatalog(opts)
 	if err != nil {
@@ -123,7 +131,7 @@ func DiscoverClusterConfig(ctx context.Context, c client.Client, restConfig *res
 	}
 
 	bootstrapOpts := nicconfigdaemon.Options{
-		OpenShift:        cfg.Flavor == config.FlavorOCP,
+		OpenShift:        platform == hostplatform.OpenShift,
 		Repository:       cfg.NetworkOperator.Repository,
 		Version:          cfg.NetworkOperator.ComponentVersion,
 		ImagePullSecrets: cfg.NetworkOperator.ImagePullSecrets,
@@ -442,7 +450,7 @@ func DiscoverClusterConfig(ctx context.Context, c client.Client, restConfig *res
 
 	// Networking evidence is optional inventory; inspection failures remain
 	// explicit so generation cannot turn uncertainty into installation consent.
-	cfg.DiscoveredSecondaryNetwork, err = secondarynetwork.DiscoverEvidence(ctx, c, cfg.Flavor)
+	cfg.DiscoveredSecondaryNetwork, err = secondarynetwork.DiscoverEvidence(ctx, c, platform)
 	if err != nil {
 		return err
 	}

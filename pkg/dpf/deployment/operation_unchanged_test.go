@@ -36,7 +36,7 @@ func TestOperationResumeAfterSavedHostObservationWithUnchangedCheckpoint(t *test
 	operation.store = store
 	fixture.prepared.operation = operation
 	client := recoveryActivationClient{fixture.client}
-	fixture.controlPlane.tenant.Client.source = client
+	testTenant(fixture.controlPlane.tenant.Client).source = client
 	reboot := &recoveryRebooter{fixture: &fixture}
 	run := func() error {
 		_, err := runActivationStage(fixture.ctx, client, fixture.prepared, fixture.controlPlane, fixture.workload, fixture.inventory, fixture.request, fixture.journal, time.Millisecond, time.Second, reboot)

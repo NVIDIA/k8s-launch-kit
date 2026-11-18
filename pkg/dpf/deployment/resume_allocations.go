@@ -16,7 +16,7 @@ import (
 // observeOwnedResumeAllocations permits partial provisioning: an allocation
 // without a current ready, exactly owned selected Node grants no allowance.
 // Both pools retain original workload receipts and are reread around Node reads.
-func observeOwnedResumeAllocations(ctx context.Context, client *APIClient, prepared *preparedControlPlaneRun, control controlPlaneReceipts, workload workloadPreparationReceipt, proof ownedResumePrerequisites, timeout time.Duration) ([]discovery.ResumeRouteAllocation, error) {
+func observeOwnedResumeAllocations(ctx context.Context, client activationObservationReader, prepared *preparedControlPlaneRun, control controlPlaneReceipts, workload workloadPreparationReceipt, proof ownedResumePrerequisites, timeout time.Duration) ([]discovery.ResumeRouteAllocation, error) {
 	poolNames := []string{"workload", "loopback"}
 	observeCtx, cancel := context.WithTimeout(ctx, time.Duration(len(poolNames))*timeout)
 	defer cancel()
@@ -24,7 +24,7 @@ func observeOwnedResumeAllocations(ctx context.Context, client *APIClient, prepa
 	if err != nil {
 		return nil, err
 	}
-	objects, err := retainedWorkloadObjects(prepared.execution)
+	objects, err := retainedWorkloadObjects(prepared.execution.verificationInputs())
 	if err != nil {
 		return nil, err
 	}
@@ -44,7 +44,7 @@ func observeOwnedResumeAllocations(ctx context.Context, client *APIClient, prepa
 		if desired == nil {
 			return nil, fmt.Errorf("OWNED_RESUME_IPAM_MISSING")
 		}
-		receipt, uid, err := hostLeaseWorkloadReceipt(workload, desired)
+		receipt, uid, err := hostLeaseWorkloadReceipt(workload.Resources, desired)
 		if err != nil {
 			return nil, err
 		}
@@ -52,11 +52,11 @@ func observeOwnedResumeAllocations(ctx context.Context, client *APIClient, prepa
 		if err != nil {
 			return nil, err
 		}
-		pool, err := observeHostLeasePool(observeCtx, client, control.tenant.Client, parent, expected, uid)
+		pool, err := observeHostLeasePool(observeCtx, control.tenant.Client, parent, expected, uid)
 		if err != nil {
 			return nil, err
 		}
-		nodes, err := listCompleteTenantNodes(observeCtx, control.tenant.Client.api.CoreV1())
+		nodes, err := control.tenant.Client.listCompleteNodes(observeCtx)
 		if err != nil {
 			return nil, err
 		}
@@ -75,7 +75,7 @@ func observeOwnedResumeAllocations(ctx context.Context, client *APIClient, prepa
 			}
 		}
 		for _, item := range proof.selected {
-			node, err := uniqueTenantNode(nodes, item.nodeName, item.dpuSet.GetNamespace())
+			node, err := uniqueTenantNode(prepared.execution.rules, nodes, item.nodeName, item.dpuSet.GetNamespace())
 			if err != nil {
 				continue
 			} // No current selected Node means no positive allowance.
@@ -84,7 +84,7 @@ func observeOwnedResumeAllocations(ctx context.Context, client *APIClient, prepa
 				continue
 			}
 			dpu, set, physicalNode := uniqueObjectByName(proof.scope.objects("DPU"), item.dpuName), uniqueObjectByName(proof.scope.objects("DPUSet"), item.dpuSet.GetName()), uniqueObjectByName(proof.scope.objects("DPUNode"), item.nodeName)
-			if dpu == nil || set == nil || physicalNode == nil || physicalNode.GetUID() != item.receipt.DPUNodeUID || !activationDPUMatches(dpu, item) || !activationDPUSetMatches(set, item) || !activationOwnerMatches(dpu, set.GetAPIVersion(), set.GetKind(), set.GetName(), set.GetUID()) || !enrolledNodeReadiness(physicalNode).Ready {
+			if dpu == nil || set == nil || physicalNode == nil || physicalNode.GetUID() != item.receipt.DPUNodeUID || !activationDPUMatches(prepared.execution.rules, dpu, item) || !activationDPUSetMatches(prepared.execution.rules, set, item) || !activationOwnerMatches(dpu, set.GetAPIVersion(), set.GetKind(), set.GetName(), set.GetUID()) || !prepared.execution.rules.EnrolledNodeReadiness(physicalNode).Ready {
 				continue
 			}
 
@@ -95,7 +95,7 @@ func observeOwnedResumeAllocations(ctx context.Context, client *APIClient, prepa
 			}
 			allocations = append(allocations, discovery.ResumeRouteAllocation{DPUSerial: item.item.device.Serial, Pool: poolName, Prefix: prefix})
 		}
-		after, err := observeHostLeasePool(observeCtx, client, control.tenant.Client, parent, expected, uid)
+		after, err := observeHostLeasePool(observeCtx, control.tenant.Client, parent, expected, uid)
 		if err != nil || !sameHostLeasePoolObservation(pool, after) {
 			return nil, fmt.Errorf("OWNED_RESUME_ALLOCATION_CHANGED: pool changed during complete Node read")
 		}
@@ -103,23 +103,27 @@ func observeOwnedResumeAllocations(ctx context.Context, client *APIClient, prepa
 			return nil, err
 		}
 		anchors = append(anchors, poolAnchor{parent: parent, pool: after})
-		if poolName == "workload" && len(prepared.operation.state.Hosts) > 0 {
-			deployment, err := retainedDeploymentObject(prepared.execution)
+		if poolName == "workload" {
+			hostRequests := prepared.operation.hostRequests()
+			if len(hostRequests) == 0 {
+				continue
+			}
+			deployment, err := retainedDeploymentObject(prepared.execution.verificationInputs())
 			if err != nil {
 				return nil, err
 			}
-			observed, err := observeActivationScope(observeCtx, client, prepared.execution, deployment, proof.parentUID, proof.selected, prepared.operation.restoreProgress())
+			observed, err := observeActivationScope(observeCtx, client, prepared.execution.verificationInputs(), deployment, proof.parentUID, proof.selected, prepared.operation.restoreProgress())
 			if err != nil || !observed.complete {
 				return nil, fmt.Errorf("OWNED_RESUME_HOST_ALLOCATION_UNVERIFIED: recorded host transaction requires complete current activation")
 			}
 			snapshot := hostWorkloadLeaseSnapshot{DPUServiceIPAM: parent, CIDRPool: after, TenantNodes: nodes}
-			leases, err := resolveHostWorkloadLeases(prepared.execution.plan, prepared.execution.reconciler, proof.selected, observed, workload, snapshot)
+			leases, err := resolveHostWorkloadLeases(prepared.execution.plan, prepared.execution.reconciler, proof.selected, observed, workload.BundleDigest, workload.Resources, snapshot)
 			if err != nil {
 				return nil, err
 			}
-			for serial, prior := range prepared.operation.state.Hosts {
-				current, err := hostNetworkRequestForLease(activationStageReceipt{BundleDigest: prepared.execution.plan.Digest(), DeploymentUID: proof.parentUID}, prior.Request.Identity, hostNetworkLeaseFence{snapshot: snapshot, leases: leases}, serial, prepared.execution.plan.Intent().Networking.WorkloadMTU, prepared.execution.plan.Intent().Networking.WorkloadCIDR)
-				if err != nil || !sameOperationRequest(prior.Request, current) {
+			for serial, prior := range hostRequests {
+				current, err := hostNetworkRequestForLease(activationStageReceipt{BundleDigest: prepared.execution.plan.Digest(), DeploymentUID: proof.parentUID}, prior.Identity, hostNetworkLeaseFence{snapshot: snapshot, leases: leases}, serial, prepared.execution.plan.Intent().Networking.WorkloadMTU, prepared.execution.plan.Intent().Networking.WorkloadCIDR)
+				if err != nil || !sameOperationRequest(prior, current) {
 					return nil, fmt.Errorf("OWNED_RESUME_HOST_ALLOCATION_CHANGED: original host request no longer matches the complete allocation cohort")
 				}
 			}
@@ -128,7 +132,7 @@ func observeOwnedResumeAllocations(ctx context.Context, client *APIClient, prepa
 
 	// A later pool/host read must not silently invalidate an earlier prefix proof.
 	for _, anchor := range anchors {
-		current, err := observeHostLeasePool(observeCtx, client, control.tenant.Client, anchor.parent, expected, anchor.pool.GetUID())
+		current, err := observeHostLeasePool(observeCtx, control.tenant.Client, anchor.parent, expected, anchor.pool.GetUID())
 		if err != nil || !sameHostLeasePoolObservation(anchor.pool, current) {
 			return nil, fmt.Errorf("OWNED_RESUME_ALLOCATION_CHANGED: the allocation cohort changed before assessment")
 		}

@@ -9,7 +9,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/nvidia/k8s-launch-kit/pkg/dpf/discovery"
+	"github.com/nvidia/k8s-launch-kit/pkg/dpf/managementaccess"
 	"github.com/nvidia/k8s-launch-kit/pkg/dpf/managementprobe"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -30,7 +30,7 @@ func TestTenantStoragePreflightRecollectsAndKeepsSafeFailure(t *testing.T) {
 		}
 		return true, nil, apierrors.NewForbidden(schema.GroupResource{Group: "kamaji.clastix.io", Resource: "datastores"}, "default", fmt.Errorf("sensitive upstream error"))
 	})
-	api := &APIClient{access: discovery.ManagementClient{Client: client}, dynamic: dynamicClient}
+	api := &APIClient{access: managementaccess.Client{Client: client}, dynamic: dynamicClient}
 	first := api.checkTenantStorage(context.Background(), "selected-dpf")
 	second := api.checkTenantStorage(context.Background(), "selected-dpf")
 	observed := (managementprobe.Collector{Kubernetes: client, Dynamic: dynamicClient}).CollectTenantStorage(context.Background(), "selected-dpf")

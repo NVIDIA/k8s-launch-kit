@@ -21,8 +21,9 @@ import (
 	"sync"
 	"time"
 
+	sharedbundle "github.com/nvidia/k8s-launch-kit/pkg/bundle"
 	"github.com/nvidia/k8s-launch-kit/pkg/dpf/bootstrap"
-	"github.com/nvidia/k8s-launch-kit/pkg/networkoperatorplugin/helmclient"
+	"github.com/nvidia/k8s-launch-kit/pkg/helmclient"
 	"helm.sh/helm/v3/pkg/action"
 	"helm.sh/helm/v3/pkg/chart"
 	"helm.sh/helm/v3/pkg/chart/loader"
@@ -138,7 +139,7 @@ func prepareOperator(request OperatorRequest) (*operatorPlan, error) {
 	if err != nil {
 		return nil, fmt.Errorf("fingerprint retained DPF operator chart: %w", err)
 	}
-	values, err := helmclient.UnmarshalValues(rendered.HelmValues)
+	values, err := sharedbundle.ParseValues(rendered.HelmValues)
 	if err != nil {
 		return nil, fmt.Errorf("decode rendered DPF Helm values: %w", err)
 	}
@@ -194,7 +195,7 @@ func ensureOperator(ctx context.Context, plan *operatorPlan, actions operatorAct
 	if err := ctx.Err(); err != nil {
 		return err
 	}
-	values, err := helmclient.UnmarshalValues(plan.valuesYAML)
+	values, err := sharedbundle.ParseValues(plan.valuesYAML)
 	if err != nil {
 		return fmt.Errorf("copy rendered DPF Helm values: %w", err)
 	}

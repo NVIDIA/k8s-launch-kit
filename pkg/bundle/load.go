@@ -82,7 +82,7 @@ func FromFiles(files []File) (*Bundle, error) {
 	}
 	sort.Slice(ordered, func(i, j int) bool { return ordered[i].Name < ordered[j].Name })
 	b := &Bundle{}
-	seenObjects := map[ObjectRef]Source{}
+	seenObjects := make(map[ObjectRef]Source)
 	for _, file := range ordered {
 		kind, role, err := classifyFile(file.Name)
 		if err != nil {
@@ -100,16 +100,14 @@ func FromFiles(files []File) (*Bundle, error) {
 			b.values = &helmValues{content: file.Content, values: values}
 			continue
 		}
-		docs, parseErr := decodeResources(file, role)
+		documents, parseErr := decodeResources(file, role)
 		if parseErr != nil {
 			return nil, parseErr
 		}
-		for _, doc := range docs {
-			ref := doc.Ref()
-			if first, exists := seenObjects[ref]; exists {
-				return nil, &Error{Source: doc.Source(), Reason: fmt.Sprintf("duplicate resource %s/%s in namespace %q (first declared at %s document %d)", ref.Kind, ref.Name, ref.Namespace, first.File, first.Document)}
+		for _, doc := range documents {
+			if err := rememberResource(doc, seenObjects); err != nil {
+				return nil, err
 			}
-			seenObjects[ref] = doc.Source()
 			b.documents = append(b.documents, doc)
 		}
 	}

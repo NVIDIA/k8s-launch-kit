@@ -5,6 +5,7 @@ package bundle
 
 import (
 	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -12,6 +13,7 @@ import (
 	"time"
 
 	"github.com/gofrs/flock"
+	shared "github.com/nvidia/k8s-launch-kit/pkg/bundle"
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 )
@@ -116,6 +118,18 @@ var _ = Describe("validated immutable membership", func() {
 		}, "cluster-scoped"),
 		Entry("malformed final document", func(_ *Index, f *[]File) { (*f)[1].Data = append((*f)[1].Data, []byte("---\nmetadata: [broken\n")...) }, "document 2"),
 	)
+
+	It("reports the original nested path and document ordinal for parse failures", func() {
+		index, files := fixture()
+		files[1].Path = "system/nested/object.yaml"
+		index.Files[1].Path = files[1].Path
+		index.Stages[0].Files[0] = files[1].Path
+		files[1].Data = append(files[1].Data, []byte("---\nmetadata: [broken\n")...)
+		_, err := New(index, files)
+		var sourceError *shared.Error
+		Expect(errors.As(err, &sourceError)).To(BeTrue())
+		Expect(sourceError.Source).To(Equal(shared.Source{File: "system/nested/object.yaml", Document: 2}))
+	})
 
 	It("permits same resource names on different destination clusters but rejects same-cluster duplicates across API versions", func() {
 		index, files := fixture()

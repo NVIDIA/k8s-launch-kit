@@ -11,13 +11,13 @@ import (
 	"testing"
 
 	"github.com/go-logr/logr"
+	"github.com/nvidia/k8s-launch-kit/pkg/hostplatform"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
 	"github.com/nvidia/k8s-launch-kit/pkg/bundle"
 	"github.com/nvidia/k8s-launch-kit/pkg/config"
 	"github.com/nvidia/k8s-launch-kit/pkg/options"
-	"github.com/nvidia/k8s-launch-kit/pkg/ui"
 )
 
 func TestApplyOptionsToConfigSkipNetworkOperatorHelm(t *testing.T) {
@@ -121,9 +121,9 @@ func TestGenerateProfileSkipsHelmValuesButKeepsManifests(t *testing.T) {
 }
 
 func TestRunHelmInstallPhaseSkipsBeforeReadingValues(t *testing.T) {
-	err := runHelmInstallPhase(context.Background(), nil, DeployOptions{
+	err := (kubernetesDeploymentPolicy{}).bootstrap(context.Background(), nil, nil, DeployOptions{Platform: hostplatform.Kubernetes,
 		SkipHelmChart: true,
-	}, ui.NewSilent())
+	}, nil)
 
 	require.NoError(t, err)
 }
@@ -131,7 +131,7 @@ func TestRunHelmInstallPhaseSkipsBeforeReadingValues(t *testing.T) {
 func TestBuildPreflightInputsSkipsOnlyHelmChecks(t *testing.T) {
 	artifacts, err := bundle.FromFiles(nil)
 	require.NoError(t, err)
-	in, err := buildPreflightInputs(nil, artifacts, DeployOptions{
+	in, err := buildPreflightInputs(nil, artifacts, DeployOptions{Platform: hostplatform.Kubernetes,
 		SkipHelmChart: true,
 		NetworkOperator: &config.NetworkOperatorConfig{
 			Version:          "v26.7.0",

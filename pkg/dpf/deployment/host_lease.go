@@ -9,6 +9,7 @@ import (
 	"reflect"
 	"sort"
 
+	"github.com/nvidia/k8s-launch-kit/pkg/dpf/deployment/internal/controllercontract"
 	"github.com/nvidia/k8s-launch-kit/pkg/dpf/generation"
 	"github.com/nvidia/k8s-launch-kit/pkg/dpf/hbn"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
@@ -53,13 +54,13 @@ func resolveHostWorkloadLeases(
 	reconciler *Reconciler,
 	selected []activationSelectedDevice,
 	activation activationObservation,
-	workload workloadPreparationReceipt,
+	workloadDigest string, resources []workloadResourceReceipt,
 	snapshot hostWorkloadLeaseSnapshot,
 ) ([]hostWorkloadLease, error) {
 	if plan == nil || reconciler == nil || !activation.complete || len(selected) == 0 {
 		return nil, fmt.Errorf("retained plan and complete selected activation are required")
 	}
-	if workload.BundleDigest != plan.Digest() {
+	if workloadDigest != plan.Digest() {
 		return nil, fmt.Errorf("workload receipt does not identify the retained plan")
 	}
 	intent := plan.Intent()
@@ -71,13 +72,13 @@ func resolveHostWorkloadLeases(
 	if err != nil {
 		return nil, err
 	}
-	ipamReceipt, poolUID, err := hostLeaseWorkloadReceipt(workload, desiredIPAM)
+	ipamReceipt, poolUID, err := hostLeaseWorkloadReceipt(resources, desiredIPAM)
 	if err != nil {
 		return nil, err
 	}
 	ipam := snapshot.DPUServiceIPAM
 	if ipam == nil || ipam.GetUID() != ipamReceipt.UID || ipam.GetResourceVersion() == "" || ipam.GetDeletionTimestamp() != nil ||
-		reconciler.Verify(desiredIPAM, ipam) != nil || !workloadResourceReadiness(ipam, workloadIPAMReadiness).Ready {
+		reconciler.Verify(desiredIPAM, ipam) != nil || !reconciler.rules.WorkloadReadiness(ipam, controllercontract.WorkloadIPAM).Ready {
 		return nil, fmt.Errorf("retained workload IPAM is missing, replaced, changed or not ready")
 	}
 	pool := snapshot.CIDRPool
@@ -119,7 +120,7 @@ func resolveHostWorkloadLeases(
 		if !ok || !reflect.DeepEqual(item.item.device.SelectorLabels, expected.SelectorLabels) {
 			return nil, fmt.Errorf("selected activation does not match retained serial %q", expected.Serial)
 		}
-		lease, err := hostLeaseForSelected(item, selected, activation, snapshot.TenantNodes, pool, allocations, reservations, expectedTenant, intent.Generation.HostAddressIndex)
+		lease, err := hostLeaseForSelected(reconciler.rules, item, selected, activation, snapshot.TenantNodes, pool, allocations, reservations, expectedTenant, intent.Generation.HostAddressIndex)
 		if err != nil {
 			return nil, fmt.Errorf("selected serial %q: %w", expected.Serial, err)
 		}
@@ -152,9 +153,9 @@ func retainedWorkloadIPAM(plan *generation.Plan) (*unstructured.Unstructured, er
 	return desired, nil
 }
 
-func hostLeaseWorkloadReceipt(workload workloadPreparationReceipt, desired *unstructured.Unstructured) (workloadResourceReceipt, types.UID, error) {
+func hostLeaseWorkloadReceipt(resources []workloadResourceReceipt, desired *unstructured.Unstructured) (workloadResourceReceipt, types.UID, error) {
 	var receipt workloadResourceReceipt
-	for _, resource := range workload.Resources {
+	for _, resource := range resources {
 		if resource.Kind != "DPUServiceIPAM" || resource.Namespace != desired.GetNamespace() || resource.Name != desired.GetName() {
 			continue
 		}
@@ -238,8 +239,8 @@ func hostLeaseAllocations(pool *unstructured.Unstructured, expected netip.Prefix
 	return allocations, nil
 }
 
-func hostLeaseForSelected(item activationSelectedDevice, cohort []activationSelectedDevice, activation activationObservation,
-	tenantNodes []unstructured.Unstructured, pool *unstructured.Unstructured, allocations map[string]hostLeaseAllocation, reservations []hbn.AddressRange, expectedTenant TenantReadinessExpected, hostIndex int,
+func hostLeaseForSelected(rules *controllercontract.Rules, item activationSelectedDevice, cohort []activationSelectedDevice, activation activationObservation,
+	tenantNodes []unstructured.Unstructured, pool *unstructured.Unstructured, allocations map[string]hostLeaseAllocation, reservations []hbn.AddressRange, expectedTenant controllercontract.TenantReadinessExpected, hostIndex int,
 ) (hostWorkloadLease, error) {
 	if item.dpuSet == nil || hostIndex <= 0 {
 		return hostWorkloadLease{}, fmt.Errorf("selected DPUSet or retained host address index is invalid")
@@ -250,7 +251,7 @@ func hostLeaseForSelected(item activationSelectedDevice, cohort []activationSele
 	if dpu == nil || set == nil || node == nil || dpu.GetUID() == "" || set.GetUID() == "" || node.GetUID() != item.receipt.DPUNodeUID || node.GetDeletionTimestamp() != nil {
 		return hostWorkloadLease{}, fmt.Errorf("activation no longer contains the selected DPU, DPUSet and DPUNode identities")
 	}
-	if !activationDPUMatches(dpu, item) || !activationDPUSetMatches(set, item) || !activationOwnerMatches(dpu, "provisioning.dpu.nvidia.com/v1alpha1", "DPUSet", set.GetName(), set.GetUID()) {
+	if !activationDPUMatches(rules, dpu, item) || !activationDPUSetMatches(rules, set, item) || !activationOwnerMatches(dpu, "provisioning.dpu.nvidia.com/v1alpha1", "DPUSet", set.GetName(), set.GetUID()) {
 		return hostWorkloadLease{}, fmt.Errorf("selected DPU ownership or device identity differs from activation")
 	}
 	clusterName, clusterNameFound, clusterNameErr := unstructured.NestedString(dpu.Object, "spec", "cluster", "name")
@@ -258,10 +259,10 @@ func hostLeaseForSelected(item activationSelectedDevice, cohort []activationSele
 	if clusterNameErr != nil || clusterNamespaceErr != nil || !clusterNameFound || !clusterNamespaceFound || clusterName != expectedTenant.Name || clusterNamespace != expectedTenant.Namespace {
 		return hostWorkloadLease{}, fmt.Errorf("selected DPU cluster reference differs from retained tenant identity")
 	}
-	if err := validateActivationDPUNode(node, item, cohort); err != nil || !enrolledNodeReadiness(node).Ready {
+	if err := validateActivationDPUNode(node, item, cohort); err != nil || !rules.EnrolledNodeReadiness(node).Ready {
 		return hostWorkloadLease{}, fmt.Errorf("selected DPUNode identity or readiness differs from activation")
 	}
-	tenantNode, err := uniqueTenantNode(tenantNodes, item.nodeName, node.GetNamespace())
+	tenantNode, err := uniqueTenantNode(rules, tenantNodes, item.nodeName, node.GetNamespace())
 	if err != nil {
 		return hostWorkloadLease{}, err
 	}
@@ -278,7 +279,7 @@ func hostLeaseForSelected(item activationSelectedDevice, cohort []activationSele
 		Prefix: allocation.prefix.String(), Gateway: allocation.gateway.String(), ReservedHostAddress: address.String()}, nil
 }
 
-func uniqueTenantNode(nodes []unstructured.Unstructured, dpuNodeName, dpuNodeNamespace string) (*unstructured.Unstructured, error) {
+func uniqueTenantNode(rules *controllercontract.Rules, nodes []unstructured.Unstructured, dpuNodeName, dpuNodeNamespace string) (*unstructured.Unstructured, error) {
 	var match *unstructured.Unstructured
 	for i := range nodes {
 		node := &nodes[i]
@@ -294,7 +295,7 @@ func uniqueTenantNode(nodes []unstructured.Unstructured, dpuNodeName, dpuNodeNam
 		}
 		match = node
 	}
-	if match == nil || match.GetUID() == "" || match.GetResourceVersion() == "" || match.GetDeletionTimestamp() != nil || !EvaluateReadiness(match).Ready {
+	if match == nil || match.GetUID() == "" || match.GetResourceVersion() == "" || match.GetDeletionTimestamp() != nil || !rules.ResourceReadiness(match).Ready {
 		return nil, fmt.Errorf("selected DPUNode has no current ready tenant Node")
 	}
 	return match, nil

@@ -74,7 +74,7 @@ func TestStageFixtureCacheKeepsEnrollmentHarnessesIndependentAfterCleanup(t *tes
 		var cancel context.CancelFunc
 		firstContext, cancel = context.WithTimeout(context.Background(), time.Minute)
 		t.Cleanup(cancel)
-		result, err := runEnrollmentStage(firstContext, fake, execution, bootstrap, tenant, fake.selected, password, testJournal(execution), time.Millisecond, time.Second)
+		result, err := runEnrollmentStage(firstContext, fake, execution.verificationInputs(), bootstrap, tenant, fake.selected, password, testJournal(execution), time.Millisecond, time.Second)
 		if err != nil || len(result.Devices) != 1 || !result.Secret.Created || fake.base.createCount != 2 {
 			t.Fatalf("first enrollment stage did not execute: result=%+v creates=%d err=%v", result, fake.base.createCount, err)
 		}

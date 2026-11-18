@@ -55,25 +55,25 @@ func TestValidateEnrolledDeviceBindsSelectedIdentityAndResetPolicy(t *testing.T)
 			if tc.mutate != nil {
 				tc.mutate(object)
 			}
-			err := validateEnrolledDevice(object, selected, "operator", false)
+			err := validateEnrolledDevice(testRules(t), object, selected, "operator", false)
 			if (err == nil) != tc.wantOK {
-				t.Fatalf("validateEnrolledDevice() error=%v, wantOK=%t", err, tc.wantOK)
+				t.Fatalf("validateEnrolledDevice(testRules(t), ) error=%v, wantOK=%t", err, tc.wantOK)
 			}
 		})
 	}
 	object := enrolledDeviceFixture()
-	if err := validateEnrolledDevice(object, selected, "operator", true); err == nil {
+	if err := validateEnrolledDevice(testRules(t), object, selected, "operator", true); err == nil {
 		t.Fatal("requireStatus accepted missing controller identity")
 	}
 	setDeviceStatus(object)
-	if err := validateEnrolledDevice(object, selected, "operator", true); err != nil {
+	if err := validateEnrolledDevice(testRules(t), object, selected, "operator", true); err != nil {
 		t.Fatalf("requireStatus rejected exact controller identity: %v", err)
 	}
 }
 
 func TestEnrolledDeviceReadinessRequiresCurrentDPF26ConditionsAndBF4Status(t *testing.T) {
 	ready := readyEnrolledDeviceFixture()
-	if got := enrolledDeviceReadiness(ready); !got.Ready {
+	if got := testRules(t).EnrolledDeviceReadiness(ready); !got.Ready {
 		t.Fatalf("exact DPF 26.8 readiness fixture rejected: %#v", got)
 	}
 	for _, tc := range []struct {
@@ -109,7 +109,7 @@ func TestEnrolledDeviceReadinessRequiresCurrentDPF26ConditionsAndBF4Status(t *te
 		t.Run(tc.name, func(t *testing.T) {
 			object := readyEnrolledDeviceFixture()
 			tc.mutate(object)
-			if got := enrolledDeviceReadiness(object); got.Ready {
+			if got := testRules(t).EnrolledDeviceReadiness(object); got.Ready {
 				t.Fatalf("invalid readiness accepted: %#v", got)
 			}
 		})
@@ -139,7 +139,7 @@ func TestEnrolledDeviceReadinessIdentifiesMissingOrMalformedFields(t *testing.T)
 			} else if err := unstructured.SetNestedField(object.Object, tc.value, "status", tc.field); err != nil {
 				t.Fatal(err)
 			}
-			got := enrolledDeviceReadiness(object)
+			got := testRules(t).EnrolledDeviceReadiness(object)
 			if got.Ready || got.ReasonCode != tc.code || !strings.Contains(got.Message, "status."+tc.field) {
 				t.Fatalf("required status field failure is not actionable: %#v", got)
 			}
@@ -155,7 +155,7 @@ func TestValidateEnrolledNodeUsesExactAssociationWithoutInventedGeneration(t *te
 	}
 	// The pinned DPUNode condition writer omits observedGeneration. A current
 	// Ready=True plus exact object UID/spec is the available source contract.
-	if got := enrolledNodeReadiness(object); !got.Ready {
+	if got := testRules(t).EnrolledNodeReadiness(object); !got.Ready {
 		t.Fatalf("Ready without observedGeneration was rejected: %#v", got)
 	}
 	for _, tc := range []struct {
@@ -193,7 +193,7 @@ func TestValidateEnrolledNodeUsesExactAssociationWithoutInventedGeneration(t *te
 				}
 				return
 			}
-			if got := enrolledNodeReadiness(mutated); got.Ready {
+			if got := testRules(t).EnrolledNodeReadiness(mutated); got.Ready {
 				t.Fatalf("invalid DPUNode readiness accepted: %#v", got)
 			}
 		})
@@ -225,9 +225,9 @@ func TestEnrolledNodeInvalidDetailsIsTerminalBeforeReady(t *testing.T) {
 			})
 			_ = unstructured.SetNestedSlice(object.Object, conditions, "status", "conditions")
 
-			got := enrolledNodeReadiness(object)
+			got := testRules(t).EnrolledNodeReadiness(object)
 			if got.Ready || got.ReasonCode != tc.wantCode {
-				t.Fatalf("enrolledNodeReadiness() = %#v, want blocked reason %q", got, tc.wantCode)
+				t.Fatalf("testRules(t).EnrolledNodeReadiness() = %#v, want blocked reason %q", got, tc.wantCode)
 			}
 			if tc.invalid == "True" && !strings.Contains(got.Message, "Controller reason: InvalidDPUDetails.") {
 				t.Fatalf("terminal failure did not retain safe controller reason: %q", got.Message)
@@ -329,15 +329,15 @@ func appendNodeCondition(object *unstructured.Unstructured, kind, status string)
 func TestEnrolledIdentityFailuresStayBounded(t *testing.T) {
 	selected := enrollmentTestBMC()
 	selected.device.BMCIP = "not-an-ip"
-	if err := validateEnrolledDevice(enrolledDeviceFixture(), selected, "operator", false); err == nil {
+	if err := validateEnrolledDevice(testRules(t), enrolledDeviceFixture(), selected, "operator", false); err == nil {
 		t.Fatal("invalid selected endpoint accepted")
 	}
 	for _, object := range []*unstructured.Unstructured{nil, {Object: map[string]any{"metadata": map[string]any{"name": "dpu-device"}}}} {
-		if got := enrolledDeviceReadiness(object); got.Ready {
+		if got := testRules(t).EnrolledDeviceReadiness(object); got.Ready {
 			t.Fatalf("malformed identity accepted: %#v", got)
 		}
 	}
-	if got := enrolledNodeReadiness(nil); got.Ready {
+	if got := testRules(t).EnrolledNodeReadiness(nil); got.Ready {
 		t.Fatal("missing DPUNode accepted")
 	}
 }

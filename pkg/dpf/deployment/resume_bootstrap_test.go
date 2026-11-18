@@ -140,7 +140,7 @@ func TestRunResumeRestoresPendingBootstrapBeforeTenantOrEffects(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	desired, err := retainedDeploymentObject(execution)
+	desired, err := retainedDeploymentObject(execution.verificationInputs())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -203,7 +203,7 @@ func TestRunResumeRestoresPendingBootstrapBeforeTenantOrEffects(t *testing.T) {
 			if tc.name == "BMC access missing" {
 				request.Access.Targets = nil
 			}
-			result, runErr := runWithImageResolver(ctx, request, retainedTestImageResolver)
+			result, runErr := runWithTransports(ctx, request, runTransports{resolveImage: retainedTestImageResolver})
 			mu.Lock()
 			after, _ := json.Marshal(operation)
 			before, _ := json.Marshal(op)

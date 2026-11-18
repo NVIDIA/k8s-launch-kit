@@ -431,7 +431,7 @@ func TestRunManagementAcceptsOperatorConfigControllerFinalizerAfterCreate(t *tes
 	}
 	tenantClient := newTenantStageFake(t, execution)
 	tenantClient.resources[tenantStageKey(current)] = current.DeepCopy()
-	if err := verifyManagementBootstrap(ctx, tenantClient, execution, tenantStageBootstrapReceipt(execution, tenantClient)); err != nil {
+	if err := verifyManagementBootstrap(ctx, tenantClient, execution.verificationInputs(), tenantStageBootstrapReceipt(execution, tenantClient)); err != nil {
 		t.Fatalf("tenant bootstrap rejected the same exact finalized operator config: %v", err)
 	}
 }
@@ -863,7 +863,7 @@ func TestOperatorConfigFinalizerDoesNotRelaxReadinessOwnershipOrIntent(t *testin
 			}
 			tenantClient := newTenantStageFake(t, execution)
 			tenantClient.resources[tenantStageKey(client.config)] = client.config.DeepCopy()
-			if err := verifyManagementBootstrap(ctx, tenantClient, execution, tenantStageBootstrapReceipt(execution, tenantClient)); err == nil {
+			if err := verifyManagementBootstrap(ctx, tenantClient, execution.verificationInputs(), tenantStageBootstrapReceipt(execution, tenantClient)); err == nil {
 				t.Fatal("modified config passed tenant bootstrap")
 			}
 			if client.createConfig != 0 || tenantClient.createCount != 0 {

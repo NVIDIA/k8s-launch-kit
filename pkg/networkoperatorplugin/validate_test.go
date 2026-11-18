@@ -23,10 +23,10 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
-	"os"
-	"path/filepath"
 	"testing"
 
+	"github.com/nvidia/k8s-launch-kit/pkg/bundle"
+	"github.com/nvidia/k8s-launch-kit/pkg/hostplatform"
 	"github.com/nvidia/k8s-launch-kit/pkg/networkoperatorplugin/releases"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -120,11 +120,10 @@ func TestIsExampleManifest(t *testing.T) {
 	}
 }
 
-func TestValidateManifestsSkipsHelmValues(t *testing.T) {
-	dir := t.TempDir()
-	require.NoError(t, os.WriteFile(filepath.Join(dir, "values.yaml"), []byte("operator:\n  tag: v26.7.0\n"), 0o600))
-
-	results, err := ValidateManifests(context.Background(), nil, dir)
+func TestValidateBundleSkipsHelmValues(t *testing.T) {
+	artifacts, err := bundle.FromFiles([]bundle.File{{Name: "values.yaml", Content: "operator:\n  tag: v26.7.0\n"}})
+	require.NoError(t, err)
+	results, err := ValidateBundle(context.Background(), nil, artifacts, nil, hostplatform.Kubernetes)
 
 	require.NoError(t, err)
 	assert.Empty(t, results)

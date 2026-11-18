@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/nvidia/k8s-launch-kit/pkg/dpf/app"
 	"github.com/nvidia/k8s-launch-kit/pkg/dpf/bundle"
 	"github.com/nvidia/k8s-launch-kit/pkg/dpf/config"
 	"github.com/nvidia/k8s-launch-kit/pkg/dpf/generation"
@@ -19,6 +20,7 @@ import (
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 	"gopkg.in/yaml.v3"
+	"k8s.io/utils/ptr"
 )
 
 func generatedUseCaseSite(input config.Input) (config.Input, *bundle.Bundle) {
@@ -28,17 +30,20 @@ func generatedUseCaseSite(input config.Input) (config.Input, *bundle.Bundle) {
 	data, err := yaml.Marshal(input.Site)
 	Expect(err).NotTo(HaveOccurred())
 	Expect(os.WriteFile(source, data, 0600)).To(Succeed())
-	var stdout, stderr bytes.Buffer
-	driver := generateDriver{request: GenerateRequest{Inventory: source, UseCase: stringPtr("hbn-bgp"), OutputPath: filepath.Join(root, "bundle"), Stdout: &stdout, Stderr: &stderr}, prepare: prepareFixtureGeneration, fetchChart: func(_ context.Context, address string) ([]byte, error) {
+	fixture, err := config.Load(source)
+	Expect(err).NotTo(HaveOccurred())
+	selected, err := config.WithUseCase(fixture, ptr.To("hbn-bgp"))
+	Expect(err).NotTo(HaveOccurred())
+	resolved, err := app.ResolveGeneration(selected, nil)
+	Expect(err).NotTo(HaveOccurred())
+	retained, err := app.Generate(context.Background(), resolved, func(_ context.Context, address string) ([]byte, error) {
 		if strings.HasSuffix(address, "dpf-operator-v26.8.0.tgz") {
 			return os.ReadFile("../../dpf/bootstrap/testdata/operator/dpf-operator-v26.8.0.tgz")
 		}
 		return os.ReadFile("../../dpf/generation/testdata/doca-hbn-3.5.0.tgz")
-	}}
-	op, err := driver.Bind(target.Invocation{Target: target.DPF, Phase: target.Generate, Output: target.OutputOptions{Format: "json", Quiet: true}})
+	})
 	Expect(err).NotTo(HaveOccurred())
-	Expect(op.Run(context.Background())).To(Succeed())
-	retained, err := bundle.Load(filepath.Join(root, "bundle"))
+	_, err = retained.Publish(context.Background(), filepath.Join(root, "bundle"))
 	Expect(err).NotTo(HaveOccurred())
 	loaded, err := config.Load(source)
 	Expect(err).NotTo(HaveOccurred())
@@ -55,7 +60,7 @@ func (t noDeploymentTransport) RoundTrip(*http.Request) (*http.Response, error) 
 
 var _ = Describe("retained DPF deployment use case", func() {
 	It("reuses omitted and original CLI-overridden selections without changing source or desired overrides", func() {
-		for _, original := range []*string{nil, stringPtr(""), stringPtr("unknown"), stringPtr("hbn-bgp")} {
+		for _, original := range []*string{nil, ptr.To(""), ptr.To("unknown"), ptr.To("hbn-bgp")} {
 			input := deploymentSite()
 			input.Site.DPF.UseCase = original
 			mtu := 1400
@@ -64,7 +69,7 @@ var _ = Describe("retained DPF deployment use case", func() {
 			loaded, retained := generatedUseCaseSite(input)
 			before, err := yaml.Marshal(loaded.Document)
 			Expect(err).NotTo(HaveOccurred())
-			effective, err := withRetainedUseCase(loaded, retained)
+			effective, err := app.WithRetainedUseCase(loaded, retained)
 			Expect(err).NotTo(HaveOccurred())
 			Expect(*effective.Site.DPF.UseCase).To(Equal("hbn-bgp"))
 			Expect(effective.Source).To(Equal(loaded.Source))
@@ -77,7 +82,7 @@ var _ = Describe("retained DPF deployment use case", func() {
 			Expect(loaded.Site.DPF.UseCase).To(Equal(original))
 			plan, err := generation.LoadPlan(retained)
 			Expect(err).NotTo(HaveOccurred())
-			Expect(verifyDeploymentPlan(effective, retained, plan)).To(Succeed())
+			Expect(app.VerifyDeploymentPlan(effective, retained, plan)).To(Succeed())
 			for _, file := range retained.Files() {
 				if file.Path == ".l8k/source-config.yaml" {
 					Expect(file.Data).To(Equal(loaded.Source))
@@ -90,7 +95,7 @@ var _ = Describe("retained DPF deployment use case", func() {
 	})
 
 	It("rejects new conflicting selections before access resolution or report creation", func() {
-		for _, original := range []*string{nil, stringPtr("unknown"), stringPtr("hbn-bgp")} {
+		for _, original := range []*string{nil, ptr.To("unknown"), ptr.To("hbn-bgp")} {
 			input := deploymentSite()
 			input.Site.DPF.UseCase = original
 			loaded, _ := generatedUseCaseSite(input)
@@ -113,33 +118,33 @@ var _ = Describe("retained DPF deployment use case", func() {
 
 	It("preserves current desired changes so retained-plan verification still rejects them", func() {
 		input := deploymentSite()
-		input.Site.DPF.UseCase = stringPtr("unknown")
+		input.Site.DPF.UseCase = ptr.To("unknown")
 		loaded, retained := generatedUseCaseSite(input)
 		loaded.Site.Provisioning.Flavor["dpuMode"] = "nic"
 		data, err := yaml.Marshal(loaded.Site)
 		Expect(err).NotTo(HaveOccurred())
 		current, err := config.Decode(data, loaded.Path)
 		Expect(err).NotTo(HaveOccurred())
-		effective, err := withRetainedUseCase(current, retained)
+		effective, err := app.WithRetainedUseCase(current, retained)
 		Expect(err).NotTo(HaveOccurred())
 		Expect(effective.Site.Provisioning.Flavor["dpuMode"]).To(Equal("nic"))
 		Expect(effective.Source).To(Equal(data))
 		plan, err := generation.LoadPlan(retained)
 		Expect(err).NotTo(HaveOccurred())
-		Expect(verifyDeploymentPlan(effective, retained, plan)).NotTo(Succeed())
+		Expect(app.VerifyDeploymentPlan(effective, retained, plan)).NotTo(Succeed())
 	})
 
 	It("rejects missing or unsupported bundle selections and corrupted source provenance", func() {
 		input := deploymentSite()
-		input.Site.DPF.UseCase = stringPtr("unknown")
+		input.Site.DPF.UseCase = ptr.To("unknown")
 		loaded, retained := generatedUseCaseSite(input)
-		_, err := withRetainedUseCase(loaded, nil)
+		_, err := app.WithRetainedUseCase(loaded, nil)
 		Expect(err).To(HaveOccurred())
 		index := retained.Index()
 		index.Profile, index.BundleDigest = "other", ""
 		unsupported, err := bundle.New(index, retained.Files())
 		Expect(err).NotTo(HaveOccurred())
-		_, err = withRetainedUseCase(loaded, unsupported)
+		_, err = app.WithRetainedUseCase(loaded, unsupported)
 		Expect(err).To(HaveOccurred())
 		index = retained.Index()
 		index.Profile, index.BundleDigest = "", ""
@@ -163,7 +168,7 @@ var _ = Describe("retained DPF deployment use case", func() {
 		calls, transport := 0, http.DefaultTransport
 		http.DefaultTransport = noDeploymentTransport{calls: &calls}
 		DeferCleanup(func() { http.DefaultTransport = transport })
-		for _, original := range []*string{nil, stringPtr("unknown"), stringPtr("")} {
+		for _, original := range []*string{nil, ptr.To("unknown"), ptr.To("")} {
 			input := deploymentSite()
 			input.Site.DPF.UseCase = original
 			input.Site.Management.KubeconfigRef.File = ""
@@ -174,17 +179,25 @@ var _ = Describe("retained DPF deployment use case", func() {
 			}
 			loaded, _ := generatedUseCaseSite(input)
 			Expect(os.WriteFile(loaded.Path, publicFixtureBytes(loaded), 0600)).To(Succeed())
-			var stdout, stderr bytes.Buffer
-			op, err := NewDeployAdapter(DeployRequest{Inventory: loaded.Path, DeploymentFiles: filepath.Join(filepath.Dir(loaded.Path), "bundle"), Stdout: &stdout, Stderr: &stderr}).Bind(target.Invocation{Target: target.DPF, Phase: target.Deploy, Output: target.OutputOptions{Format: "json", Quiet: true}})
-			Expect(err).NotTo(HaveOccurred())
-			ctx, cancel := context.WithCancel(context.Background())
-			cancel()
-			Expect(op.Run(ctx)).To(MatchError(ContainSubstring("context canceled")))
-			Expect(stdout.String()).To(ContainSubstring(`"state":"failed"`))
-			Expect(stdout.String()).NotTo(ContainSubstring("synthetic-not-recorded"))
-			files, err := filepath.Glob(filepath.Join(filepath.Dir(loaded.Path), "l8k-dpf-deploy-*", "*"))
-			Expect(err).NotTo(HaveOccurred())
-			Expect(files).To(BeEmpty(), "canceled deployment must stop before journals or effects")
+			for _, format := range []string{"json", "text"} {
+				var stdout, stderr bytes.Buffer
+				op, err := NewDeployAdapter(DeployRequest{Inventory: loaded.Path, DeploymentFiles: filepath.Join(filepath.Dir(loaded.Path), "bundle"), Stdout: &stdout, Stderr: &stderr}).Bind(target.Invocation{Target: target.DPF, Phase: target.Deploy, Output: target.OutputOptions{Format: format, Quiet: format == "json"}})
+				Expect(err).NotTo(HaveOccurred())
+				ctx, cancel := context.WithCancel(context.Background())
+				cancel()
+				Expect(op.Run(ctx)).To(MatchError(ContainSubstring("context canceled")))
+				if format == "json" {
+					Expect(stdout.String()).To(ContainSubstring(`"state":"failed"`))
+					Expect(stderr.String()).To(BeEmpty())
+				} else {
+					Expect(stdout.String()).To(HavePrefix("DPF deployment: failed\nLast completed stage: none\nReport: unavailable\n"))
+					Expect(stderr.String()).To(ContainSubstring("[RUNNING] Deployment records:"))
+				}
+				Expect(stdout.String()).NotTo(ContainSubstring("synthetic-not-recorded"))
+				files, err := filepath.Glob(filepath.Join(filepath.Dir(loaded.Path), "l8k-dpf-deploy-*", "*"))
+				Expect(err).NotTo(HaveOccurred())
+				Expect(files).To(BeEmpty(), "canceled deployment must stop before journals or effects")
+			}
 		}
 		Expect(calls).To(BeZero())
 	})

@@ -16,8 +16,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/nvidia/k8s-launch-kit/pkg/dpf/discovery"
 	"github.com/nvidia/k8s-launch-kit/pkg/dpf/generation"
+	"github.com/nvidia/k8s-launch-kit/pkg/dpf/managementaccess"
 	authorizationv1 "k8s.io/api/authorization/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
@@ -232,7 +232,7 @@ func TestProjectedRBACPreservesIncompleteAuthorizationReview(t *testing.T) {
 	client.PrependReactor("create", "selfsubjectaccessreviews", func(action k8stesting.Action) (bool, runtime.Object, error) {
 		return true, &authorizationv1.SelfSubjectAccessReview{Status: authorizationv1.SubjectAccessReviewStatus{EvaluationError: "private policy detail"}}, nil
 	})
-	checks := (&APIClient{access: discovery.ManagementClient{Client: client}}).checkProjectedRBACPermissions(context.Background(), preflightPlan{projection: []*unstructured.Unstructured{role}})
+	checks := (&APIClient{access: managementaccess.Client{Client: client}}).checkProjectedRBACPermissions(context.Background(), preflightPlan{projection: []*unstructured.Unstructured{role}})
 	if len(checks) != 1 || checks[0].State != "blocked" || checks[0].ReasonCode != "RBAC_REVIEW_INCOMPLETE" || strings.Contains(checks[0].Message, "private policy detail") {
 		t.Fatalf("incomplete named escalate review was misreported or leaked: %#v", checks)
 	}
@@ -295,7 +295,7 @@ func callerPermissionClient(t *testing.T, server *httptest.Server) *APIClient {
 	}
 	dynamicClient := dynamicfake.NewSimpleDynamicClient(runtime.NewScheme())
 	return &APIClient{
-		access:   discovery.ManagementClient{Client: client, REST: config, Namespace: "dpf-operator-system"},
+		access:   managementaccess.Client{Client: client, REST: config, Namespace: "dpf-operator-system"},
 		dynamic:  dynamicClient,
 		expected: generation.ManagementIdentity{APIEndpoint: callerManagementAPIEndpoint, SystemNamespaceUID: "system-uid-1", TrustDigest: callerManagementTrustDigest(t, server)},
 		version:  "v1.35.4",

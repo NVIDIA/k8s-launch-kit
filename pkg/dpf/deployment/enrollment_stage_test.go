@@ -14,8 +14,9 @@ import (
 	"testing"
 	"time"
 
-	jsonpatch "github.com/evanphx/json-patch/v5"
+	"github.com/nvidia/k8s-launch-kit/pkg/dpf/deployment/internal/controllercontract"
 
+	jsonpatch "github.com/evanphx/json-patch/v5"
 	"github.com/nvidia/k8s-launch-kit/pkg/dpf/bootstrap"
 	"github.com/nvidia/k8s-launch-kit/pkg/dpf/catalog"
 	"github.com/nvidia/k8s-launch-kit/pkg/dpf/generation"
@@ -133,7 +134,7 @@ func (f *enrollmentStageFake) getOperatorCRD(ctx context.Context, name string) (
 func (f *enrollmentStageFake) discoverResourceList(ctx context.Context, gv string) (*metav1.APIResourceList, error) {
 	return f.operator.discoverResourceList(ctx, gv)
 }
-func (f *enrollmentStageFake) observeTenantSources(ctx context.Context, e TenantReadinessExpected) (tenantSources, error) {
+func (f *enrollmentStageFake) observeTenantSources(ctx context.Context, e controllercontract.TenantReadinessExpected) (tenantSources, error) {
 	return f.sources.observeTenantSources(ctx, e)
 }
 func (f *enrollmentStageFake) verifyEnrollmentBMCs(_ context.Context, _ []enrollmentBMC, _ time.Duration, _ *executionJournal) error {
@@ -143,9 +144,6 @@ func (f *enrollmentStageFake) verifyEnrollmentBMCs(_ context.Context, _ []enroll
 		return f.bmcHook(f.bmcCalls)
 	}
 	return nil
-}
-func (f *enrollmentStageFake) executeEnrollmentSecret(ctx context.Context, c ResourceClient, ns, pw string, j *executionJournal) (enrollmentSecretReceipt, error) {
-	return executeEnrollmentSecret(ctx, c, ns, pw, j)
 }
 
 func enrollmentStageFixture(t *testing.T) (*managementExecution, *enrollmentStageFake, managementBootstrapReceipt, tenantStageReceipt, string) {
@@ -284,7 +282,7 @@ func readyEnrollmentObjects(item enrollmentBMC, namespace string) []*unstructure
 func TestEnrollmentStageCreatesOnlySelectedScanAndCredential(t *testing.T) {
 	execution, fake, bootstrapReceipt, tenantReceipt, password := enrollmentStageFixture(t)
 	journal := testJournal(execution)
-	receipt, err := runEnrollmentStage(tenantStageContext(t), fake, execution, bootstrapReceipt, tenantReceipt, fake.selected, password, journal, time.Millisecond, time.Second)
+	receipt, err := runEnrollmentStage(tenantStageContext(t), fake, execution.verificationInputs(), bootstrapReceipt, tenantReceipt, fake.selected, password, journal, time.Millisecond, time.Second)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -305,7 +303,9 @@ func TestEnrollmentStageStopsAtChangedBoundaries(t *testing.T) {
 		want    string
 		creates int
 	}{
-		{name: "wrong tenant expectation", edit: func(_ *enrollmentStageFake, r *tenantStageReceipt) { r.Client.expected.VIP = "192.0.2.99" }, want: "expected configuration", creates: 0},
+		{name: "wrong tenant expectation", edit: func(_ *enrollmentStageFake, r *tenantStageReceipt) {
+			testTenant(r.Client).expected.VIP = "192.0.2.99"
+		}, want: "expected configuration", creates: 0},
 		{name: "admin unavailable", edit: func(f *enrollmentStageFake, _ *tenantStageReceipt) {
 			f.bmcHook = func(int) error { return fmt.Errorf("admin no longer verified") }
 		}, want: "admin", creates: 0},
@@ -341,7 +341,7 @@ func TestEnrollmentStageStopsAtChangedBoundaries(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			execution, fake, br, tr, password := enrollmentStageFixtureFromExecution(t, prepared)
 			tc.edit(fake, &tr)
-			receipt, err := runEnrollmentStage(tenantStageContext(t), fake, execution, br, tr, fake.selected, password, testJournal(execution), time.Millisecond, time.Second)
+			receipt, err := runEnrollmentStage(tenantStageContext(t), fake, execution.verificationInputs(), br, tr, fake.selected, password, testJournal(execution), time.Millisecond, time.Second)
 			if err == nil || !strings.Contains(err.Error(), tc.want) || fake.base.createCount != tc.creates {
 				t.Fatalf("err=%v creates=%d", err, fake.base.createCount)
 			}
@@ -367,7 +367,7 @@ func TestEnrollmentCohortNeverCachesReadyDevice(t *testing.T) {
 				}
 			}
 			journal := testJournal(execution)
-			initial, allReady, err := observeSelectedEnrollment(tenantStageContext(t), fake, execution, selected, make([]enrolledDeviceReceipt, 2), journal)
+			initial, allReady, err := observeSelectedEnrollment(tenantStageContext(t), fake, execution.verificationInputs(), selected, make([]enrolledDeviceReceipt, 2), journal)
 			if err != nil || !allReady {
 				t.Fatalf("initial ready cohort: %v %t", err, allReady)
 			}
@@ -382,7 +382,7 @@ func TestEnrollmentCohortNeverCachesReadyDevice(t *testing.T) {
 			case "status-mismatch":
 				_ = unstructured.SetNestedField(first.Object, "SERIAL-OTHER", "status", "serialNumber")
 			}
-			_, allReady, err = observeSelectedEnrollment(tenantStageContext(t), fake, execution, selected, initial, journal)
+			_, allReady, err = observeSelectedEnrollment(tenantStageContext(t), fake, execution.verificationInputs(), selected, initial, journal)
 			if allReady || change != "lose-readiness" && err == nil {
 				t.Fatalf("cohort drift accepted: ready=%t error=%v", allReady, err)
 			}
@@ -407,7 +407,7 @@ func TestEnrollmentStageRejectsFinalDeviceReplacement(t *testing.T) {
 		}
 		return nil
 	}
-	receipt, err := runEnrollmentStage(tenantStageContext(t), fake, execution, br, tr, fake.selected, password, journal, time.Millisecond, time.Second)
+	receipt, err := runEnrollmentStage(tenantStageContext(t), fake, execution.verificationInputs(), br, tr, fake.selected, password, journal, time.Millisecond, time.Second)
 	if err == nil || !strings.Contains(err.Error(), "ENROLLED_IDENTITY_CHANGED") || receipt.Secret.UID == "" || replacements != 1 ||
 		len(receipt.Devices) != 1 || receipt.Devices[0].DeviceUID != "device-serial-a" || fake.selectorPatches != 0 || fake.base.createCount != 2 {
 		t.Fatalf("final drift result=%+v replacements=%d patches=%d creates=%d err=%v", receipt, replacements, fake.selectorPatches, fake.base.createCount, err)
@@ -443,7 +443,7 @@ func TestEnrollmentStageReportsUnrecoverablePartialScan(t *testing.T) {
 		delete(fake.base.resources, "DPUNode/"+execution.operatorNamespace+"/dpu-node-serial-a")
 	}
 	journal := testJournal(execution)
-	receipt, err := runEnrollmentStage(tenantStageContext(t), fake, execution, br, tr, fake.selected, password, journal, time.Millisecond, time.Second)
+	receipt, err := runEnrollmentStage(tenantStageContext(t), fake, execution.verificationInputs(), br, tr, fake.selected, password, journal, time.Millisecond, time.Second)
 	if err == nil || !strings.Contains(err.Error(), "rescans cannot repair") || receipt.Secret.UID == "" {
 		t.Fatalf("partial scan result=%+v err=%v", receipt, err)
 	}
@@ -454,7 +454,7 @@ func TestEnrollmentStageReportsUnrecoverablePartialScan(t *testing.T) {
 
 func TestEnrollmentScanReportsPartialCreationWithoutSuccessfulScanStatus(t *testing.T) {
 	execution, fake, _, _, _ := enrollmentStageFixture(t)
-	desired := retainedEnrollmentDiscoveries(execution)
+	desired := retainedEnrollmentDiscoveries(execution.verificationInputs())
 	var scan *unstructured.Unstructured
 	for _, obj := range desired {
 		scan = obj
@@ -474,7 +474,7 @@ func TestEnrollmentScanReportsPartialCreationWithoutSuccessfulScanStatus(t *test
 	defer cancel()
 	file := &cancelPendingEnrollmentFile{cancel: cancel, reason: "ENROLLMENT_NODE_CREATION_PENDING"}
 	journal := &executionJournal{file: file, digest: execution.plan.Digest()}
-	err = waitEnrollmentDiscovery(ctx, fake, execution, fake.selected, scan, marked.GetUID(), 5*time.Millisecond, journal)
+	err = waitEnrollmentDiscovery(ctx, fake, execution.verificationInputs(), fake.selected, scan, marked.GetUID(), 5*time.Millisecond, journal)
 	if err == nil || !strings.Contains(err.Error(), "ENROLLMENT_PARTIAL_NODE_MISSING") || fake.base.createCount != 0 {
 		t.Fatalf("partial scan error=%v creates=%d", err, fake.base.createCount)
 	}
@@ -506,7 +506,7 @@ func TestEnrollmentStageReusesExactDevicesAfterZeroNewDevicesScan(t *testing.T) 
 	fake.scanHook = func(scan *unstructured.Unstructured) {
 		_ = unstructured.SetNestedField(scan.Object, int64(0), "status", "foundDPUs")
 	}
-	receipt, err := runEnrollmentStage(tenantStageContext(t), fake, execution, br, tr, fake.selected, password, testJournal(execution), time.Millisecond, time.Second)
+	receipt, err := runEnrollmentStage(tenantStageContext(t), fake, execution.verificationInputs(), br, tr, fake.selected, password, testJournal(execution), time.Millisecond, time.Second)
 	if err != nil || len(receipt.Devices) != 1 || receipt.Devices[0].DeviceUID != "device-serial-a" || fake.base.createCount != 2 {
 		t.Fatalf("exact reuse result=%+v creates=%d err=%v", receipt, fake.base.createCount, err)
 	}
@@ -523,7 +523,7 @@ func TestEnrollmentZeroFoundScanCannotReplaceMissingSelectedDevice(t *testing.T)
 	defer cancel()
 	file := &cancelPendingEnrollmentFile{cancel: cancel, reason: "ENROLLMENT_RESOURCE_PENDING"}
 	journal := &executionJournal{file: file, digest: execution.plan.Digest()}
-	receipt, err := runEnrollmentStage(ctx, fake, execution, br, tr, fake.selected, password, journal, time.Millisecond, time.Second)
+	receipt, err := runEnrollmentStage(ctx, fake, execution.verificationInputs(), br, tr, fake.selected, password, journal, time.Millisecond, time.Second)
 	if err == nil || receipt.Secret.UID == "" || !strings.Contains(file.String(), "ENROLLMENT_RESOURCE_PENDING") {
 		t.Fatalf("missing selected device accepted: %+v %v", receipt, err)
 	}
@@ -570,7 +570,7 @@ func TestEnrollmentStageChecksTenantAfterFinalDeviceReads(t *testing.T) {
 					cancel()
 				}
 			}
-			receipt, err := runEnrollmentStage(ctx, fake, execution, br, tr, fake.selected, password, journal, time.Millisecond, time.Second)
+			receipt, err := runEnrollmentStage(ctx, fake, execution.verificationInputs(), br, tr, fake.selected, password, journal, time.Millisecond, time.Second)
 			if err == nil || finalNodeReads != 1 || injections != 1 || receipt.Secret.UID == "" ||
 				len(receipt.Devices) != 1 || receipt.Devices[0].DeviceUID != "device-serial-a" || fake.selectorPatches != 0 || fake.base.createCount != 2 {
 				t.Fatalf("final read drift accepted: nodeReads=%d injections=%d result=%+v patches=%d creates=%d err=%v", finalNodeReads, injections, receipt, fake.selectorPatches, fake.base.createCount, err)

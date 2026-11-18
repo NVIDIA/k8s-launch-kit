@@ -14,6 +14,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/nvidia/k8s-launch-kit/pkg/dpf/deployment/internal/controllercontract"
+
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime/schema"
@@ -51,9 +53,9 @@ func (r *tenantWaitReconciler) Verify(desired, current *unstructured.Unstructure
 	return nil
 }
 
-type tenantWaitSourceFunc func(context.Context, TenantReadinessExpected) (tenantSources, error)
+type tenantWaitSourceFunc func(context.Context, controllercontract.TenantReadinessExpected) (tenantSources, error)
 
-func (f tenantWaitSourceFunc) observeTenantSources(ctx context.Context, expected TenantReadinessExpected) (tenantSources, error) {
+func (f tenantWaitSourceFunc) observeTenantSources(ctx context.Context, expected controllercontract.TenantReadinessExpected) (tenantSources, error) {
 	return f(ctx, expected)
 }
 
@@ -72,9 +74,9 @@ func TestWaitTenantReadyTransitionsPendingToReady(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
 	journal := newTenantWaitJournal(t, verifier.digest)
-	got, err := waitTenantReady(ctx, resources, source, expected, initial.observed.DPUCluster, types.UID("dc-uid"), verifier, journal, time.Millisecond)
+	got, err := waitTenantReady(testRules(t), ctx, resources, source, expected, initial.observed.DPUCluster, types.UID("dc-uid"), verifier, journal, time.Millisecond)
 	if err != nil || got.DPUCluster == nil || got.DPUCluster.GetUID() != "dc-uid" {
-		t.Fatalf("waitTenantReady() = %#v, %v", got, err)
+		t.Fatalf("waitTenantReady(testRules(t), ) = %#v, %v", got, err)
 	}
 	if source.calls != 2 || resources.calls != 3 || verifier.calls != 5 {
 		t.Fatalf("unexpected polling/final recheck counts: sources=%d resource=%d verify=%d", source.calls, resources.calls, verifier.calls)
@@ -115,7 +117,7 @@ func TestWaitTenantReadyRejectsDPUClusterReplacementAndIntentDrift(t *testing.T)
 			ctx, cancel := context.WithTimeout(context.Background(), time.Second)
 			defer cancel()
 			journal := newTenantWaitJournal(t, verifier.digest)
-			_, err := waitTenantReady(ctx, resources, source, expected, fixture.observed.DPUCluster, "dc-uid", verifier, journal, time.Millisecond)
+			_, err := waitTenantReady(testRules(t), ctx, resources, source, expected, fixture.observed.DPUCluster, "dc-uid", verifier, journal, time.Millisecond)
 			if err == nil || source.calls > 1 {
 				t.Fatalf("wait accepted change or kept polling: err=%v source calls=%d", err, source.calls)
 			}
@@ -143,7 +145,7 @@ func TestWaitTenantReadyHandlesMissingDeniedAndRetryableSources(t *testing.T) {
 			resources := &tenantWaitResource{read: func(_ int) (*unstructured.Unstructured, error) { return fixture.observed.DPUCluster.DeepCopy(), nil }}
 			verifier := &tenantWaitReconciler{digest: "tenant-bundle"}
 			calls := 0
-			source := tenantWaitSourceFunc(func(context.Context, TenantReadinessExpected) (tenantSources, error) {
+			source := tenantWaitSourceFunc(func(context.Context, controllercontract.TenantReadinessExpected) (tenantSources, error) {
 				calls++
 				if calls == 1 {
 					return tenantSources{}, test.first
@@ -153,7 +155,7 @@ func TestWaitTenantReadyHandlesMissingDeniedAndRetryableSources(t *testing.T) {
 			ctx, cancel := context.WithTimeout(context.Background(), time.Second)
 			defer cancel()
 			journal := newTenantWaitJournal(t, verifier.digest)
-			_, err := waitTenantReady(ctx, resources, source, expected, fixture.observed.DPUCluster, "dc-uid", verifier, journal, time.Millisecond)
+			_, err := waitTenantReady(testRules(t), ctx, resources, source, expected, fixture.observed.DPUCluster, "dc-uid", verifier, journal, time.Millisecond)
 			if test.wantTerminal {
 				if err == nil || calls != 1 {
 					t.Fatalf("forbidden source was retried: calls=%d err=%v", calls, err)
@@ -181,11 +183,11 @@ func TestWaitTenantReadyHandlesMissingDeniedAndRetryableSources(t *testing.T) {
 func TestWaitTenantReadyRejectsMalformedOrReplacedTenantSources(t *testing.T) {
 	for _, test := range []struct {
 		name   string
-		mutate func(*TenantReadinessObserved)
+		mutate func(*controllercontract.TenantReadinessObserved)
 		want   string
 	}{
-		{name: "source DPUCluster UID changed", mutate: func(observed *TenantReadinessObserved) { observed.DPUCluster.SetUID("replacement") }, want: "TENANT_DPUCLUSTER_REPLACED"},
-		{name: "tenant network spec conflicts", mutate: func(observed *TenantReadinessObserved) {
+		{name: "source DPUCluster UID changed", mutate: func(observed *controllercontract.TenantReadinessObserved) { observed.DPUCluster.SetUID("replacement") }, want: "TENANT_DPUCLUSTER_REPLACED"},
+		{name: "tenant network spec conflicts", mutate: func(observed *controllercontract.TenantReadinessObserved) {
 			observed.TenantControlPlane.Object["spec"].(map[string]any)["networkProfile"].(map[string]any)["address"] = "192.0.2.99"
 		}, want: "TENANT_CONTROL_PLANE_SPEC_MISMATCH"},
 	} {
@@ -193,7 +195,7 @@ func TestWaitTenantReadyRejectsMalformedOrReplacedTenantSources(t *testing.T) {
 			expected, fixture := tenantWaitFixture(t)
 			resources := &tenantWaitResource{read: func(_ int) (*unstructured.Unstructured, error) { return fixture.observed.DPUCluster.DeepCopy(), nil }}
 			verifier := &tenantWaitReconciler{digest: "tenant-bundle"}
-			source := tenantWaitSourceFunc(func(context.Context, TenantReadinessExpected) (tenantSources, error) {
+			source := tenantWaitSourceFunc(func(context.Context, controllercontract.TenantReadinessExpected) (tenantSources, error) {
 				current := cloneTenantReadinessObserved(fixture.observed)
 				test.mutate(&current)
 				return tenantSources{observed: current}, nil
@@ -201,7 +203,7 @@ func TestWaitTenantReadyRejectsMalformedOrReplacedTenantSources(t *testing.T) {
 			ctx, cancel := context.WithTimeout(context.Background(), time.Second)
 			defer cancel()
 			journal := newTenantWaitJournal(t, verifier.digest)
-			_, err := waitTenantReady(ctx, resources, source, expected, fixture.observed.DPUCluster, "dc-uid", verifier, journal, time.Millisecond)
+			_, err := waitTenantReady(testRules(t), ctx, resources, source, expected, fixture.observed.DPUCluster, "dc-uid", verifier, journal, time.Millisecond)
 			if err == nil {
 				t.Fatal("accepted changed or malformed source state")
 			}
@@ -220,7 +222,7 @@ func TestWaitTenantReadyDoesNotRecreateMissingDPUCluster(t *testing.T) {
 		reads++
 		return nil, apierrors.NewNotFound(schema.GroupResource{Group: "provisioning.dpu.nvidia.com", Resource: "dpuclusters"}, expected.Name)
 	}}
-	source := tenantWaitSourceFunc(func(context.Context, TenantReadinessExpected) (tenantSources, error) {
+	source := tenantWaitSourceFunc(func(context.Context, controllercontract.TenantReadinessExpected) (tenantSources, error) {
 		sourceCalls++
 		return tenantSources{}, nil
 	})
@@ -228,7 +230,7 @@ func TestWaitTenantReadyDoesNotRecreateMissingDPUCluster(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
 	defer cancel()
 	journal := newTenantWaitJournal(t, verifier.digest)
-	_, err := waitTenantReady(ctx, resources, source, expected, fixture.observed.DPUCluster, "dc-uid", verifier, journal, time.Millisecond)
+	_, err := waitTenantReady(testRules(t), ctx, resources, source, expected, fixture.observed.DPUCluster, "dc-uid", verifier, journal, time.Millisecond)
 	if err == nil || reads != 1 || sourceCalls != 0 {
 		t.Fatalf("missing DPUCluster was recreated/retried: reads=%d sources=%d err=%v", reads, sourceCalls, err)
 	}
@@ -245,7 +247,7 @@ func TestWaitTenantReadyPersistsCancellationAndStopsOnJournalFailure(t *testing.
 		resources := &tenantWaitResource{read: func(_ int) (*unstructured.Unstructured, error) { return fixture.observed.DPUCluster.DeepCopy(), nil }}
 		verifier := &tenantWaitReconciler{digest: "tenant-bundle"}
 		calls := 0
-		source := tenantWaitSourceFunc(func(context.Context, TenantReadinessExpected) (tenantSources, error) {
+		source := tenantWaitSourceFunc(func(context.Context, controllercontract.TenantReadinessExpected) (tenantSources, error) {
 			calls++
 			cancel()
 			pending := fixture
@@ -254,7 +256,7 @@ func TestWaitTenantReadyPersistsCancellationAndStopsOnJournalFailure(t *testing.
 			return pending, nil
 		})
 		journal := newTenantWaitJournal(t, verifier.digest)
-		_, err := waitTenantReady(ctx, resources, source, expected, fixture.observed.DPUCluster, "dc-uid", verifier, journal, time.Millisecond)
+		_, err := waitTenantReady(testRules(t), ctx, resources, source, expected, fixture.observed.DPUCluster, "dc-uid", verifier, journal, time.Millisecond)
 		if !errors.Is(err, context.Canceled) || calls != 1 {
 			t.Fatalf("cancel result: err=%v calls=%d", err, calls)
 		}
@@ -268,7 +270,7 @@ func TestWaitTenantReadyPersistsCancellationAndStopsOnJournalFailure(t *testing.
 		expected, fixture := tenantWaitFixture(t)
 		resources := &tenantWaitResource{read: func(_ int) (*unstructured.Unstructured, error) { return fixture.observed.DPUCluster.DeepCopy(), nil }}
 		verifier := &tenantWaitReconciler{digest: "tenant-bundle"}
-		source := tenantWaitSourceFunc(func(context.Context, TenantReadinessExpected) (tenantSources, error) {
+		source := tenantWaitSourceFunc(func(context.Context, controllercontract.TenantReadinessExpected) (tenantSources, error) {
 			pending := fixture
 			pending.observed.TenantControlPlane = fixture.observed.TenantControlPlane.DeepCopy()
 			pending.observed.TenantControlPlane.Object["status"].(map[string]any)["kubernetesResources"].(map[string]any)["version"].(map[string]any)["status"] = "Provisioning"
@@ -277,7 +279,7 @@ func TestWaitTenantReadyPersistsCancellationAndStopsOnJournalFailure(t *testing.
 		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Millisecond)
 		defer cancel()
 		journal := newTenantWaitJournal(t, verifier.digest)
-		_, err := waitTenantReady(ctx, resources, source, expected, fixture.observed.DPUCluster, "dc-uid", verifier, journal, time.Second)
+		_, err := waitTenantReady(testRules(t), ctx, resources, source, expected, fixture.observed.DPUCluster, "dc-uid", verifier, journal, time.Second)
 		if !errors.Is(err, context.DeadlineExceeded) {
 			t.Fatalf("timeout result: %v", err)
 		}
@@ -299,14 +301,14 @@ func TestWaitTenantReadyPersistsCancellationAndStopsOnJournalFailure(t *testing.
 		verifier := &tenantWaitReconciler{digest: journal.digest}
 		ctx, cancel := context.WithTimeout(context.Background(), time.Second)
 		defer cancel()
-		_, err := waitTenantReady(ctx, resources, &tenantSourceStub{sources: fixture}, expected, fixture.observed.DPUCluster, "dc-uid", verifier, journal, time.Millisecond)
+		_, err := waitTenantReady(testRules(t), ctx, resources, &tenantSourceStub{sources: fixture}, expected, fixture.observed.DPUCluster, "dc-uid", verifier, journal, time.Millisecond)
 		if err == nil || reads != 0 {
 			t.Fatalf("read continued without a durable start receipt: err=%v reads=%d", err, reads)
 		}
 	})
 }
 
-func tenantWaitFixture(t *testing.T) (TenantReadinessExpected, tenantSources) {
+func tenantWaitFixture(t *testing.T) (controllercontract.TenantReadinessExpected, tenantSources) {
 	t.Helper()
 	expected, observed := readyTenantFixture(t)
 	return expected, tenantSources{observed: observed}
@@ -367,7 +369,7 @@ func TestWaitTenantReadyRechecksFinalStatusAndCancellation(t *testing.T) {
 			source := &tenantSourceStub{sources: fixture}
 			verifier := &tenantWaitReconciler{digest: "tenant-bundle"}
 			journal := newTenantWaitJournal(t, verifier.digest)
-			_, err := waitTenantReady(ctx, resources, source, expected, fixture.observed.DPUCluster, "dc-uid", verifier, journal, time.Millisecond)
+			_, err := waitTenantReady(testRules(t), ctx, resources, source, expected, fixture.observed.DPUCluster, "dc-uid", verifier, journal, time.Millisecond)
 			events := tenantWaitEvents(t, journal)
 			if scenario == "status regresses" {
 				if err != nil || source.calls != 2 || resources.calls != 4 {

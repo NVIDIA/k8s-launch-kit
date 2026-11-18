@@ -27,6 +27,7 @@ import (
 	"github.com/nvidia/k8s-launch-kit/pkg/bundle"
 	"github.com/nvidia/k8s-launch-kit/pkg/config"
 	pkgerrors "github.com/nvidia/k8s-launch-kit/pkg/errors"
+	"github.com/nvidia/k8s-launch-kit/pkg/hostplatform"
 	"github.com/nvidia/k8s-launch-kit/pkg/networkoperatorplugin/crstate"
 	"github.com/nvidia/k8s-launch-kit/pkg/networkoperatorplugin/preflight"
 	"github.com/nvidia/k8s-launch-kit/pkg/profiles"
@@ -49,7 +50,9 @@ const defaultHelmInstallTimeout = 10 * time.Minute
 // callsite readable as Phase 0 (helm install) and the existing four phases
 // grow more parameters over time.
 type DeployOptions struct {
-	Config *config.LaunchKitConfig
+	// Platform is selected once after config resolution and retained during retries.
+	Platform hostplatform.Selection
+	Config   *config.LaunchKitConfig
 	// LaunchKitVersion is applied to resources rendered by Helm.
 	LaunchKitVersion string
 
@@ -115,15 +118,32 @@ type appliedManifest struct {
 // by the launcher after ApplyOptionsToConfig has settled the config).
 func (p *NetworkOperatorPlugin) DeployProfile(ctx context.Context, profile *profiles.Profile, kubeClient client.Client, manifestsDir string) error {
 	_ = profile
-	return ApplyManifestsFromDir(ctx, kubeClient, manifestsDir, p.deployOptions())
+	opts, err := p.deployOptions()
+	if err != nil {
+		return err
+	}
+	return ApplyManifestsFromDir(ctx, kubeClient, manifestsDir, opts)
 }
 
 func (p *NetworkOperatorPlugin) DeployBundle(ctx context.Context, kubeClient client.Client, artifacts *bundle.Bundle) error {
-	return ApplyBundle(ctx, kubeClient, artifacts, p.deployOptions())
+	opts, err := p.deployOptions()
+	if err != nil {
+		return err
+	}
+	return ApplyBundle(ctx, kubeClient, artifacts, opts)
 }
 
-func (p *NetworkOperatorPlugin) deployOptions() DeployOptions {
+func (p *NetworkOperatorPlugin) deployOptions() (DeployOptions, error) {
+	var flavor string
+	if p.LaunchKitConfig != nil {
+		flavor = p.LaunchKitConfig.Flavor
+	}
+	platform, err := hostplatform.Select(flavor)
+	if err != nil {
+		return DeployOptions{}, err
+	}
 	return DeployOptions{
+		Platform:          platform,
 		Config:            p.LaunchKitConfig,
 		LaunchKitVersion:  p.LaunchKitVersion,
 		DryRun:            p.DryRun,
@@ -132,7 +152,7 @@ func (p *NetworkOperatorPlugin) deployOptions() DeployOptions {
 		RestConfig:        p.RESTConfig,
 		NetworkOperator:   p.NetworkOperator,
 		DOCAVersion:       p.DOCAVersion,
-	}
+	}, nil
 }
 
 // ApplyManifestsFromDir reads Kubernetes manifests from manifestsDir and
@@ -209,8 +229,11 @@ func applyBundleWithInstaller(ctx context.Context, kubeClient client.Client, art
 	}
 
 	uiOutput := ui.FromContext(ctx)
-	ocp := opts.Config != nil && opts.Config.Flavor == config.FlavorOCP
-	selected, err := prepareDeploymentObjects(artifacts, ocp)
+	policy, err := deploymentPolicyFor(opts.Platform, opts.Config)
+	if err != nil {
+		return err
+	}
+	selected, err := policy.prepare(artifacts)
 	if err != nil {
 		return pkgerrors.NewValidationError("invalid deployment artifacts", err, "Correct the generated manifests and rerun deploy")
 	}
@@ -223,36 +246,17 @@ func applyBundleWithInstaller(ctx context.Context, kubeClient client.Client, art
 	if err := checkBundleTargetScopes(ctx, kubeClient, artifacts, opts.Config); err != nil {
 		return pkgerrors.NewValidationError("invalid hardware target scope", err, "Correct selectors and worker inventory, or regenerate legacy artifacts")
 	}
-	if ocp {
-		if _, present := artifacts.ValuesContent(); present {
-			return pkgerrors.NewValidationError("OpenShift deployment contains values.yaml; regenerate with --flavor ocp and remove stale Helm values", nil, "Remove stale values.yaml")
-		}
-		if err := operatorReadinessError(CheckOCPOperators(ctx, kubeClient, opts.Config, true), opts.Config); err != nil {
-			return err
-		}
-		opts.SkipHelmChart = true
-	}
-
-	// Inspect networking ownership before Helm or overwrite remediation.
-	if err := checkSecondaryNetworkDeployment(ctx, kubeClient, selected.ncp, opts.Config); err != nil {
+	if err := policy.checkPrerequisites(ctx, kubeClient, artifacts, opts.Config); err != nil {
 		return err
 	}
 
-	if opts.OverwriteExisting && !ocp {
-		in, err := buildPreflightInputs(kubeClient, artifacts, opts)
-		if err != nil {
-			return err
-		}
-		if err := preflight.CheckSecondaryNetworkRemovals(ctx, in); err != nil {
-			return fmt.Errorf("secondary-network ownership check before overwrite: %w", err)
-		}
+	// Inspect networking ownership before Helm or overwrite remediation.
+	if err := checkSecondaryNetworkDeployment(ctx, kubeClient, selected.ncp, opts.Config, opts.Platform); err != nil {
+		return err
 	}
 
-	// Phase 0 — helm install/upgrade the network-operator chart when
-	// values.yaml is present and the caller supplied the helm-install
-	// metadata. Skipped silently otherwise so users managing the chart
-	// out of band can keep using the standalone `l8k deploy`.
-	if err := runHelmInstallPhaseWithInstaller(ctx, artifacts, opts, uiOutput, install); err != nil {
+	// Bootstrap stays after ownership checks and before common preflight.
+	if err := policy.bootstrap(ctx, kubeClient, artifacts, opts, install); err != nil {
 		return err
 	}
 
@@ -261,25 +265,21 @@ func applyBundleWithInstaller(ctx context.Context, kubeClient client.Client, art
 	// Without --overwrite-existing: fail fast with all failures listed.
 	// With it: log + remediate strays (helm + NCP drift are resolved by
 	// the Phase 0 install and the Phase 1 SSA apply respectively).
-	if err := runPreflightPhase(ctx, kubeClient, artifacts, opts, uiOutput); err != nil {
+	if err := policy.preflight(ctx, kubeClient, artifacts, opts); err != nil {
 		return err
 	}
 
 	ncpObj, nnpObjs, otherDocs := selected.ncp, selected.nnps, selected.others
-	if ocp {
-		if err := applyOCPOperatorConfiguration(ctx, kubeClient, opts.Config, selected.operatorConfigs, opts.DryRun); err != nil {
-			return err
-		}
+	if err := policy.configureAfterPreflight(ctx, kubeClient, opts.Config, selected.operatorConfigs, opts.DryRun); err != nil {
+		return err
 	}
 
 	dryRun := opts.DryRun
-
-	var registry *crstate.Registry
-	if ocp {
-		registry = crstate.NewOpenShift()
-	} else {
-		registry = crstate.NewDefault()
+	readPolicy, err := resourceReadPolicyFor(opts.Platform)
+	if err != nil {
+		return err
 	}
+	registry := readPolicy.readiness()
 
 	// Compute total phase count for the headers — skip empty phases so
 	// users don't see "Phase 2/4" when there are no NNPs.
@@ -295,7 +295,7 @@ func applyBundleWithInstaller(ctx context.Context, kubeClient client.Client, art
 	// Phase 1 — NicClusterPolicy.
 	if ncpObj != nil {
 		uiOutput.Section(fmt.Sprintf("Phase %d/%d — NicClusterPolicy", phases.next(), phases.total))
-		if err := applyAndWait(ctx, kubeClient, registry, ncpObj, dryRun, manifestLabel(ncpObj, 0, 0), opts.Config); err != nil {
+		if err := applyAndWait(ctx, kubeClient, registry, ncpObj, dryRun, manifestLabel(ncpObj, 0, 0), opts.Config, opts.Platform); err != nil {
 			return err
 		}
 	}
@@ -304,7 +304,7 @@ func applyBundleWithInstaller(ctx context.Context, kubeClient client.Client, art
 	if len(nnpObjs) > 0 {
 		uiOutput.Section(fmt.Sprintf("Phase %d/%d — NicNodePolicies (%d)", phases.next(), phases.total, len(nnpObjs)))
 		for i, obj := range nnpObjs {
-			if err := applyAndWait(ctx, kubeClient, registry, obj, dryRun, manifestLabel(obj, i+1, len(nnpObjs)), opts.Config); err != nil {
+			if err := applyAndWait(ctx, kubeClient, registry, obj, dryRun, manifestLabel(obj, i+1, len(nnpObjs)), opts.Config, opts.Platform); err != nil {
 				return err
 			}
 		}
@@ -355,7 +355,7 @@ func applyBundleWithInstaller(ctx context.Context, kubeClient client.Client, art
 			// desired selectors/source metadata immutable for polling and reapply.
 			applied := obj.DeepCopy()
 			if err := applyUnstructuredWithRetry(ctx, kubeClient, applied, dryRun); err != nil {
-				if ocp && meta.IsNoMatchError(err) && obj.GetAPIVersion() == "nv-ipam.nvidia.com/v1alpha1" && obj.GetKind() == "IPPool" && ncpObj != nil {
+				if meta.IsNoMatchError(err) && policy.canRetryDependentAPI(obj, ncpObj) {
 					if dryRun {
 						deferred = append(deferred, label)
 						uiOutput.Warning("Deferred dry-run API validation for %s until NicClusterPolicy installs NV-IPAM", label)
@@ -396,7 +396,7 @@ func applyBundleWithInstaller(ctx context.Context, kubeClient client.Client, art
 		uiOutput.Section(fmt.Sprintf("Phase %d/%d — Verifying %d manifest(s) reconcile", phases.next(), phases.total, len(appliedOthers)))
 		for i, am := range appliedOthers {
 			if err := pollUntilTerminal(ctx, kubeClient, registry, am.desired,
-				manifestLabel(am.desired, i+1, len(appliedOthers)), am.awaitObservationAfterRV, opts.Config); err != nil {
+				manifestLabel(am.desired, i+1, len(appliedOthers)), am.awaitObservationAfterRV, opts.Config, opts.Platform); err != nil {
 				return err
 			}
 		}
@@ -456,7 +456,7 @@ func retryDependentAPIWithInterval(ctx context.Context, c client.Client, desired
 // even started. Network Operator's NicClusterPolicyStatus carries no
 // `observedGeneration`, so this resourceVersion-bump heuristic is the
 // closest signal we have that the controller has reacted.
-func applyAndWait(ctx context.Context, c client.Client, registry *crstate.Registry, obj *unstructured.Unstructured, dryRun bool, label string, cfg ...*config.LaunchKitConfig) error {
+func applyAndWait(ctx context.Context, c client.Client, registry *crstate.Registry, obj *unstructured.Unstructured, dryRun bool, label string, cfg *config.LaunchKitConfig, platform hostplatform.Selection) error {
 	uiOutput := ui.FromContext(ctx)
 
 	// Pre-apply observation: capture the object's current
@@ -470,12 +470,8 @@ func applyAndWait(ctx context.Context, c client.Client, registry *crstate.Regist
 		preApplyGen = pre.GetGeneration()
 	}
 
-	var sourceConfig *config.LaunchKitConfig
-	if len(cfg) > 0 {
-		sourceConfig = cfg[0]
-	}
 	if isNicClusterPolicy(obj) {
-		if err := checkSecondaryNetworkDeployment(ctx, c, obj, sourceConfig); err != nil {
+		if err := checkSecondaryNetworkDeployment(ctx, c, obj, cfg, platform); err != nil {
 			return err
 		}
 	}
@@ -509,7 +505,7 @@ func applyAndWait(ctx context.Context, c client.Client, registry *crstate.Regist
 			"appliedGeneration", applied.GetGeneration(),
 			"appliedResourceVersion", awaitObservationAfterRV)
 	}
-	return pollUntilTerminal(ctx, c, registry, obj, label, awaitObservationAfterRV, cfg...)
+	return pollUntilTerminal(ctx, c, registry, obj, label, awaitObservationAfterRV, cfg, platform)
 }
 
 // pollUntilTerminal polls the registry's Validator for obj until it
@@ -536,10 +532,10 @@ func applyAndWait(ctx context.Context, c client.Client, registry *crstate.Regist
 // onto the same row. The reason is deduped against the previous tick
 // so a noisy 3-second polling loop only emits a fresh line when
 // something actually changed.
-func pollUntilTerminal(ctx context.Context, c client.Client, registry *crstate.Registry, obj *unstructured.Unstructured, label, awaitObservationAfterRV string, cfg ...*config.LaunchKitConfig) error {
+func pollUntilTerminal(ctx context.Context, c client.Client, registry *crstate.Registry, obj *unstructured.Unstructured, label, awaitObservationAfterRV string, cfg *config.LaunchKitConfig, platform hostplatform.Selection) error {
 	return pollUntilTerminalWithRetryableErrorTimeout(
 		ctx, c, registry, obj, label, awaitObservationAfterRV,
-		manifestRetryableErrorTimeout(obj), deployPollInterval, cfg...,
+		manifestRetryableErrorTimeout(obj), deployPollInterval, cfg, platform,
 	)
 }
 
@@ -551,12 +547,9 @@ func pollUntilTerminalWithRetryableErrorTimeout(
 	label, awaitObservationAfterRV string,
 	retryableErrorTimeout time.Duration,
 	pollInterval time.Duration,
-	cfg ...*config.LaunchKitConfig,
+	cfg *config.LaunchKitConfig,
+	platform hostplatform.Selection,
 ) error {
-	var sourceConfig *config.LaunchKitConfig
-	if len(cfg) > 0 {
-		sourceConfig = cfg[0]
-	}
 	uiOutput := ui.FromContext(ctx)
 	progress := uiOutput.StartProgress(fmt.Sprintf("Waiting for %s to reconcile", label))
 	log.Log.Info("Waiting for manifest to reconcile", "kind", obj.GetKind(), "name", obj.GetName(), "namespace", obj.GetNamespace())
@@ -675,7 +668,7 @@ func pollUntilTerminalWithRetryableErrorTimeout(
 			}
 		}
 
-		scopeMessage, scopeErr := inspectLiveTargetScope(ctx, c, obj, sourceConfig)
+		scopeMessage, scopeErr := inspectLiveTargetScope(ctx, c, obj, cfg)
 		if scopeErr != nil {
 			if err := ctx.Err(); err != nil {
 				progress.Fail(err.Error())
@@ -725,12 +718,12 @@ func pollUntilTerminalWithRetryableErrorTimeout(
 				uiOutput.Warning("%s went missing mid-flight; re-applying", label)
 				log.Log.Info("Manifest reported not-deployed; re-applying",
 					"kind", obj.GetKind(), "name", obj.GetName())
-				if _, err := inspectDesiredTargetScope(ctx, c, obj, sourceConfig); err != nil {
+				if _, err := inspectDesiredTargetScope(ctx, c, obj, cfg); err != nil {
 					progress.Fail(err.Error())
 					return fmt.Errorf("%s target scope: %w", label, err)
 				}
 				if isNicClusterPolicy(obj) {
-					if err := checkSecondaryNetworkDeployment(ctx, c, obj, sourceConfig); err != nil {
+					if err := checkSecondaryNetworkDeployment(ctx, c, obj, cfg, platform); err != nil {
 						progress.Fail(fmt.Sprintf("Re-apply of %s blocked: %v", label, err))
 						return err
 					}
@@ -864,7 +857,7 @@ func applyUnstructured(ctx context.Context, c client.Client, obj *unstructured.U
 	return c.Apply(ctx, client.ApplyConfigurationFromUnstructured(obj), opts...)
 }
 
-// runHelmInstallPhase performs Phase 0: install (or upgrade) the
+// runHelmInstallPhaseWithInstaller performs Phase 0: install (or upgrade) the
 // network-operator helm chart from values.yaml in the deployment dir. The
 // phase is a no-op when:
 //   - values.yaml is absent (user manages the chart out of band),
@@ -874,10 +867,6 @@ func applyUnstructured(ctx context.Context, c client.Client, obj *unstructured.U
 //
 // A value-conflict against an existing release surfaces as a
 // DeploymentError pointing at --overwrite-existing.
-func runHelmInstallPhase(ctx context.Context, artifacts *bundle.Bundle, opts DeployOptions, uiOutput ui.Output) error {
-	return runHelmInstallPhaseWithInstaller(ctx, artifacts, opts, uiOutput, installOrUpgradeValues)
-}
-
 func runHelmInstallPhaseWithInstaller(ctx context.Context, artifacts *bundle.Bundle, opts DeployOptions, uiOutput ui.Output, install helmValuesInstaller) error {
 	if opts.SkipHelmChart {
 		log.Log.V(1).Info("Network Operator Helm management disabled; skipping operator install")
@@ -957,8 +946,8 @@ func runHelmInstallPhaseWithInstaller(ctx context.Context, artifacts *bundle.Bun
 	return err
 }
 
-// runPreflightPhase runs the preflight checks (chart version, values, NCP
-// component versions, stray CRs) and either fails fast or remediates strays.
+// evaluatePreflightResults reports the checks selected by the platform policy
+// and either fails fast or remediates strays.
 //
 //   - Without --overwrite-existing, any non-skipped failure aborts the deploy
 //     with a structured error listing every failed check. The user sees ALL
@@ -971,22 +960,7 @@ func runHelmInstallPhaseWithInstaller(ctx context.Context, artifacts *bundle.Bun
 // Phase 0.5 is a no-op when no preflight check is actionable — typically a
 // standalone `l8k deploy` with no l8k-config.yaml and no helm release in
 // the namespace yet.
-func runPreflightPhase(ctx context.Context, kubeClient client.Client, artifacts *bundle.Bundle, opts DeployOptions, uiOutput ui.Output) error {
-	in, err := buildPreflightInputs(kubeClient, artifacts, opts)
-	if err != nil {
-		return err
-	}
-
-	results := preflight.RunAll(ctx, in)
-	if opts.Config != nil && opts.Config.Flavor == config.FlavorOCP {
-		filtered := results[:0]
-		for _, result := range results {
-			if result.Code != preflight.CodeStrayCRs {
-				filtered = append(filtered, result)
-			}
-		}
-		results = filtered
-	}
+func evaluatePreflightResults(ctx context.Context, in preflight.Inputs, results []preflight.Result, opts DeployOptions, uiOutput ui.Output) error {
 	failedCount := 0
 	for _, r := range results {
 		switch {

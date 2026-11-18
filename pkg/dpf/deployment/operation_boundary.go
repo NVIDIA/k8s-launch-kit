@@ -18,7 +18,7 @@ import (
 // operator API nor an absent operator namespace requires installation first.
 // This early observation never replaces the final create-only reservation.
 func checkInitialOperationVacancy(ctx context.Context, client *APIClient, execution *managementExecution) error {
-	deployment, err := retainedDeploymentObject(execution)
+	deployment, err := retainedDeploymentObject(execution.verificationInputs())
 	if err != nil {
 		return operationReservationFailure(ctx, "OPERATION_PLAN_INVALID", err)
 	}
@@ -94,7 +94,7 @@ func operationReservationFailure(ctx context.Context, code string, cause error) 
 
 // operationReservationCheck projects only this owner's finite diagnostics.
 // Rebuild the message instead of publishing arbitrary error or cause text.
-func operationReservationCheck(execution *managementExecution, err error) inventory.Check {
+func operationReservationCheck(execution *managementVerificationInputs, err error) inventory.Check {
 	subject := "retained DPUDeployment"
 	if deployment, planErr := retainedDeploymentObject(execution); planErr == nil {
 		subject = deployment.GetNamespace() + "/" + operationName(deployment)

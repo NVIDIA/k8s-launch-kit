@@ -10,6 +10,7 @@ import (
 	"os"
 	"path/filepath"
 
+	"github.com/nvidia/k8s-launch-kit/pkg/dpf/app"
 	"github.com/nvidia/k8s-launch-kit/pkg/dpf/bundle"
 	"github.com/nvidia/k8s-launch-kit/pkg/dpf/config"
 	"github.com/nvidia/k8s-launch-kit/pkg/dpf/generation"
@@ -46,7 +47,6 @@ var _ = Describe("DPF public input workflow", func() {
 		// public parser, recorded-intent gate and maintained release resolver.
 		driver := generateDriver{
 			request: GenerateRequest{Inventory: path, UserConfig: "", UseCase: nil, OutputPath: filepath.Join(root, "bundle"), Deploy: false, Stdout: &stdout, Stderr: &stderr},
-			prepare: nil,
 			fetchChart: func(_ context.Context, address string) ([]byte, error) {
 				file, ok := charts[address]
 				Expect(ok).To(BeTrue(), "only the selected release's chart coordinates may be requested")
@@ -63,6 +63,7 @@ var _ = Describe("DPF public input workflow", func() {
 		))
 		var result map[string]any
 		Expect(json.Unmarshal(stdout.Bytes(), &result)).To(Succeed())
+		Expect(stderr.String()).To(BeEmpty())
 		Expect(result["state"]).To(Equal("generated"))
 		Expect(result["deploymentReadiness"]).To(Equal("not-evaluated"))
 		retained, err := bundle.Load(filepath.Join(root, "bundle"))
@@ -120,7 +121,7 @@ var _ = Describe("DPF public input workflow", func() {
 		path, overrides := filepath.Join(root, "discovered.yaml"), filepath.Join(root, "overrides.yaml")
 		Expect(os.WriteFile(path, publicFixtureBytes(generationSite()), 0600)).To(Succeed())
 		Expect(os.WriteFile(overrides, []byte("useCase: hbn-bgp\nhbn: {networking: {fabricVRF: changed}}\n"), 0600)).To(Succeed())
-		_, err := prepareGeneration(GenerateRequest{Inventory: path, UserConfig: overrides})
+		_, err := app.PrepareGeneration(app.GenerationRequest{Inventory: path, UserConfig: overrides})
 		Expect(err).To(MatchError(ContainSubstring("discovery")))
 	})
 	It("restores retained allowed settings for a fresh access seed without importing bundle access or implementation", func() {
@@ -138,7 +139,7 @@ var _ = Describe("DPF public input workflow", func() {
 		Expect(err).NotTo(HaveOccurred())
 		plan, err := generation.LoadPlan(retained)
 		Expect(err).NotTo(HaveOccurred())
-		effective, err := withRetainedConfiguration(current, plan)
+		effective, err := app.WithRetainedConfiguration(current, plan)
 		Expect(err).NotTo(HaveOccurred())
 		Expect(effective.Site.Management.KubeconfigRef.File).To(Equal("./new-access.kubeconfig"))
 		Expect(effective.Source).To(Equal(data))

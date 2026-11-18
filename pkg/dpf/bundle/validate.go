@@ -8,7 +8,6 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"io"
 	"path"
@@ -331,32 +330,19 @@ type stageResource struct {
 }
 
 func parseStageResources(stage Stage, resources []stageResource) ([]Document, error) {
-	// Adapt nested paths to the shared flat parser once per stage. Numeric flat
-	// names preserve declared order without inheriting Host filename-role rules.
 	files := make([]shared.File, 0, len(resources))
 	sources := map[string]stageResource{}
-	for n, resource := range resources {
-		name := fmt.Sprintf("resource-%08d.yaml", n)
-		files = append(files, shared.File{Name: name, Content: string(resource.data)})
-		sources[name] = resource
+	for _, resource := range resources {
+		files = append(files, shared.File{Name: resource.path, Content: string(resource.data)})
+		sources[resource.path] = resource
 	}
-	parsed, err := shared.FromFiles(files)
+	parsed, err := shared.ParseResources(files, shared.Deployment)
 	if err != nil {
-		var sourceErr *shared.Error
-		if errors.As(err, &sourceErr) {
-			source := sourceErr.Source
-			source.File = sources[source.File].path
-			reason := sourceErr.Reason
-			for name, resource := range sources {
-				reason = strings.ReplaceAll(reason, name, resource.path)
-			}
-			return nil, &shared.Error{Source: source, Reason: reason, Err: sourceErr.Err}
-		}
 		return nil, err
 	}
 	var docs []Document
 	counts := map[string]int{}
-	for _, item := range parsed.Documents() {
+	for _, item := range parsed {
 		resource := sources[item.Source().File]
 		counts[resource.path]++
 		ref := item.Ref()

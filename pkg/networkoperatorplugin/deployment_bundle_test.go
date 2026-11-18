@@ -13,6 +13,7 @@ import (
 	"github.com/nvidia/k8s-launch-kit/pkg/bundle"
 	"github.com/nvidia/k8s-launch-kit/pkg/config"
 	apperrors "github.com/nvidia/k8s-launch-kit/pkg/errors"
+	"github.com/nvidia/k8s-launch-kit/pkg/hostplatform"
 	"github.com/nvidia/k8s-launch-kit/pkg/networkoperatorplugin/preflight"
 	"github.com/onsi/ginkgo/v2"
 	"github.com/onsi/gomega"
@@ -27,7 +28,7 @@ var _ = ginkgo.Describe("deployment preparation", func() {
 			return nil
 		}
 	}
-	installOpts := DeployOptions{RestConfig: &rest.Config{}, NetworkOperator: &config.NetworkOperatorConfig{HelmRepoURL: "https://example.invalid", Version: "v1"}}
+	installOpts := DeployOptions{Platform: hostplatform.Kubernetes, RestConfig: &rest.Config{}, NetworkOperator: &config.NetworkOperatorConfig{HelmRepoURL: "https://example.invalid", Version: "v1"}}
 
 	ginkgo.It("rejects multiple distinct NCPs before any client is required", func() {
 		artifacts, err := bundle.FromFiles([]bundle.File{

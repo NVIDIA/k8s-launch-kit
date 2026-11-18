@@ -60,7 +60,7 @@ func TestRunResumeBindsOperationBeforeCallingPrerequisiteProvider(t *testing.T) 
 		t.Fatal(err)
 	}
 
-	deployment, err := retainedDeploymentObject(execution)
+	deployment, err := retainedDeploymentObject(execution.verificationInputs())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -87,6 +87,13 @@ func TestRunResumeBindsOperationBeforeCallingPrerequisiteProvider(t *testing.T) 
 		want string
 	}{
 		{"bound operation still requires its recorded access", func(*RunRequest) {}, ""},
+		{"unsupported checkpoint", func(*RunRequest) {
+			object.Data["checkpoint.json"] = strings.Replace(encoded, `"Version":1`, `"Version":2`, 1)
+		}, "OPERATION_RESUME_CHECKPOINT_INVALID"},
+		{"unknown checkpoint field", func(*RunRequest) {
+			object.Data["checkpoint.json"] = strings.TrimSuffix(encoded, "}") + `,"unknown":true}`
+		}, "OPERATION_RESUME_CHECKPOINT_INVALID"},
+		{"corrupt checkpoint", func(*RunRequest) { object.Data["checkpoint.json"] = `{broken` }, "OPERATION_RESUME_CHECKPOINT_INVALID"},
 		{"missing operation", func(*RunRequest) { object = nil }, "OPERATION_RESUME_RECORD_UNAVAILABLE"},
 		{"replaced operation", func(*RunRequest) { object.UID = "123e4567-e89b-12d3-a456-426614174099" }, "OPERATION_RESUME_RECORD_UNAVAILABLE"},
 		{"foreign bundle", func(*RunRequest) {
@@ -120,7 +127,7 @@ func TestRunResumeBindsOperationBeforeCallingPrerequisiteProvider(t *testing.T) 
 			mu.Unlock()
 			ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
 			defer cancel()
-			result, err := runWithImageResolver(ctx, request, retainedTestImageResolver)
+			result, err := runWithTransports(ctx, request, runTransports{resolveImage: retainedTestImageResolver})
 			mu.Lock()
 			defer mu.Unlock()
 			if test.want == "" && (result.Operation == nil || result.Operation.UID != op.object.UID) {

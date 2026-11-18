@@ -63,7 +63,7 @@ func TestSoftwareIdentityCausePreservationDoesNotRetryRegistryReads(t *testing.T
 				client := &identitySoftwareClient{softwareVerificationFake: &softwareVerificationFake{current: current, managerImage: "synthetic-release-image", tunnel: &registryTunnel{port: port, client: server.Client(), closeFn: func() error { closed++; return nil }}}, cause: cause, failAt: boundary}
 				ctx, cancel := context.WithTimeout(context.Background(), time.Second)
 				defer cancel()
-				receipt, err := verifyStagedSoftware(ctx, client, softwareVerifierFunc(func(*unstructured.Unstructured, *unstructured.Unstructured) error { return nil }), desired, current, locks, selected, "operator", "synthetic-release-image", 1024)
+				receipt, err := verifyStagedSoftware(testRules(t), ctx, client, softwareVerifierFunc(func(*unstructured.Unstructured, *unstructured.Unstructured) error { return nil }), desired, current, locks, selected, "operator", "synthetic-release-image", 1024)
 				var diagnostic *ReconciliationError
 				if err == nil || !errors.As(err, &diagnostic) || diagnostic.ReasonCode != code || !errors.Is(err, cause) || !receipt.VerifiedAt.IsZero() || strings.Contains(err.Error(), "private-identity-canary") {
 					t.Fatalf("err=%v receipt=%+v", err, receipt)

@@ -18,7 +18,7 @@ func TestResolveHostWorkloadLeases(t *testing.T) {
 	input := makeHostLeaseResolverFixture(t, fixture)
 	before := cloneHostLeaseResolverFixture(input)
 
-	leases, err := resolveHostWorkloadLeases(input.plan, input.reconciler, input.selected, input.activation, input.workload, input.snapshot)
+	leases, err := resolveHostWorkloadLeases(input.plan, input.reconciler, input.selected, input.activation, input.workload.BundleDigest, input.workload.Resources, input.snapshot)
 	if err != nil {
 		t.Fatalf("resolveHostWorkloadLeases(): %v", err)
 	}
@@ -79,7 +79,7 @@ func TestResolveHostWorkloadLeases(t *testing.T) {
 		t.Run(test.name, func(t *testing.T) {
 			copy := cloneHostLeaseResolverFixture(input)
 			test.mutate(&copy)
-			if _, err := resolveHostWorkloadLeases(copy.plan, copy.reconciler, copy.selected, copy.activation, copy.workload, copy.snapshot); err == nil {
+			if _, err := resolveHostWorkloadLeases(copy.plan, copy.reconciler, copy.selected, copy.activation, copy.workload.BundleDigest, copy.workload.Resources, copy.snapshot); err == nil {
 				t.Fatal("resolver accepted an inconsistent identity or allocation")
 			}
 		})
@@ -102,7 +102,7 @@ func makeHostLeaseResolverFixture(t *testing.T, fixture activationIntegrationFix
 	if err != nil {
 		t.Fatal(err)
 	}
-	desiredDeployment, err := retainedDeploymentObject(fixture.prepared.execution)
+	desiredDeployment, err := retainedDeploymentObject(fixture.prepared.execution.verificationInputs())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -143,7 +143,7 @@ func makeHostLeaseResolverFixture(t *testing.T, fixture activationIntegrationFix
 	if err != nil {
 		t.Fatal(err)
 	}
-	pool, err := fixture.client.getTenantWorkloadChild(fixture.ctx, fixture.client.tenant, currentIPAM)
+	pool, err := fixture.client.workloadChild(fixture.ctx, fixture.client.tenant, currentIPAM)
 	if err != nil {
 		t.Fatal(err)
 	}

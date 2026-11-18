@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/nvidia/k8s-launch-kit/pkg/dpf/bootstrap"
+	"github.com/nvidia/k8s-launch-kit/pkg/dpf/deployment/internal/controllercontract"
 	"github.com/nvidia/k8s-launch-kit/pkg/dpf/generation"
 	"github.com/nvidia/k8s-launch-kit/pkg/dpf/inventory"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
@@ -80,11 +81,11 @@ func (*enrollmentScopeClient) checkTenantStorage(context.Context, string) Prefli
 	return PreflightCheck{ID: "fixture.storage", State: "passed", Message: "fixture"}
 }
 
-func (*enrollmentScopeClient) connectTenant(context.Context, *generation.Plan, types.UID, *Reconciler, *executionJournal, time.Duration, time.Duration) (*tenantClient, error) {
+func (*enrollmentScopeClient) connectTenant(context.Context, *generation.Plan, types.UID, *Reconciler, *executionJournal, time.Duration, time.Duration) (tenantStageReader, error) {
 	return &tenantClient{}, nil
 }
 
-func (*enrollmentScopeClient) observeTenantSources(context.Context, TenantReadinessExpected) (tenantSources, error) {
+func (*enrollmentScopeClient) observeTenantSources(context.Context, controllercontract.TenantReadinessExpected) (tenantSources, error) {
 	return tenantSources{}, nil
 }
 
@@ -94,10 +95,6 @@ func (*enrollmentScopeClient) checkTenantNetwork(context.Context, bootstrap.Tena
 
 func (*enrollmentScopeClient) verifyEnrollmentBMCs(context.Context, []enrollmentBMC, time.Duration, *executionJournal) error {
 	return nil
-}
-
-func (*enrollmentScopeClient) executeEnrollmentSecret(context.Context, ResourceClient, string, string, *executionJournal) (enrollmentSecretReceipt, error) {
-	return enrollmentSecretReceipt{}, nil
 }
 
 func enrollmentScopeFixture(t *testing.T) (*managementExecution, *enrollmentScopeClient, []enrollmentBMC) {
@@ -148,13 +145,13 @@ func TestGuardEnrollmentScopeAllowsExactAbsentCRDsButRejectsUnavailableAPIs(t *t
 		client.crds = map[string]*unstructured.Unstructured{}
 		ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
 		defer cancel()
-		if err := guardEnrollmentScope(ctx, client, execution, selected); err != nil {
+		if err := guardEnrollmentScope(ctx, client, execution.verificationInputs(), selected); err != nil {
 			t.Fatalf("exact missing CRDs should prove no existing enrollment objects: %v", err)
 		}
 		if len(client.listKinds) != 0 {
 			t.Fatalf("guard listed APIs after exact CRD absence: %v", client.listKinds)
 		}
-		if err := inspectEnrollmentScope(ctx, client, execution, selected, true); err == nil {
+		if err := inspectEnrollmentScope(ctx, client, execution.verificationInputs(), selected, true); err == nil {
 			t.Fatal("post-bootstrap inspection accepted a disappeared required CRD")
 		}
 	})
@@ -165,7 +162,7 @@ func TestGuardEnrollmentScopeAllowsExactAbsentCRDsButRejectsUnavailableAPIs(t *t
 		client.crdErrors[name] = apierrors.NewForbidden(schema.GroupResource{Resource: "customresourcedefinitions"}, name, errors.New("denied"))
 		ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
 		defer cancel()
-		if err := guardEnrollmentScope(ctx, client, execution, selected); err == nil || len(client.listKinds) != 0 {
+		if err := guardEnrollmentScope(ctx, client, execution.verificationInputs(), selected); err == nil || len(client.listKinds) != 0 {
 			t.Fatalf("unreadable exact CRD did not block before lists: err=%v lists=%v", err, client.listKinds)
 		}
 	})
@@ -176,7 +173,7 @@ func TestGuardEnrollmentScopeAllowsExactAbsentCRDsButRejectsUnavailableAPIs(t *t
 		client.resourceErrors[version] = apierrors.NewNotFound(schema.GroupResource{Resource: "apis"}, version)
 		ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
 		defer cancel()
-		if err := guardEnrollmentScope(ctx, client, execution, selected); err == nil {
+		if err := guardEnrollmentScope(ctx, client, execution.verificationInputs(), selected); err == nil {
 			t.Fatal("missing advertised group-version was treated like an absent CRD")
 		}
 	})
@@ -193,7 +190,7 @@ func TestGuardEnrollmentScopeBlocksMalformedPartialAndDriftedObservations(t *tes
 		}
 		ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
 		defer cancel()
-		if err := guardEnrollmentScope(ctx, client, execution, selected); err == nil || len(client.listKinds) != 0 {
+		if err := guardEnrollmentScope(ctx, client, execution.verificationInputs(), selected); err == nil || len(client.listKinds) != 0 {
 			t.Fatalf("CRD schema drift did not block before list: err=%v lists=%v", err, client.listKinds)
 		}
 	})
@@ -203,7 +200,7 @@ func TestGuardEnrollmentScopeBlocksMalformedPartialAndDriftedObservations(t *tes
 		client.listErrors["DPUDiscovery"] = errors.New("page continuation failed")
 		ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
 		defer cancel()
-		if err := guardEnrollmentScope(ctx, client, execution, selected); err == nil {
+		if err := guardEnrollmentScope(ctx, client, execution.verificationInputs(), selected); err == nil {
 			t.Fatal("partial all-namespace list was accepted")
 		}
 	})
@@ -213,7 +210,7 @@ func TestGuardEnrollmentScopeBlocksMalformedPartialAndDriftedObservations(t *tes
 		client.identityError = errors.New("management cluster changed")
 		ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
 		defer cancel()
-		if err := guardEnrollmentScope(ctx, client, execution, selected); err == nil || len(client.listKinds) != 0 {
+		if err := guardEnrollmentScope(ctx, client, execution.verificationInputs(), selected); err == nil || len(client.listKinds) != 0 {
 			t.Fatalf("identity drift did not block before scan: err=%v lists=%v", err, client.listKinds)
 		}
 	})
@@ -223,7 +220,7 @@ func TestGuardEnrollmentScopeBlocksMalformedPartialAndDriftedObservations(t *tes
 		client.failIdentityAt = 2
 		ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
 		defer cancel()
-		if err := guardEnrollmentScope(ctx, client, execution, selected); err == nil || len(client.listKinds) != 6 {
+		if err := guardEnrollmentScope(ctx, client, execution.verificationInputs(), selected); err == nil || len(client.listKinds) != 6 {
 			t.Fatalf("final identity drift did not block after a complete scan: err=%v lists=%v", err, client.listKinds)
 		}
 	})
@@ -233,7 +230,7 @@ func TestGuardEnrollmentScopeBlocksMalformedPartialAndDriftedObservations(t *tes
 		client.listed["DPUDevice"] = []unstructured.Unstructured{*selectedEnrollmentDevice(selected[0], execution.operatorNamespace)}
 		ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
 		defer cancel()
-		if err := guardEnrollmentScope(ctx, client, execution, selected); err == nil {
+		if err := guardEnrollmentScope(ctx, client, execution.verificationInputs(), selected); err == nil {
 			t.Fatal("partial selected DPUDevice enrollment without a DPUNode was accepted")
 		}
 	})
@@ -244,7 +241,7 @@ func TestGuardEnrollmentScopeBlocksMalformedPartialAndDriftedObservations(t *tes
 		client.listed["DPUNode"] = []unstructured.Unstructured{*enrollmentNodeWithDevice("dpu-node-serial-a", execution.operatorNamespace, "serial-a")}
 		ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
 		defer cancel()
-		if err := inspectEnrollmentScope(ctx, client, execution, selected, true); err != nil {
+		if err := inspectEnrollmentScope(ctx, client, execution.verificationInputs(), selected, true); err != nil {
 			t.Fatalf("exact selected device/node pair was rejected: %v", err)
 		}
 	})
@@ -254,7 +251,7 @@ func TestValidateEnrollmentObjectsAllowsOnlySelectedEnrollmentGraph(t *testing.T
 	execution, _, selected := enrollmentScopeFixture(t)
 	item := selected[0]
 	operatorNamespace := execution.operatorNamespace
-	discoveries := retainedEnrollmentDiscoveries(execution)
+	discoveries := retainedEnrollmentDiscoveries(execution.verificationInputs())
 	if len(discoveries) != 1 {
 		t.Fatalf("fixture retained %d discoveries, want 1", len(discoveries))
 	}
@@ -291,7 +288,7 @@ func TestValidateEnrollmentObjectsAllowsOnlySelectedEnrollmentGraph(t *testing.T
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
 			objects := []unstructured.Unstructured{*test.object.DeepCopy()}
-			err := validateEnrollmentObjects(test.resource, objects, execution, selected)
+			err := validateEnrollmentObjects(test.resource, objects, execution.verificationInputs(), selected)
 			if (err != nil) != test.wantErr {
 				t.Fatalf("validateEnrollmentObjects() error=%v wantErr=%v", err, test.wantErr)
 			}
@@ -300,13 +297,13 @@ func TestValidateEnrollmentObjectsAllowsOnlySelectedEnrollmentGraph(t *testing.T
 
 	malformed := device.DeepCopy()
 	malformed.SetUID("")
-	if err := validateEnrollmentObjects(enrollmentResource{group: "provisioning.dpu.nvidia.com", version: "v1alpha1", kind: "DPUDevice"}, []unstructured.Unstructured{*malformed}, execution, selected); err == nil {
+	if err := validateEnrollmentObjects(enrollmentResource{group: "provisioning.dpu.nvidia.com", version: "v1alpha1", kind: "DPUDevice"}, []unstructured.Unstructured{*malformed}, execution.verificationInputs(), selected); err == nil {
 		t.Fatal("object with missing UID was accepted")
 	}
 	deleting := node.DeepCopy()
 	now := metav1.Now()
 	deleting.SetDeletionTimestamp(&now)
-	if err := validateEnrollmentObjects(enrollmentResource{group: "provisioning.dpu.nvidia.com", version: "v1alpha1", kind: "DPUNode"}, []unstructured.Unstructured{*deleting}, execution, selected); err == nil {
+	if err := validateEnrollmentObjects(enrollmentResource{group: "provisioning.dpu.nvidia.com", version: "v1alpha1", kind: "DPUNode"}, []unstructured.Unstructured{*deleting}, execution.verificationInputs(), selected); err == nil {
 		t.Fatal("deleting object was accepted")
 	}
 }
@@ -352,7 +349,7 @@ func TestGuardEnrollmentScopeRecognizesRetainedAPIExpectation(t *testing.T) {
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
 	defer cancel()
-	if err := guardEnrollmentScope(ctx, client, execution, selected); err != nil {
+	if err := guardEnrollmentScope(ctx, client, execution.verificationInputs(), selected); err != nil {
 		t.Fatalf("empty but complete enrollment scope was rejected: %v", err)
 	}
 	if len(client.listKinds) != 6 {

@@ -18,7 +18,6 @@ import (
 
 	"github.com/nvidia/k8s-launch-kit/pkg/target"
 	"github.com/onsi/gomega"
-	"gopkg.in/yaml.v3"
 )
 
 const (
@@ -49,7 +48,7 @@ func TestGenerateSignalChild(t *testing.T) {
 	fetchCount := 0
 	driver := generateDriver{
 		request: GenerateRequest{Inventory: site, OutputPath: output, Stdout: &strings.Builder{}, Stderr: &strings.Builder{}},
-		prepare: prepareFixtureGeneration, fetchChart: func(ctx context.Context, _ string) ([]byte, error) {
+		fetchChart: func(ctx context.Context, _ string) ([]byte, error) {
 			fetchCount++
 			markerTemp := marker + ".tmp"
 			if err := os.WriteFile(markerTemp, []byte(strconv.Itoa(os.Getpid())), 0600); err != nil {
@@ -82,10 +81,7 @@ func TestGenerateStopsOnOSInterrupt(t *testing.T) {
 	gomega.RegisterTestingT(t)
 	root := t.TempDir()
 	input := generationSite()
-	siteBytes, err := yaml.Marshal(input.Site)
-	if err != nil {
-		t.Fatal(err)
-	}
+	siteBytes := publicFixtureBytes(input)
 	sitePath := filepath.Join(root, "site.yaml")
 	if err := os.WriteFile(sitePath, siteBytes, 0600); err != nil {
 		t.Fatal(err)

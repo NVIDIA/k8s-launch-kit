@@ -12,6 +12,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/nvidia/k8s-launch-kit/pkg/dpf/deployment/internal/controllercontract"
 	"github.com/nvidia/k8s-launch-kit/pkg/dpf/generation"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
@@ -72,7 +73,7 @@ func verifyEnrollmentSelectors(object *unstructured.Unstructured, wanted map[str
 // bindEnrollmentSelectors establishes eligibility only after full enrollment.
 // Each write has a fresh whole-cohort fence; successful earlier writes remain
 // recorded if a later device fails. Observers never publish labels implicitly.
-func bindEnrollmentSelectors(ctx context.Context, client enrollmentManagementClient, execution *managementExecution,
+func bindEnrollmentSelectors(ctx context.Context, client enrollmentManagementClient, execution *managementVerificationInputs,
 	bootstrap managementBootstrapReceipt, tenant tenantStageReceipt, selected []enrollmentBMC, receipt enrollmentStageReceipt,
 	password string, journal *executionJournal, requestTimeout time.Duration,
 ) error {
@@ -95,7 +96,7 @@ func bindEnrollmentSelectors(ctx context.Context, client enrollmentManagementCli
 		if _, ready, err := observeSelectedEnrollment(ctx, client, execution, selected, receipt.Devices, journal); err != nil || !ready {
 			return enrollmentStageFailure(journal, "ENROLLMENT_SELECTOR_SCOPE_CHANGED", "The complete selected enrollment scope is not current before selector binding.", err)
 		}
-		if err := verifyEnrollmentSelectorReceipts(ctx, client, execution.operatorNamespace, selected[:i], receipt.Devices[:i]); err != nil {
+		if err := verifyEnrollmentSelectorReceipts(execution.rules, ctx, client, execution.operatorNamespace, selected[:i], receipt.Devices[:i]); err != nil {
 			return enrollmentStageFailure(journal, "ENROLLMENT_SELECTOR_SCOPE_CHANGED", "A previously bound selected-device selector changed before the next binding.", err)
 		}
 		identity := &unstructured.Unstructured{}
@@ -105,7 +106,7 @@ func bindEnrollmentSelectors(ctx context.Context, client enrollmentManagementCli
 		identity.SetName(strings.ToLower(item.device.Serial))
 		current, err := client.Get(ctx, identity)
 		event := executionEvent{Stage: generation.StageEnrollment, Operation: "bind-device-selector", Subject: identity.GetNamespace() + "/" + identity.GetName()}
-		if err != nil || current == nil || current.GetUID() != receipt.Devices[i].DeviceUID || validateEnrolledDevice(current, item, execution.operatorNamespace, true) != nil || !enrolledDeviceReadiness(current).Ready {
+		if err != nil || current == nil || current.GetUID() != receipt.Devices[i].DeviceUID || validateEnrolledDevice(execution.rules, current, item, execution.operatorNamespace, true) != nil || !execution.rules.EnrolledDeviceReadiness(current).Ready {
 			return journalFailure(journal, event, false, "ENROLLMENT_SELECTOR_IDENTITY_CHANGED", "The selected ready DPUDevice identity changed before selector binding.", err)
 		}
 		owners, _, ownerErr := unstructured.NestedSlice(current.Object, "metadata", "ownerReferences")
@@ -142,7 +143,10 @@ func bindEnrollmentSelectors(ctx context.Context, client enrollmentManagementCli
 	return nil
 }
 
-func verifyEnrollmentSelectorReceipts(ctx context.Context, client enrollmentManagementClient, namespace string, selected []enrollmentBMC, receipts []enrolledDeviceReceipt) error {
+func verifyEnrollmentSelectorReceipts(rules *controllercontract.Rules, ctx context.Context, client resourceReader, namespace string, selected []enrollmentBMC, receipts []enrolledDeviceReceipt) error {
+	if err := rules.Validate(); err != nil {
+		return err
+	}
 	if len(selected) != len(receipts) {
 		return fmt.Errorf("selector receipt cohort differs")
 	}
@@ -153,7 +157,7 @@ func verifyEnrollmentSelectorReceipts(ctx context.Context, client enrollmentMana
 		identity.SetName(strings.ToLower(item.device.Serial))
 		identity.SetNamespace(namespace)
 		current, err := client.Get(ctx, identity)
-		if err != nil || current == nil || current.GetUID() != receipts[i].DeviceUID || validateEnrolledDevice(current, item, namespace, true) != nil || !enrolledDeviceReadiness(current).Ready || verifyEnrollmentSelectors(current, item.device.SelectorLabels) != nil {
+		if err != nil || current == nil || current.GetUID() != receipts[i].DeviceUID || validateEnrolledDevice(rules, current, item, namespace, true) != nil || !rules.EnrolledDeviceReadiness(current).Ready || verifyEnrollmentSelectors(current, item.device.SelectorLabels) != nil {
 			return fmt.Errorf("selected ready-device identity or retained selector changed")
 		}
 	}

@@ -11,6 +11,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/nvidia/k8s-launch-kit/pkg/dpf/deployment/internal/controllercontract"
+
 	authorizationv1 "k8s.io/api/authorization/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/client-go/kubernetes/fake"
@@ -51,9 +53,9 @@ func TestTenantRuntimePermissionsExactScopeAndFailClosed(t *testing.T) {
 			})
 			// The management-side TenantControlPlane namespace is not necessarily
 			// the workload namespace that contains HBN runtime resources.
-			tenant := &tenantClient{api: client, expected: TenantReadinessExpected{Namespace: "control-plane"}}
+			tenant := &tenantClient{api: client, expected: controllercontract.TenantReadinessExpected{Namespace: "control-plane"}}
 
-			checks := append(checkTenantRuntimeReadPermissions(ctx, tenant, "dpf-system"), checkTenantPodExecPermissions(ctx, tenant, "dpf-system", "hbn-0")...)
+			checks := append(tenant.checkTenantRuntimeReadPermissions(ctx, "dpf-system"), tenant.checkTenantPodExecPermissions(ctx, "dpf-system", "hbn-0")...)
 			wantRequests := []authorizationv1.ResourceAttributes{
 				{Verb: "list", Group: "apps", Version: "v1", Resource: "daemonsets", Namespace: "dpf-system"},
 				{Verb: "list", Version: "v1", Resource: "pods", Namespace: "dpf-system"},
@@ -86,19 +88,19 @@ func TestTenantRuntimePermissionsExactScopeAndFailClosed(t *testing.T) {
 
 func TestTenantRuntimePermissionsInvalidInputsHaveNoAPIEffects(t *testing.T) {
 	client := fake.NewSimpleClientset()
-	tenant := &tenantClient{api: client, expected: TenantReadinessExpected{Namespace: "tenant-a"}}
+	tenant := &tenantClient{api: client, expected: controllercontract.TenantReadinessExpected{Namespace: "tenant-a"}}
 	valid, cancel := context.WithTimeout(context.Background(), time.Minute)
 	defer cancel()
 	canceled, cancelCanceled := context.WithCancel(valid)
 	cancelCanceled()
 	var missingContext context.Context
 	for _, checks := range [][]PreflightCheck{
-		checkTenantRuntimeReadPermissions(missingContext, tenant, "tenant-a"),
-		checkTenantRuntimeReadPermissions(context.Background(), tenant, "tenant-a"),
-		checkTenantRuntimeReadPermissions(canceled, tenant, "tenant-a"),
-		checkTenantRuntimeReadPermissions(valid, nil, "tenant-a"),
-		checkTenantRuntimeReadPermissions(valid, tenant, "Invalid_Namespace"),
-		checkTenantPodExecPermissions(valid, tenant, "tenant-a", "bad/pod"),
+		tenant.checkTenantRuntimeReadPermissions(missingContext, "tenant-a"),
+		tenant.checkTenantRuntimeReadPermissions(context.Background(), "tenant-a"),
+		tenant.checkTenantRuntimeReadPermissions(canceled, "tenant-a"),
+		(*tenantClient)(nil).checkTenantRuntimeReadPermissions(valid, "tenant-a"),
+		tenant.checkTenantRuntimeReadPermissions(valid, "Invalid_Namespace"),
+		tenant.checkTenantPodExecPermissions(valid, "tenant-a", "bad/pod"),
 	} {
 		if len(checks) != 1 || checks[0].State == "passed" {
 			t.Fatalf("invalid input accepted: %#v", checks)

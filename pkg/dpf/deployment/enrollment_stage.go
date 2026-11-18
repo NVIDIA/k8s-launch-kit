@@ -7,13 +7,11 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"reflect"
 	"strings"
 	"time"
 
-	"github.com/nvidia/k8s-launch-kit/pkg/dpf/bootstrap"
+	"github.com/nvidia/k8s-launch-kit/pkg/dpf/deployment/internal/controllercontract"
 	"github.com/nvidia/k8s-launch-kit/pkg/dpf/generation"
-	"github.com/nvidia/k8s-launch-kit/pkg/dpf/inventory"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
@@ -37,22 +35,17 @@ type enrolledDeviceReceipt struct {
 }
 
 type enrollmentManagementClient interface {
-	managementRunnerClient
-	tenantSourceReader
-	tenantStageManagementClient
-	checkTenantNetwork(context.Context, bootstrap.Tenant, tenantNetworkRunner, string, time.Duration) ([]inventory.Check, error)
-	verifyEnrollmentBMCs(context.Context, []enrollmentBMC, time.Duration, *executionJournal) error
-	executeEnrollmentSecret(context.Context, ResourceClient, string, string, *executionJournal) (enrollmentSecretReceipt, error)
-	getOperatorCRD(context.Context, string) (*unstructured.Unstructured, error)
+	ResourceClient
+	enrollmentBoundaryReader
+	enrollmentBindingReader
 	patchEnrollmentSelectors(context.Context, *unstructured.Unstructured, map[string]string) (*unstructured.Unstructured, error)
 }
 
 func (c *APIClient) verifyEnrollmentBMCs(ctx context.Context, selected []enrollmentBMC, timeout time.Duration, journal *executionJournal) error {
+	if c != nil && c.enrollmentCollector != nil {
+		return collectEnrollmentBMCs(ctx, selected, timeout, journal, c.enrollmentCollector)
+	}
 	return verifyEnrollmentBMCs(ctx, selected, timeout, journal)
-}
-
-func (c *APIClient) executeEnrollmentSecret(ctx context.Context, client ResourceClient, namespace, password string, journal *executionJournal) (enrollmentSecretReceipt, error) {
-	return executeEnrollmentSecret(ctx, client, namespace, password, journal)
 }
 
 func (c *APIClient) getOperatorCRD(ctx context.Context, name string) (*unstructured.Unstructured, error) {
@@ -76,7 +69,7 @@ func (c *APIClient) getOperatorCRD(ctx context.Context, name string) (*unstructu
 // After a completed scan, DPF cannot repair it: later scans skip the device IP.
 var errEnrollmentNodeMissing = errors.New("a selected DPUDevice exists without its matching DPUNode; DPF rescans cannot repair this partial enrollment, so inspect the controller failure before retrying")
 
-func guardEnrollmentScope(ctx context.Context, client enrollmentManagementClient, execution *managementExecution, selected []enrollmentBMC) error {
+func guardEnrollmentScope(ctx context.Context, client enrollmentScopeReader, execution *managementVerificationInputs, selected []enrollmentBMC) error {
 	return inspectEnrollmentScope(ctx, client, execution, selected, false)
 }
 
@@ -91,7 +84,7 @@ type enrollmentScopeResource struct {
 	objects  []unstructured.Unstructured
 }
 
-func inspectEnrollmentScope(ctx context.Context, client enrollmentManagementClient, execution *managementExecution, selected []enrollmentBMC, requireInstalled bool) error {
+func inspectEnrollmentScope(ctx context.Context, client enrollmentScopeReader, execution *managementVerificationInputs, selected []enrollmentBMC, requireInstalled bool) error {
 	snapshot, err := collectEnrollmentScope(ctx, client, execution, selected, requireInstalled)
 	if err != nil {
 		return err
@@ -132,7 +125,7 @@ func enrollmentScopeDiagnostic(ctx context.Context, cause error, fallbackCode st
 	return fallbackCode, cause.Error(), nil
 }
 
-func collectEnrollmentScope(ctx context.Context, client enrollmentManagementClient, execution *managementExecution, selected []enrollmentBMC, requireInstalled bool) (enrollmentScopeSnapshot, error) {
+func collectEnrollmentScope(ctx context.Context, client enrollmentScopeReader, execution *managementVerificationInputs, selected []enrollmentBMC, requireInstalled bool) (enrollmentScopeSnapshot, error) {
 	snapshot := enrollmentScopeSnapshot{}
 	if ctx == nil || client == nil || execution == nil || execution.plan == nil || len(selected) == 0 {
 		return snapshot, fmt.Errorf("selected enrollment scope is incomplete")
@@ -215,7 +208,7 @@ func retainedCRD(crds []operatorCRDExpectation, group, kind string) (operatorCRD
 	return found, count == 1
 }
 
-func validateEnrollmentObjects(required enrollmentResource, objects []unstructured.Unstructured, execution *managementExecution, selected []enrollmentBMC) error {
+func validateEnrollmentObjects(required enrollmentResource, objects []unstructured.Unstructured, execution *managementVerificationInputs, selected []enrollmentBMC) error {
 	desiredDiscoveries := retainedEnrollmentDiscoveries(execution)
 	wanted := make(map[string]enrollmentBMC, len(selected))
 	for _, item := range selected {
@@ -237,7 +230,7 @@ func validateEnrollmentObjects(required enrollmentResource, objects []unstructur
 			if !ok {
 				return fmt.Errorf("an unrelated DPUDevice exists")
 			}
-			if err := validateEnrolledDevice(object, item, execution.operatorNamespace, false); err != nil {
+			if err := validateEnrolledDevice(execution.rules, object, item, execution.operatorNamespace, false); err != nil {
 				return err
 			}
 		case "DPUNode":
@@ -262,7 +255,7 @@ func validateEnrollmentObjectIdentity(required enrollmentResource, object *unstr
 	return nil
 }
 
-func retainedEnrollmentDiscoveries(execution *managementExecution) map[string]*unstructured.Unstructured {
+func retainedEnrollmentDiscoveries(execution *managementVerificationInputs) map[string]*unstructured.Unstructured {
 	result := map[string]*unstructured.Unstructured{}
 	if execution == nil || execution.retained == nil {
 		return result
@@ -280,7 +273,7 @@ func retainedEnrollmentDiscoveries(execution *managementExecution) map[string]*u
 	return result
 }
 
-func runEnrollmentStage(ctx context.Context, management enrollmentManagementClient, execution *managementExecution,
+func runEnrollmentStage(ctx context.Context, management enrollmentManagementClient, execution *managementVerificationInputs,
 	managementReceipt managementBootstrapReceipt, tenantReceipt tenantStageReceipt, selected []enrollmentBMC, password string,
 	journal *executionJournal, interval, requestTimeout time.Duration,
 ) (enrollmentStageReceipt, error) {
@@ -309,7 +302,7 @@ func runEnrollmentStage(ctx context.Context, management enrollmentManagementClie
 	if err != nil {
 		return enrollmentStageReceipt{}, err
 	}
-	secret, err := management.executeEnrollmentSecret(ctx, management, execution.operatorNamespace, password, journal)
+	secret, err := executeEnrollmentSecret(ctx, management, execution.operatorNamespace, password, journal)
 	receipt := enrollmentStageReceipt{BundleDigest: execution.plan.Digest(), TenantUID: tenantReceipt.ClusterUID, Secret: secret}
 	if err != nil {
 		return receipt, err
@@ -318,7 +311,7 @@ func runEnrollmentStage(ctx context.Context, management enrollmentManagementClie
 		if err := verifyEnrollmentBoundary(ctx, management, execution, managementReceipt, tenantReceipt, selected, requestTimeout, secret, password, journal); err != nil {
 			return receipt, err
 		}
-		created, err := executeNativeObject(ctx, management, execution.reconciler, desired, generation.StageEnrollment, journal, false, interval)
+		created, err := executeNativeObject(execution.rules, ctx, management, execution.reconciler, desired, generation.StageEnrollment, journal, false, interval)
 		if err != nil {
 			return receipt, err
 		}
@@ -346,7 +339,7 @@ func runEnrollmentStage(ctx context.Context, management enrollmentManagementClie
 	if !ready {
 		return receipt, enrollmentStageFailure(journal, "ENROLLMENT_READINESS_CHANGED", "Selected devices lost readiness before the enrollment receipt.", nil)
 	}
-	if err := verifyEnrollmentSelectorReceipts(ctx, management, execution.operatorNamespace, selected, devices); err != nil {
+	if err := verifyEnrollmentSelectorReceipts(execution.rules, ctx, management, execution.operatorNamespace, selected, devices); err != nil {
 		return receipt, enrollmentStageFailure(journal, "ENROLLMENT_SELECTOR_READBACK_FAILED", "The selected ready-device identity or retained selector changed before the completed enrollment receipt.", err)
 	}
 	tenantErr := tenantReceipt.Client.VerifyIdentity(ctx)
@@ -362,7 +355,7 @@ func runEnrollmentStage(ctx context.Context, management enrollmentManagementClie
 	return receipt, nil
 }
 
-func verifyEnrollmentBoundary(ctx context.Context, management enrollmentManagementClient, execution *managementExecution,
+func verifyEnrollmentBoundary(ctx context.Context, management enrollmentBoundaryReader, execution *managementVerificationInputs,
 	managementReceipt managementBootstrapReceipt, tenantReceipt tenantStageReceipt, selected []enrollmentBMC, requestTimeout time.Duration,
 	secret enrollmentSecretReceipt, password string, journal *executionJournal,
 ) error {
@@ -391,11 +384,11 @@ func verifyEnrollmentBoundary(ctx context.Context, management enrollmentManageme
 	return nil
 }
 
-func validateEnrollmentStageInputs(ctx context.Context, management enrollmentManagementClient, execution *managementExecution,
+func validateEnrollmentStageInputs(ctx context.Context, management enrollmentBindingReader, execution *managementVerificationInputs,
 	managementReceipt managementBootstrapReceipt, tenantReceipt tenantStageReceipt, selected []enrollmentBMC, password string,
 	journal *executionJournal, interval, requestTimeout time.Duration,
 ) error {
-	if ctx == nil || management == nil || execution == nil || execution.plan == nil || execution.reconciler == nil || journal == nil || len(selected) == 0 || password == "" || tenantReceipt.Client == nil {
+	if ctx == nil || management == nil || execution == nil || execution.rules.Validate() != nil || execution.plan == nil || execution.reconciler == nil || journal == nil || len(selected) == 0 || password == "" || tenantReceipt.Client == nil {
 		return fmt.Errorf("enrollment stage requires selected BMCs, verified tenant API, retained plan and report")
 	}
 	if _, bounded := ctx.Deadline(); !bounded || interval <= 0 || requestTimeout < time.Second || requestTimeout > 2*time.Minute {
@@ -404,11 +397,11 @@ func validateEnrollmentStageInputs(ctx context.Context, management enrollmentMan
 	if err := ctx.Err(); err != nil {
 		return err
 	}
-	if tenantReceipt.ClusterUID == "" || tenantReceipt.Client.dpuClusterUID != string(tenantReceipt.ClusterUID) {
+	if tenantReceipt.ClusterUID == "" || tenantReceipt.Client.clusterIdentity() != tenantReceipt.ClusterUID {
 		return fmt.Errorf("tenant API receipt is incomplete or bound to a different DPUCluster")
 	}
 	expected, _, err := tenantPlanInputs(execution.plan)
-	if err != nil || !reflect.DeepEqual(expected, tenantReceipt.Client.expected) || tenantReceipt.Client.source != management {
+	if err != nil || !tenantReceipt.Client.matchesTenantBinding(management, expected, tenantReceipt.ClusterUID) {
 		return fmt.Errorf("tenant API source and expected configuration differ from the retained enrollment plan")
 	}
 	if _, err := selectedEnrollmentDiscoveries(execution, selected); err != nil {
@@ -423,7 +416,7 @@ func validateEnrollmentStageInputs(ctx context.Context, management enrollmentMan
 	return nil
 }
 
-func waitSelectedEnrollment(ctx context.Context, client enrollmentManagementClient, execution *managementExecution, selected []enrollmentBMC,
+func waitSelectedEnrollment(ctx context.Context, client enrollmentResourceReader, execution *managementVerificationInputs, selected []enrollmentBMC,
 	interval time.Duration, journal *executionJournal,
 ) ([]enrolledDeviceReceipt, error) {
 	observed := make([]enrolledDeviceReceipt, len(selected))
@@ -450,7 +443,7 @@ func waitSelectedEnrollment(ctx context.Context, client enrollmentManagementClie
 
 // observeSelectedEnrollment observes the entire cohort on every pass; a prior
 // pass is used only to detect replacement, never to cache readiness.
-func observeSelectedEnrollment(ctx context.Context, client enrollmentManagementClient, execution *managementExecution, selected []enrollmentBMC, previous []enrolledDeviceReceipt, journal *executionJournal) ([]enrolledDeviceReceipt, bool, error) {
+func observeSelectedEnrollment(ctx context.Context, client resourceReader, execution *managementVerificationInputs, selected []enrollmentBMC, previous []enrolledDeviceReceipt, journal *executionJournal) ([]enrolledDeviceReceipt, bool, error) {
 	current := append([]enrolledDeviceReceipt(nil), previous...)
 	if len(current) != len(selected) {
 		return nil, false, fmt.Errorf("selected enrollment receipt count differs from the selected devices")
@@ -473,7 +466,7 @@ func observeSelectedEnrollment(ctx context.Context, client enrollmentManagementC
 				return current, false, enrollmentStageFailure(journal, "ENROLLMENT_RESOURCE_READ_FAILED", "A selected enrollment resource disappeared or could not be read.", err)
 			} else {
 				if kind == "DPUDevice" {
-					err = validateEnrolledDevice(object, item, execution.operatorNamespace, false)
+					err = validateEnrolledDevice(execution.rules, object, item, execution.operatorNamespace, false)
 				} else {
 					err = validateEnrolledNode(object, item, execution.operatorNamespace)
 				}
@@ -485,14 +478,14 @@ func observeSelectedEnrollment(ctx context.Context, client enrollmentManagementC
 				}
 				*uid = object.GetUID()
 				if kind == "DPUDevice" {
-					check = enrolledDeviceReadiness(object)
+					check = execution.rules.EnrolledDeviceReadiness(object)
 					if check.Ready {
-						if err := validateEnrolledDevice(object, item, execution.operatorNamespace, true); err != nil {
+						if err := validateEnrolledDevice(execution.rules, object, item, execution.operatorNamespace, true); err != nil {
 							return current, false, enrollmentStageFailure(journal, "ENROLLED_STATUS_MISMATCH", err.Error(), nil)
 						}
 					}
 				} else {
-					check = enrolledNodeReadiness(object)
+					check = execution.rules.EnrolledNodeReadiness(object)
 				}
 				allReady = allReady && check.Ready
 			}
@@ -511,7 +504,7 @@ func observeSelectedEnrollment(ctx context.Context, client enrollmentManagementC
 	return current, allReady, nil
 }
 
-func terminalEnrollmentReadiness(check Readiness) bool {
+func terminalEnrollmentReadiness(check controllercontract.Readiness) bool {
 	for _, code := range []string{"RESOURCE_TERMINAL_FAILURE", "RESOURCE_STATUS_INVALID", "RESOURCE_DELETING"} {
 		if check.ReasonCode == code || strings.HasPrefix(check.ReasonCode, code+":") {
 			return true
@@ -520,7 +513,7 @@ func terminalEnrollmentReadiness(check Readiness) bool {
 	return false
 }
 
-func waitEnrollmentDiscovery(ctx context.Context, client enrollmentManagementClient, execution *managementExecution, selected []enrollmentBMC, desired *unstructured.Unstructured, uid types.UID, interval time.Duration, journal *executionJournal) error {
+func waitEnrollmentDiscovery(ctx context.Context, client enrollmentResourceReader, execution *managementVerificationInputs, selected []enrollmentBMC, desired *unstructured.Unstructured, uid types.UID, interval time.Duration, journal *executionJournal) error {
 	event := executionEvent{Stage: generation.StageEnrollment, Operation: "discovery-readiness", Subject: desired.GetNamespace() + "/" + desired.GetName(), State: "attempted", ReasonCode: "DPU_DISCOVERY_SCAN_STARTED", Message: "Wait for a successful DPUDiscovery scan of the retained selected BMC endpoint."}
 	if err := journal.record(event); err != nil {
 		return err
@@ -543,7 +536,7 @@ func waitEnrollmentDiscovery(ctx context.Context, client enrollmentManagementCli
 		if err := execution.reconciler.Verify(desired, current); err != nil {
 			return journalFailure(journal, event, false, "DPU_DISCOVERY_INTENT_CHANGED", "The retained DPUDiscovery specification or ownership changed while scanning.", err)
 		}
-		readiness := EvaluateReadiness(current)
+		readiness := execution.rules.ResourceReadiness(current)
 		if terminalEnrollmentReadiness(readiness) {
 			return journalFailure(journal, event, false, readiness.ReasonCode, readiness.Message, nil)
 		}

@@ -16,6 +16,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/nvidia/k8s-launch-kit/pkg/dpf/deployment/internal/controllercontract"
 	"github.com/nvidia/k8s-launch-kit/pkg/dpf/generation"
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
@@ -110,7 +111,7 @@ func prepareHostLeaseObservationPlan(t *testing.T, apiFixture *apiFixture) (*gen
 	if err != nil {
 		t.Fatal(err)
 	}
-	reconciler, err := NewReconciler(operator.renderedManifest, plan.Digest())
+	reconciler, err := newReconciler(testRulesForManifest(t, operator.renderedManifest), plan.Digest(), controllercontract.MetadataPolicy{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -141,9 +142,9 @@ func newHostLeaseObservationHarnessFromPlan(t *testing.T, state *hostLeaseManage
 	bindTenantSources(t, expected, &sources)
 	const tenantUID = types.UID("dc-uid")
 	sources.observed.DPUCluster.SetUID(tenantUID)
-	digest, _, _, err := validateTenantSources(expected, string(tenantUID), sources)
+	digest, _, _, err := validateTenantSources(testRules(t), expected, string(tenantUID), sources)
 	if err != nil {
-		t.Fatalf("tenant fixture binding failed: %v; readiness=%+v", err, EvaluateTenantReadiness(expected, sources.observed))
+		t.Fatalf("tenant fixture binding failed: %v; readiness=%+v", err, testRules(t).TenantReadiness(expected, sources.observed))
 	}
 	state.sources = sources
 
@@ -173,7 +174,7 @@ func newHostLeaseObservationHarnessFromPlan(t *testing.T, state *hostLeaseManage
 	for i := range intentDevices {
 		selectedBMCs[i] = enrollmentBMC{device: intentDevices[i]}
 	}
-	setIntents, err := activationSetIntents(deployment, intentDevices)
+	setIntents, err := testRules(t).ActivationSetIntents(deployment, intentDevices)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -192,7 +193,7 @@ func newHostLeaseObservationHarnessFromPlan(t *testing.T, state *hostLeaseManage
 		set.SetResourceVersion("set-rv-1")
 		set.SetGeneration(1)
 		_ = unstructured.SetNestedMap(set.Object, map[string]any{"hold": true}, "spec", "dpuTemplate", "spec", "nodeEffect")
-		dpuName := generatedDPUEName(nodeName, deviceName)
+		dpuName := testRules(t).GeneratedDPUEName(nodeName, deviceName)
 		selectedItem := activationSelectedDevice{item: item, receipt: enrolledDeviceReceipt{Serial: item.device.Serial, DeviceUID: types.UID("device-uid-" + serial), DPUNodeUID: types.UID("node-uid-" + serial)},
 			nodeName: nodeName, dpuName: dpuName, dpuSet: set}
 		selected = append(selected, selectedItem)
@@ -267,7 +268,7 @@ func newHostLeaseObservationHarnessFromPlan(t *testing.T, state *hostLeaseManage
 	if err != nil {
 		t.Fatal(err)
 	}
-	tenant := &tenantClient{source: management, expected: expected, dpuClusterUID: string(tenantUID), sourceDigest: digest, systemUID: tenantState.namespaceUID, api: tenantAPI}
+	tenant := &tenantClient{rules: testRules(t), source: management, expected: expected, dpuClusterUID: string(tenantUID), sourceDigest: digest, systemUID: tenantState.namespaceUID, api: tenantAPI}
 	tenantState.onNodeList = func() { apiFixture.uid.Store("replacement-management") }
 	workload := workloadPreparationReceipt{BundleDigest: plan.Digest(), ControlPlane: controlPlaneReceipts{
 		management: managementBootstrapReceipt{BundleDigest: plan.Digest()},
@@ -319,7 +320,7 @@ func (h *hostLeaseObservationHarness) useDefaultClientRateLimits(t *testing.T) {
 	}
 }
 
-func bindTenantSources(t *testing.T, expected TenantReadinessExpected, sources *tenantSources) {
+func bindTenantSources(t *testing.T, expected controllercontract.TenantReadinessExpected, sources *tenantSources) {
 	t.Helper()
 	dc := sources.observed.DPUCluster
 	dc.SetName(expected.Name)
@@ -585,7 +586,7 @@ func (h *hostLeaseObservationHarness) observe(t *testing.T) (hostWorkloadLeaseSn
 }
 
 func (h *hostLeaseObservationHarness) observeContext(ctx context.Context) (hostWorkloadLeaseSnapshot, error) {
-	return observeHostWorkloadLeaseSnapshot(ctx, h.management, h.tenant, h.input.plan, h.input.reconciler, h.workload, 15*time.Second)
+	return observeHostWorkloadLeaseSnapshot(ctx, h.management, h.tenant, h.input.plan, h.input.reconciler, newWorkloadLeaseInputs(h.workload), 15*time.Second)
 }
 
 func TestObserveHostWorkloadLeaseSnapshotReadsCompleteBoundSources(t *testing.T) {
@@ -605,7 +606,7 @@ func TestObserveHostWorkloadLeaseSnapshotReadsCompleteBoundSources(t *testing.T)
 			t.Fatalf("typed API omitted a required Node identity: %#v", node.Object)
 		}
 	}
-	leases, err := resolveHostWorkloadLeases(h.input.plan, h.input.reconciler, h.input.selected, h.input.activation, h.workload, snapshot)
+	leases, err := resolveHostWorkloadLeases(h.input.plan, h.input.reconciler, h.input.selected, h.input.activation, h.workload.BundleDigest, h.workload.Resources, snapshot)
 	if err != nil || len(leases) != len(h.input.selected) {
 		t.Fatalf("fresh snapshot did not feed the pure lease resolver: leases=%d err=%v", len(leases), err)
 	}
@@ -644,7 +645,7 @@ func TestObserveHostWorkloadLeaseSnapshotFitsDefaultClientRequestBudget(t *testi
 	managementRequestsBefore := h.apiFixture.calls.Load()
 	tenantRequestsBefore := h.tenantState.requestCalls
 	started := time.Now()
-	snapshot, err := observeHostWorkloadLeaseSnapshot(ctx, h.management, h.tenant, h.input.plan, h.input.reconciler, h.workload, 30*time.Second)
+	snapshot, err := observeHostWorkloadLeaseSnapshot(ctx, h.management, h.tenant, h.input.plan, h.input.reconciler, newWorkloadLeaseInputs(h.workload), 30*time.Second)
 	elapsed := time.Since(started)
 	if err != nil {
 		t.Fatalf("production-default client rate limits did not finish within the supported request budget (%s): %v", elapsed, err)

@@ -60,11 +60,11 @@ func TestResumeHostPrerequisiteUsesOriginalInspectOnlyTransaction(t *testing.T) 
 
 			op, _ := checkpointFixture(t, f)
 			f.prepared.operation = op
-			deployment, err := retainedDeploymentObject(execution)
+			deployment, err := retainedDeploymentObject(execution.verificationInputs())
 			if err != nil {
 				t.Fatal(err)
 			}
-			selected, _, err := bindActivationHosts(f.prepared.selected, f.controlPlane.enrollment, f.inventory, f.request.Targets, deployment)
+			selected, _, err := bindActivationHosts(testRules(t), f.prepared.selected, f.controlPlane.enrollment, f.inventory, f.request.Targets, deployment)
 			if err != nil {
 				t.Fatal(err)
 			}

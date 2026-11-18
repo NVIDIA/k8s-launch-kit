@@ -11,7 +11,7 @@
 //     from cfg.HelmRepoURL, decides install-vs-upgrade-vs-no-op by checking
 //     the live release's chart version AND user-supplied values, and respects
 //     the overwriteExisting toggle.
-//   - Action.Configuration wiring lives in pkg/networkoperatorplugin/helmclient
+//   - Action.Configuration wiring lives in pkg/helmclient
 //     so the preflight sub-package reuses the same client.
 //   - Values diff logic lives in pkg/networkoperatorplugin/preflight
 //     (DeepEqualValues) so the validate flow and the install gate share one
@@ -40,9 +40,11 @@ import (
 	"helm.sh/helm/v3/pkg/storage/driver"
 	"k8s.io/client-go/rest"
 
+	sharedbundle "github.com/nvidia/k8s-launch-kit/pkg/bundle"
 	"github.com/nvidia/k8s-launch-kit/pkg/config"
 	pkgerrors "github.com/nvidia/k8s-launch-kit/pkg/errors"
-	"github.com/nvidia/k8s-launch-kit/pkg/networkoperatorplugin/helmclient"
+	"github.com/nvidia/k8s-launch-kit/pkg/helmclient"
+	"github.com/nvidia/k8s-launch-kit/pkg/networkoperatorplugin/helmconfig"
 	"github.com/nvidia/k8s-launch-kit/pkg/networkoperatorplugin/preflight"
 )
 
@@ -91,7 +93,7 @@ func Uninstall(
 		)
 	}
 	if namespace == "" {
-		namespace = helmclient.DefaultNamespace
+		namespace = helmconfig.DefaultNamespace
 	}
 	if timeout <= 0 {
 		timeout = defaultHelmUninstallTimeout
@@ -120,7 +122,7 @@ func uninstallWithActionConfig(
 	uninstall.IgnoreNotFound = true
 	uninstall.Wait = true
 	uninstall.Timeout = timeout
-	response, err := uninstall.Run(helmclient.DefaultReleaseName)
+	response, err := uninstall.Run(helmconfig.DefaultReleaseName)
 	if err != nil {
 		return false, pkgerrors.NewDeploymentError(
 			fmt.Sprintf("helm uninstall of network-operator failed in namespace %s", namespace),
@@ -191,7 +193,7 @@ func installOrUpgradeValues(
 	chartVersion := strings.TrimPrefix(cfg.Version, "v")
 	namespace := cfg.Namespace
 	if namespace == "" {
-		namespace = helmclient.DefaultNamespace
+		namespace = helmconfig.DefaultNamespace
 	}
 
 	actionCfg, err := helmclient.NewActionConfig(restConfig, namespace, helmclient.StorageDriver)
@@ -205,7 +207,7 @@ func installOrUpgradeValues(
 
 	generated := parsed
 	if generated == nil {
-		generated, err = helmclient.UnmarshalValues(valuesYAML)
+		generated, err = sharedbundle.ParseValues(valuesYAML)
 		if err != nil {
 			return pkgerrors.NewValidationError(
 				"failed to parse generated values.yaml",
@@ -271,7 +273,7 @@ func installOrUpgradeWithLoader(
 	dryRun bool,
 ) error {
 	get := action.NewGet(actionCfg)
-	existing, getErr := get.Run(helmclient.DefaultReleaseName)
+	existing, getErr := get.Run(helmconfig.DefaultReleaseName)
 	switch {
 	case getErr == nil:
 		// Stuck-release gate FIRST. Helm refuses every operation
@@ -329,7 +331,7 @@ func installOrUpgradeWithLoader(
 
 	default:
 		return pkgerrors.NewClusterError(
-			fmt.Sprintf("failed to read existing helm release %q", helmclient.DefaultReleaseName),
+			fmt.Sprintf("failed to read existing helm release %q", helmconfig.DefaultReleaseName),
 			getErr,
 			"verify cluster connectivity and permissions to read helm release secrets",
 		)
@@ -347,7 +349,7 @@ func runInstall(
 	dryRun bool,
 ) error {
 	inst := action.NewInstall(actionCfg)
-	inst.ReleaseName = helmclient.DefaultReleaseName
+	inst.ReleaseName = helmconfig.DefaultReleaseName
 	inst.Namespace = namespace
 	inst.CreateNamespace = true
 	inst.Wait = !dryRun
@@ -385,7 +387,7 @@ func runUpgrade(
 	upg.Version = chartVersion
 	upg.PostRenderer = annotationPostRenderer{version: launchKitVersion}
 
-	if _, err := upg.RunWithContext(ctx, helmclient.DefaultReleaseName, chrt, values); err != nil {
+	if _, err := upg.RunWithContext(ctx, helmconfig.DefaultReleaseName, chrt, values); err != nil {
 		return pkgerrors.NewDeploymentError(
 			fmt.Sprintf("helm upgrade of network-operator failed in namespace %s", namespace),
 			err,

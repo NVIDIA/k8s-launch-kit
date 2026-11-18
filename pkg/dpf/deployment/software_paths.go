@@ -13,6 +13,7 @@ import (
 	"unicode"
 
 	"github.com/nvidia/k8s-launch-kit/pkg/dpf/config"
+	"github.com/nvidia/k8s-launch-kit/pkg/dpf/deployment/internal/controllercontract"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 )
 
@@ -37,7 +38,7 @@ type softwareCacheTarget struct {
 // softwareCacheTargets validates the retained software locks against both the
 // rendered BlueFieldSoftware and a fresh, ready live observation. selectedPSIDs
 // is the canonical device selection bound to the same retained generation.
-func softwareCacheTargets(desired, current *unstructured.Unstructured, locks config.Software, selectedPSIDs []string) ([]softwareCacheTarget, error) {
+func softwareCacheTargets(rules *controllercontract.Rules, desired, current *unstructured.Unstructured, locks config.Software, selectedPSIDs []string) ([]softwareCacheTarget, error) {
 	canonicalPSIDs, err := canonicalSoftwareSelection(selectedPSIDs)
 	if err != nil {
 		return nil, err
@@ -53,7 +54,7 @@ func softwareCacheTargets(desired, current *unstructured.Unstructured, locks con
 	if err := softwareSpecMatches(desired, software, canonicalPSIDs); err != nil {
 		return nil, err
 	}
-	if err := softwareReadiness(current); err != nil {
+	if err := softwareReadiness(rules, current); err != nil {
 		return nil, err
 	}
 
@@ -161,8 +162,8 @@ func softwareSpecMatches(desired *unstructured.Unstructured, software config.Sof
 	return nil
 }
 
-func softwareReadiness(current *unstructured.Unstructured) error {
-	if readiness := EvaluateReadiness(current); !readiness.Ready {
+func softwareReadiness(rules *controllercontract.Rules, current *unstructured.Unstructured) error {
+	if readiness := rules.ResourceReadiness(current); !readiness.Ready {
 		return fmt.Errorf("BlueFieldSoftware is not ready: %s", readiness.ReasonCode)
 	}
 	return nil

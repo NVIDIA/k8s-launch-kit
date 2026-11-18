@@ -12,6 +12,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/netip"
+	"reflect"
 	"slices"
 	"strings"
 	"testing"
@@ -103,6 +104,11 @@ func newRuntimeStageFixture(t *testing.T, serials []string) *runtimeStageFixture
 func newRuntimeStageFixtureFromExecution(t *testing.T, execution *managementExecution) *runtimeStageFixture {
 	t.Helper()
 	base, activation, snapshot := hostNetworkStageFixtureFromExecution(t, execution)
+	return runtimeStageFixtureFromActivated(t, base, activation, snapshot)
+}
+
+func runtimeStageFixtureFromActivated(t *testing.T, base activationIntegrationFixture, activation activationStageReceipt, snapshot hostWorkloadLeaseSnapshot) *runtimeStageFixture {
+	t.Helper()
 	f := &runtimeStageFixture{activationIntegrationFixture: base, activation: activation, snapshot: snapshot, client: &runtimeStageFake{activationIntegrationFake: base.client}}
 	desired := base.prepared.execution.plan.Intent()
 	namespace := desired.Namespace
@@ -114,22 +120,22 @@ func newRuntimeStageFixtureFromExecution(t *testing.T, execution *managementExec
 		labels[activationParentLabel] = parent
 		f.snapshot.TenantNodes[i].SetLabels(labels)
 	}
-	deployment, err := retainedDeploymentObject(base.prepared.execution)
+	deployment, err := retainedDeploymentObject(base.prepared.execution.verificationInputs())
 	if err != nil {
 		t.Fatal(err)
 	}
-	observed, err := observeActivationScope(base.ctx, base.client, base.prepared.execution, deployment, activation.DeploymentUID, activation.selected, activation.progress)
+	observed, err := observeActivationScope(base.ctx, base.client, base.prepared.execution.verificationInputs(), deployment, activation.DeploymentUID, activation.selected, activation.progress)
 	if err != nil {
 		t.Fatal(err)
 	}
-	leases, err := resolveHostWorkloadLeases(base.prepared.execution.plan, base.prepared.execution.reconciler, activation.selected, observed, base.workload, f.snapshot)
+	leases, err := resolveHostWorkloadLeases(base.prepared.execution.plan, base.prepared.execution.reconciler, activation.selected, observed, base.workload.BundleDigest, base.workload.Resources, f.snapshot)
 	if err != nil {
 		t.Fatal(err)
 	}
 	fence := hostNetworkLeaseFence{snapshot: f.snapshot, leases: leases, activation: observed}
 	// Independent pinned-controller fixture: retained template Helm defaults plus
 	// retained configuration values, current owner-qualified runtime identities.
-	objects, err := retainedWorkloadObjects(base.prepared.execution)
+	objects, err := retainedWorkloadObjects(base.prepared.execution.verificationInputs())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -177,7 +183,7 @@ func newRuntimeStageFixtureFromExecution(t *testing.T, execution *managementExec
 		object.SetLabels(map[string]string{activationParentLabel: parent, hbnServiceReferenceLabel: hbnContainerName})
 		object.SetAnnotations(map[string]string{hbnServiceVersionAnnotation: "aabbccddee", "dpu.nvidia.com/consumed-by": "doca-hbn-random"})
 		object.SetOwnerReferences([]metav1.OwnerReference{{APIVersion: "svc.dpu.nvidia.com/v1alpha1", Kind: "DPUDeployment", Name: base.client.deployment.GetName(), UID: activation.DeploymentUID, Controller: &controller}, {APIVersion: "svc.dpu.nvidia.com/v1alpha1", Kind: "DPUService", Name: "doca-hbn-random", UID: "service-uid", Controller: &notController}})
-		object, err = base.prepared.execution.reconciler.schemas.DefaultedCopy(object)
+		object, err = base.prepared.execution.rules.DefaultedCopy(object)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -192,13 +198,13 @@ func newRuntimeStageFixtureFromExecution(t *testing.T, execution *managementExec
 	service.SetOwnerReferences([]metav1.OwnerReference{{APIVersion: "svc.dpu.nvidia.com/v1alpha1", Kind: "DPUDeployment", Name: base.client.deployment.GetName(), UID: activation.DeploymentUID, Controller: &controller}})
 	service.SetLabels(map[string]string{activationParentLabel: parent, hbnServiceReferenceLabel: hbnContainerName})
 	service.SetAnnotations(map[string]string{hbnServiceVersionAnnotation: "aabbccddee"})
-	service, err = base.prepared.execution.reconciler.schemas.DefaultedCopy(service)
+	service, err = base.prepared.execution.rules.DefaultedCopy(service)
 	if err != nil {
 		t.Fatal(err)
 	}
 	f.client.service = service
 	f.image = hbnPodImageIdentity{Reference: desired.Generation.ImageRepository + ":" + desired.Generation.ImageTag + "@" + desired.Generation.ImageDigest, ManifestDigest: desired.Generation.ImageDigest, ConfigDigest: "sha256:" + strings.Repeat("b", 64)}
-	intent, err := compileHBNRuntimeBinding(base.prepared.execution, activation, fence, service, f.client.interfaces, f.image)
+	intent, err := compileHBNRuntimeBinding(base.prepared.execution.verificationInputs(), activation, fence, service, f.client.interfaces, f.image)
 	if err != nil {
 		t.Fatalf("retained plan factory: %v\nservice spec=%#v", err, service.Object["spec"])
 	}
@@ -227,7 +233,7 @@ func newRuntimeStageFixtureFromExecution(t *testing.T, execution *managementExec
 	if err != nil {
 		t.Fatal(err)
 	}
-	tenant := base.controlPlane.tenant.Client
+	tenant := testTenant(base.controlPlane.tenant.Client)
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		switch {
@@ -319,7 +325,7 @@ func newRuntimeStageFixtureFromExecution(t *testing.T, execution *managementExec
 					selected = &activation.selected[i]
 				}
 			}
-			if selected == nil || target.SSH != selected.hostTarget.SSH || target.InputRef != selected.host.InputRef {
+			if selected == nil || !reflect.DeepEqual(target.SSH, selected.hostTarget.SSH) || target.InputRef != selected.host.InputRef {
 				t.Fatal("traffic changed selected physical/SSH authority")
 			}
 			result := runtimePassedTraffic(request)
@@ -351,7 +357,7 @@ func runtimePassedTraffic(request sshprobe.HostTrafficRequest) sshprobe.HostTraf
 		Ordinary: sshprobe.HostTrafficProbe{State: sshprobe.TrafficProbePassed, PayloadBytes: 56, Counters: &sshprobe.PingCounters{Sent: 3, Received: 3}}, MTUProbe: sshprobe.HostTrafficProbe{State: sshprobe.TrafficProbePassed, PayloadBytes: request.MTU - 28, Counters: &sshprobe.PingCounters{Sent: 3, Received: 3}}}
 }
 func (f *runtimeStageFixture) run(journal *executionJournal) (HBNRuntimeResult, error) {
-	return runHBNRuntimeStage(f.ctx, f.client, f.prepared, f.controlPlane, f.workload, f.activation, f.hosts, journal, time.Second, f.transports)
+	return runHBNRuntimeStage(f.ctx, f.client, newControlPlaneVerificationInputs(f.prepared, f.controlPlane, f.workload), f.controlPlane.tenant.Client, f.activation, f.hosts, journal, time.Second, f.transports)
 }
 
 func TestHBNRuntimeStageActualTwoHostFlow(t *testing.T) {
@@ -559,7 +565,7 @@ func TestHBNRuntimeFactoryInputsAreIndependent(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	intent, err := compileHBNRuntimeBinding(f.prepared.execution, f.activation, fence, f.client.service, f.client.interfaces, f.image)
+	intent, err := compileHBNRuntimeBinding(f.prepared.execution.verificationInputs(), f.activation, fence, f.client.service, f.client.interfaces, f.image)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -569,7 +575,7 @@ func TestHBNRuntimeFactoryInputsAreIndependent(t *testing.T) {
 	if !jsonEqual(intent.ExpectedServiceSpec, before) || !jsonEqual(intent.ApplicationValues, appBefore) {
 		t.Fatal("factory expectations alias observed API state")
 	}
-	if _, err = compileHBNRuntimeBinding(f.prepared.execution, f.activation, fence, f.client.service, f.client.interfaces, f.image); err == nil {
+	if _, err = compileHBNRuntimeBinding(f.prepared.execution.verificationInputs(), f.activation, fence, f.client.service, f.client.interfaces, f.image); err == nil {
 		t.Fatal("factory accepted unretained values")
 	}
 }
@@ -603,7 +609,7 @@ func TestRuntimeStagePreparedExecutionKeepsInstancesIndependent(t *testing.T) {
 		if firstContext.Err() != nil {
 			t.Fatal("first fixture did not start with a live independent context")
 		}
-		software, err := retainedBlueFieldSoftware(execution)
+		software, err := retainedBlueFieldSoftware(execution.verificationInputs())
 		if err != nil {
 			t.Fatal(err)
 		}

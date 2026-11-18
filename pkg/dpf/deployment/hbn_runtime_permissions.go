@@ -16,7 +16,7 @@ import (
 // scoped list permissions needed to find candidate HBN DaemonSets and Pods.
 // It performs authorization reviews only; the caller owns fresh source and
 // tenant identity fences around any subsequent reads or effects.
-func checkTenantRuntimeReadPermissions(ctx context.Context, tenant *tenantClient, namespace string) []PreflightCheck {
+func (tenant *tenantClient) checkTenantRuntimeReadPermissions(ctx context.Context, namespace string) []PreflightCheck {
 	const checkBase = "tenant.rbac.runtime"
 	if err := validateTenantPermissionInputs(ctx, tenant, namespace); err != nil {
 		return []PreflightCheck{blockedPreflight(checkBase, "TENANT_PERMISSION_INPUT_INVALID", "Tenant runtime authorization requires a bounded context, tenant client and valid selected namespace.")}
@@ -31,7 +31,7 @@ func checkTenantRuntimeReadPermissions(ctx context.Context, tenant *tenantClient
 // revalidate its identity and the named pods/exec create permission. The
 // caller remains responsible for validating the Pod UID/owner/node/image and
 // tenant/source identity immediately before and after executing it.
-func checkTenantPodExecPermissions(ctx context.Context, tenant *tenantClient, namespace, pod string) []PreflightCheck {
+func (tenant *tenantClient) checkTenantPodExecPermissions(ctx context.Context, namespace, pod string) []PreflightCheck {
 	const checkBase = "tenant.rbac.runtime"
 	if err := validateTenantPermissionInputs(ctx, tenant, namespace); err != nil || len(validation.IsDNS1123Subdomain(pod)) != 0 {
 		return []PreflightCheck{blockedPreflight(checkBase, "TENANT_PERMISSION_INPUT_INVALID", "Tenant Pod authorization requires a bounded context, tenant client and valid selected namespace and Pod name.")}

@@ -13,6 +13,7 @@ import (
 	"strings"
 
 	"github.com/nvidia/k8s-launch-kit/pkg/config"
+	"github.com/nvidia/k8s-launch-kit/pkg/hostplatform"
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
@@ -133,10 +134,13 @@ func GetPolicy(ctx context.Context, c client.Reader, name string) (*unstructured
 // hardware discovery to complete. Cancellation is always an operation error.
 // On OpenShift, undetected components are matched to the network operator's
 // installers, which the generic image/entrypoint heuristics do not recognize.
-func DiscoverEvidence(ctx context.Context, c client.Reader, flavor ...string) (*config.SecondaryNetworkObservation, error) {
+func DiscoverEvidence(ctx context.Context, c client.Reader, platform hostplatform.Selection) (*config.SecondaryNetworkObservation, error) {
+	if err := platform.Validate(); err != nil {
+		return nil, err
+	}
 	inspection, err := Inspect(ctx, c)
 	if err == nil {
-		if len(flavor) > 0 && flavor[0] == config.FlavorOCP {
+		if platform == hostplatform.OpenShift {
 			for component, observation := range map[string]*config.ComponentObservation{Multus: &inspection.Observation.Multus, CNIPlugins: &inspection.Observation.CNIPlugins} {
 				if observation.Status != config.InstallerNotDetected {
 					continue

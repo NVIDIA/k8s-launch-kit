@@ -15,6 +15,7 @@ import (
 	"testing"
 
 	"github.com/nvidia/k8s-launch-kit/pkg/dpf/bootstrap"
+	"github.com/nvidia/k8s-launch-kit/pkg/dpf/deployment/internal/controllercontract"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime/schema"
@@ -75,7 +76,7 @@ func newReconcileFixture(t *testing.T) (*Reconciler, *unstructured.Unstructured)
 	if err != nil {
 		t.Fatal(err)
 	}
-	reconciler, err := NewReconciler(rendered.Manifest, "sha256:"+strings.Repeat("a", 64))
+	reconciler, err := newReconciler(testRulesForManifest(t, rendered.Manifest), "sha256:"+strings.Repeat("a", 64), controllercontract.MetadataPolicy{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -209,13 +210,13 @@ func TestReconcilerAllowsOnlyPinnedDPUDeploymentDependencyMetadata(t *testing.T)
 	labels := current.GetLabels()
 	labels["svc.dpu.nvidia.com/consumed-by-dpudeployment-0123456789"] = ""
 	current.SetLabels(labels)
-	if !labelsMatch(desired, current) {
-		t.Fatal("labelsMatch() rejected the pinned DPF dependent-object label")
+	if !testRules(t).LabelsMatch(desired, current) {
+		t.Fatal("testRules(t).LabelsMatch() rejected the pinned DPF dependent-object label")
 	}
 	labels["untrusted.example/extra"] = "x"
 	current.SetLabels(labels)
-	if labelsMatch(desired, current) {
-		t.Fatal("labelsMatch() accepted an unrelated extra metadata label")
+	if testRules(t).LabelsMatch(desired, current) {
+		t.Fatal("testRules(t).LabelsMatch() accepted an unrelated extra metadata label")
 	}
 }
 
@@ -292,7 +293,7 @@ func TestReconcilerRestrictsOperatorConfigFinalizerToItsOwnKind(t *testing.T) {
 			object := &unstructured.Unstructured{}
 			object.SetKind(tc.kind)
 			object.SetFinalizers(tc.finalizers)
-			if err := validateControllerMetadata(object, nil); (err == nil) != tc.accepted {
+			if err := testRules(t).ValidateMetadata(object, controllercontract.MetadataPolicy{}); (err == nil) != tc.accepted {
 				t.Fatalf("finalizer acceptance=%v, want %v", err == nil, tc.accepted)
 			}
 		})
@@ -331,7 +332,7 @@ func TestReconcilerRecognizesOnlyPinnedStaticControllerFinalizers(t *testing.T) 
 			object.SetKind(tc.kind)
 			object.SetFinalizers(tc.finalizers)
 			before := object.DeepCopy()
-			if err := validateControllerMetadata(object, nil); (err == nil) != tc.accepted {
+			if err := testRules(t).ValidateMetadata(object, controllercontract.MetadataPolicy{}); (err == nil) != tc.accepted {
 				t.Fatalf("finalizer acceptance=%v, want %v", err == nil, tc.accepted)
 			}
 			if !reflect.DeepEqual(before.Object, object.Object) {
@@ -557,36 +558,6 @@ func TestReconcilerDPUFlavorAdmissionPreservesSemanticAndOwnershipConflicts(t *t
 			}
 		})
 	}
-}
-
-func TestDPUFlavorAdmissionDefaultsAreMissingOnlyAndExactScope(t *testing.T) {
-	for _, value := range []any{nil, false, int64(0), []any{}, map[string]any{"present": false}} {
-		spec := map[string]any{}
-		for _, field := range []string{"grub", "sysctl", "ovs", "containerdConfig"} {
-			spec[field] = value
-		}
-		object := flavorReconcileDesired(spec)
-		before := object.DeepCopy()
-		defaultDPUFlavorAdmissionObjects(object)
-		if !reflect.DeepEqual(before.Object, object.Object) {
-			t.Fatal("canonicalizer overwrote an explicitly present value")
-		}
-	}
-	for _, change := range []func(*unstructured.Unstructured){
-		func(o *unstructured.Unstructured) { o.SetKind("DPUFlavorTemplate") },
-		func(o *unstructured.Unstructured) { o.SetAPIVersion("provisioning.dpu.nvidia.com/v1alpha2") },
-		func(o *unstructured.Unstructured) { delete(o.Object, "spec") },
-		func(o *unstructured.Unstructured) { o.Object["spec"] = map[string]any(nil) },
-	} {
-		object := flavorReconcileDesired(map[string]any{})
-		change(object)
-		before := object.DeepCopy()
-		defaultDPUFlavorAdmissionObjects(object)
-		if !reflect.DeepEqual(before.Object, object.Object) {
-			t.Fatal("canonicalizer expanded beyond present exact flavor spec")
-		}
-	}
-	defaultDPUFlavorAdmissionObjects(nil)
 }
 
 func TestPostCreateConflictMessageKeepsOnlyFiniteVerificationCategory(t *testing.T) {

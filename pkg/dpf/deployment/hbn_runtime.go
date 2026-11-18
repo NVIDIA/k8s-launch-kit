@@ -76,8 +76,7 @@ type hbnRuntimeFence struct {
 // runHBNRuntimeStage uses one measurement at a time (concurrency bound 1).
 // This keeps the complete-cohort fences and durable result ordering explicit;
 // each SSH operation is itself finite and bounded by the shared deadline.
-func runHBNRuntimeStage(ctx context.Context, client hbnRuntimeStageClient, prepared *preparedControlPlaneRun,
-	controlPlane controlPlaneReceipts, workload workloadPreparationReceipt, activation activationStageReceipt, hosts []HostWorkloadNetworkResult,
+func runHBNRuntimeStage(ctx context.Context, client hbnRuntimeStageClient, verification *controlPlaneVerificationInputs, tenant runtimeVerificationTenantReader, activation activationStageReceipt, hosts []HostWorkloadNetworkResult,
 	journal *executionJournal, timeout time.Duration, transports hbnRuntimeTransports,
 ) (result HBNRuntimeResult, stageErr error) {
 	result.State = "incomplete"
@@ -111,8 +110,8 @@ func runHBNRuntimeStage(ctx context.Context, client hbnRuntimeStageClient, prepa
 	fail := func(code, message string) (HBNRuntimeResult, error) {
 		return failWithCause(code, message, nil)
 	}
-	if ctx == nil || client == nil || prepared == nil || prepared.execution == nil || prepared.execution.plan == nil || prepared.execution.reconciler == nil || journal == nil || controlPlane.tenant.Client == nil ||
-		timeout < time.Second || timeout > 2*time.Minute || transports.readLeases == nil || transports.readCommand == nil || transports.probeTraffic == nil || len(activation.selected) == 0 || len(activation.selected) != len(hosts) || activation.BundleDigest != prepared.execution.plan.Digest() || journal.digest != activation.BundleDigest || workload.BundleDigest != activation.BundleDigest {
+	if ctx == nil || client == nil || verification == nil || verification.execution == nil || verification.execution.plan == nil || verification.execution.reconciler == nil || journal == nil || tenant == nil ||
+		timeout < time.Second || timeout > 2*time.Minute || transports.readLeases == nil || transports.readCommand == nil || transports.probeTraffic == nil || len(activation.selected) == 0 || len(activation.selected) != len(hosts) || activation.BundleDigest != verification.execution.plan.Digest() || journal.digest != activation.BundleDigest || verification.workloadDigest != activation.BundleDigest {
 		return fail("HBN_RUNTIME_INPUT_INVALID", "Runtime checks require the retained plan, complete activation/host receipts and bounded transports.")
 	}
 	if _, ok := ctx.Deadline(); !ok {
@@ -124,13 +123,19 @@ func runHBNRuntimeStage(ctx context.Context, client hbnRuntimeStageClient, prepa
 	if err := validateHostNetworkCohort(activation); err != nil {
 		return fail("HBN_RUNTIME_COHORT_INVALID", "Runtime traffic requires one complete selected DPU binding per physical host.")
 	}
-	execution := prepared.execution
+	frozenActivation, copyErr := copyActivationVerificationReceipt(activation)
+	if copyErr != nil {
+		return failWithCause("HBN_RUNTIME_INPUT_INVALID", "Runtime activation bindings could not be copied.", copyErr)
+	}
+	activation = frozenActivation
+	hosts = append([]HostWorkloadNetworkResult(nil), hosts...)
+	execution := verification.execution
 	desired := execution.plan.Intent()
 	objects, err := retainedWorkloadObjects(execution)
 	if err != nil {
 		return fail("HBN_RUNTIME_PLAN_INVALID", "The retained workload prerequisite set is invalid.")
 	}
-	if err := verifyActivationBoundary(ctx, client, prepared, controlPlane, workload, activation.selected, activation.DeploymentUID, objects, journal, timeout); err != nil {
+	if err := verifyActivationBoundary(ctx, client, verification, tenant, activation.selected, activation.DeploymentUID, objects, journal, timeout); err != nil {
 		return failWithCause("HBN_RUNTIME_PHYSICAL_ENTRY_FAILED", "The complete physical and control/resource cohort could not be verified before runtime observation.", err)
 	}
 
@@ -150,7 +155,7 @@ func runHBNRuntimeStage(ctx context.Context, client hbnRuntimeStageClient, prepa
 	if err != nil || image.Reference != reference || !image.valid() {
 		return fail("HBN_RUNTIME_IMAGE_IDENTITY_UNAVAILABLE", "The immutable HBN platform image identity could not be verified.")
 	}
-	allocationObserver, err := newRuntimeAllocationFenceObserver(ctx, client, prepared, controlPlane, workload, activation, journal, timeout, transports.readLeases, hbnRuntimeStage, "HBN_RUNTIME")
+	allocationObserver, err := newRuntimeAllocationFenceObserver(ctx, client, verification, tenant, activation, journal, timeout, transports.readLeases, hbnRuntimeStage, "HBN_RUNTIME")
 	if err != nil {
 		return fail("HBN_RUNTIME_PLAN_INVALID", "The retained activation/allocation plan is invalid.")
 	}
@@ -163,7 +168,7 @@ func runHBNRuntimeStage(ctx context.Context, client hbnRuntimeStageClient, prepa
 		if err != nil {
 			return hbnRuntimeFence{}, err
 		}
-		bindings, err := observeHBNRuntimeBindings(ctx, client, prepared, controlPlane.tenant.Client, activation, before, image, timeout)
+		bindings, err := observeHBNRuntimeBindings(ctx, client, verification.execution, tenant, activation, before, image, timeout)
 		if err != nil {
 			return hbnRuntimeFence{}, err
 		}
@@ -340,7 +345,7 @@ func runHBNRuntimeStage(ctx context.Context, client hbnRuntimeStageClient, prepa
 	}
 	// Rebind physical identity/admin before final acceptance. The final runtime
 	// observe follows it, catching allocation/pod/source drift during BMC reads.
-	if err := verifyActivationBoundary(ctx, client, prepared, controlPlane, workload, activation.selected, activation.DeploymentUID, objects, journal, timeout); err != nil {
+	if err := verifyActivationBoundary(ctx, client, verification, tenant, activation.selected, activation.DeploymentUID, objects, journal, timeout); err != nil {
 		return failWithCause("HBN_RUNTIME_PHYSICAL_EXIT_FAILED", "The complete physical and control/resource cohort could not be reverified after runtime measurements.", err)
 	}
 	if _, err := observe(); err != nil {

@@ -128,7 +128,7 @@ func TestHBNRuntimeManagementIdentityFailureKeepsReasonAndCause(t *testing.T) {
 					return f.client.VerifyIdentity(ctx)
 				}}
 				patches, claims := len(f.activationIntegrationFixture.client.patches), f.activationIntegrationFixture.client.guardCalls
-				result, err := runHBNRuntimeStage(ctx, client, f.prepared, f.controlPlane, f.workload, f.activation, f.hosts, journal, time.Second, f.transports)
+				result, err := runHBNRuntimeStage(ctx, client, newControlPlaneVerificationInputs(f.prepared, f.controlPlane, f.workload), f.controlPlane.tenant.Client, f.activation, f.hosts, journal, time.Second, f.transports)
 				want, wantRuntime := "MANAGEMENT_IDENTITY_CHANGED", "HBN_RUNTIME_PHYSICAL_ENTRY_FAILED"
 				if phase == "exit" {
 					wantRuntime = "HBN_RUNTIME_PHYSICAL_EXIT_FAILED"
@@ -178,7 +178,7 @@ func TestHBNRuntimeLateControlCancellationDoesNotAssertCredentialDrift(t *testin
 	hit := false
 	client := canceledEnrollmentFenceClient{hbnRuntimeStageClient: f.client, cancel: cancel, hit: &hit}
 	journal := testJournal(f.prepared.execution)
-	result, err := runHBNRuntimeStage(ctx, client, f.prepared, f.controlPlane, f.workload, f.activation, f.hosts, journal, time.Second, f.transports)
+	result, err := runHBNRuntimeStage(ctx, client, newControlPlaneVerificationInputs(f.prepared, f.controlPlane, f.workload), f.controlPlane.tenant.Client, f.activation, f.hosts, journal, time.Second, f.transports)
 	text := journal.file.(*managementMemoryFile).String()
 	if !hit || !errors.Is(err, context.Canceled) || result.ReasonCode != "HBN_RUNTIME_CANCELED" || result.TrafficValidated ||
 		!strings.Contains(text, "ACTIVATION_CANCELED") || strings.Contains(text, "ACTIVATION_ENROLLMENT_SECRET_CHANGED") || f.commandReads != 0 || f.trafficReads != 0 {

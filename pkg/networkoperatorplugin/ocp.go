@@ -50,10 +50,11 @@ func requiredOCPOperators(cfg *config.LaunchKitConfig, deployment bool) []ocpOpe
 }
 
 // CheckOCPOperators checks only the expected OLM installation and the API
-// needed by each generated operator configuration.
+// needed by each generated operator configuration. The caller must select
+// OpenShift before invoking this platform-specific check.
 func CheckOCPOperators(ctx context.Context, c client.Client, cfg *config.LaunchKitConfig, deployment bool) error {
-	if cfg == nil || cfg.Flavor != config.FlavorOCP {
-		return nil
+	if cfg == nil {
+		return fmt.Errorf("OpenShift operator checks require a cluster config")
 	}
 	for _, op := range requiredOCPOperators(cfg, deployment) {
 		csv, err := installedCSV(ctx, c, op)

@@ -10,19 +10,9 @@ import (
 	"io"
 	"os"
 	"os/signal"
-	"path/filepath"
-	"time"
 
-	"github.com/nvidia/k8s-launch-kit/pkg/dpf/artifactcheck"
-	"github.com/nvidia/k8s-launch-kit/pkg/dpf/artifacts"
-	"github.com/nvidia/k8s-launch-kit/pkg/dpf/catalog"
-	"github.com/nvidia/k8s-launch-kit/pkg/dpf/config"
+	"github.com/nvidia/k8s-launch-kit/pkg/dpf/app"
 	"github.com/nvidia/k8s-launch-kit/pkg/dpf/discovery"
-	"github.com/nvidia/k8s-launch-kit/pkg/dpf/inventory"
-	"github.com/nvidia/k8s-launch-kit/pkg/dpf/probe"
-	"github.com/nvidia/k8s-launch-kit/pkg/dpf/redfish"
-	"github.com/nvidia/k8s-launch-kit/pkg/dpf/sshprobe"
-	"github.com/nvidia/k8s-launch-kit/pkg/dpf/switchprobe"
 	apperrors "github.com/nvidia/k8s-launch-kit/pkg/errors"
 	"github.com/nvidia/k8s-launch-kit/pkg/target"
 	"github.com/nvidia/k8s-launch-kit/pkg/ui"
@@ -78,81 +68,11 @@ func (d driver) Bind(inv target.Invocation) (target.Operation, error) {
 		ctx = ui.WithOutput(ctx, progress)
 		logger := log.FromContext(ctx).WithName("dpf-discovery")
 		ctx = log.IntoContext(ctx, logger)
-		report := discovery.NewReport()
-		var store *artifacts.Store
-		fail := func(code int, message string) {
-			report.Execution = "failed"
-			report.Errors = append(report.Errors, inventory.Problem{Code: "INVALID_CONFIGURATION", Message: message, ExitCode: code})
-			progress.Info("[FAIL] Discovery preparation: %s", displayText(message))
-		}
-		progress.Info("[RUNNING] Configuration: validating inventory, optional overrides and access settings")
-		input, err := config.LoadInputs(r.Inventory, r.UserConfig)
-		if r.Inventory == "" {
-			err = fmt.Errorf("DPF discovery requires --inventory inventory.yaml; run l8k discover --target dpf --use-case hbn-bgp --inventory inventory.yaml --save-cluster-config dpf-discovered.yaml; --user-config overrides.yaml is optional")
-		}
-		if err == nil {
-			input, err = config.WithUseCase(input, r.UseCase)
-		}
-		if err != nil {
-			fail(2, err.Error())
-		} else {
-			resolved, err := config.Resolve(input)
-			if err != nil {
-				fail(2, err.Error())
-			} else if err = validateManagement(resolved); err != nil {
-				fail(2, err.Error())
-			} else {
-				// Unqualified image assets reject management mode before any remote operation.
-				assets := catalog.ProbeAssets()
-				if resolved.Mode == "management" && assets.Validate() != nil {
-					fail(2, "management network probes require diagnostic image assets that have passed Kubernetes runtime qualification; inventory mode remains available without those probes")
-				} else {
-					store, err = artifacts.New(input, r.OutputPath, r.ExplicitOutput)
-					if err != nil {
-						fail(1, err.Error())
-					} else {
-						progress.Info("[PASS] Configuration: %d hosts, %d DPUs; %s mode", len(input.Site.Discovery.Hosts), len(input.Site.Discovery.DPUs), resolved.Mode)
-						logger.V(1).Info("Discovery configuration ready", "mode", resolved.Mode, "sources", len(resolved.Targets), "timeout", resolved.Timeout, "requestTimeout", resolved.RequestTimeout, "concurrency", resolved.MaxConcurrentBMCs)
-						if !inv.Output.Quiet {
-							for _, endpoint := range resolved.Targets {
-								if endpoint.Access.InsecureSkipVerify() {
-									fmt.Fprintf(r.Stderr, "Warning: BMC TLS certificate verification disabled for %s\n", endpoint.Endpoint)
-								}
-							}
-						}
-						provisioningRelease := ""
-						if resolved.HBN != nil && resolved.Software != nil {
-							provisioningRelease = resolved.Software.Version
-						}
-						deps := discovery.Dependencies{Switches: switchprobe.Collector{}, SSH: sshprobe.Collector{}, BMC: redfish.Collector{IncludeNetworkFunctionMACs: resolved.HBN != nil, ProvisioningRelease: provisioningRelease}, Probes: probe.Runner{Assets: assets, Journal: probe.FileJournal(filepath.Join(store.RunDir, "resources.json"))}}
-						deps.HBNPermissions = newHBNPermissionObserver().observe
-						deps.HBNEnrollment = hbnEnrollmentAccessCheck
-						deps.Artifacts = artifactcheck.Verifier{}
-						deps.HostLLDP = sshprobe.Collector{}
-						deps.HostNetworking = sshprobe.ObserveHostWorkloadNetwork
-						if resolved.Input.Site.Inventory == nil {
-							resolved.Input.Site.Inventory = store.PriorInventory
-						}
-						report = discovery.Collect(ctx, resolved, store.RunID(), deps)
-						progress.Info("[RUNNING] Publication: saving inventory and detailed report")
-						publishStarted := time.Now()
-						publishCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 10*time.Second)
-						err = store.Publish(publishCtx, &report)
-						cancel()
-						if err != nil {
-							logger.Error(err, "Discovery publication failed")
-							progress.Info("[FAIL] Publication incomplete; see the result for details")
-							report.Execution = "failed"
-							report.Errors = append(report.Errors, inventory.Problem{Code: "PUBLICATION_FAILED", Message: err.Error(), ExitCode: 1})
-							_ = store.Report(&report)
-						} else {
-							progress.Info("[PASS] Publication: %s discovery artifacts saved", report.Discovery.Outcome)
-						}
-						logger.V(1).Info("Discovery publication finished", "outcome", report.Discovery.Outcome, "success", err == nil, "duration", time.Since(publishStarted))
-					}
-				}
-			}
-		}
+		result := app.Discover(ctx, app.DiscoveryRequest{
+			Inventory: r.Inventory, UserConfig: r.UserConfig, UseCase: r.UseCase,
+			OutputPath: r.OutputPath, ExplicitOutput: r.ExplicitOutput,
+		})
+		report, input := result.Report, result.Input
 		if inv.Output.Format == "json" {
 			if err := writeJSONReport(r.Stdout, report); err != nil {
 				logger.Error(err, "Discovery result output failed")
@@ -167,12 +87,4 @@ func (d driver) Bind(inv target.Invocation) (target.Operation, error) {
 		}
 		return apperrors.NewExitStatus(discovery.ExitCode(report))
 	}), nil
-}
-
-func validateManagement(r config.Request) error {
-	if r.Kubeconfig == "" {
-		return nil
-	}
-	_, err := discovery.ManagementAccess(r)
-	return err
 }

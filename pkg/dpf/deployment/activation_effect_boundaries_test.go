@@ -32,7 +32,7 @@ func TestActivationACKRefreshesSharedCredentialAfterReboot(t *testing.T) {
 	op, _ := checkpointFixture(t, f)
 	f.prepared.operation = op
 	client := recoveryActivationClient{f.client}
-	f.controlPlane.tenant.Client.source = client
+	testTenant(f.controlPlane.tenant.Client).source = client
 	base := &recoveryRebooter{fixture: &f}
 	reboot := prerequisiteDriftRebooter{base: base, after: func() {
 		secret := f.client.base.resources["Secret/"+f.prepared.execution.operatorNamespace+"/"+enrollmentSecretName]
@@ -56,7 +56,7 @@ func TestActivationResumedACKRefreshesSharedCredential(t *testing.T) {
 	op, store := checkpointFixture(t, f)
 	f.prepared.operation = op
 	client := recoveryActivationClient{f.client}
-	f.controlPlane.tenant.Client.source = client
+	testTenant(f.controlPlane.tenant.Client).source = client
 	reboot := &recoveryRebooter{fixture: &f, loseResponse: true}
 	run := func() error {
 		_, err := runActivationStage(f.ctx, client, f.prepared, f.controlPlane, f.workload, f.inventory, f.request, f.journal, time.Millisecond, time.Second, reboot)
@@ -98,7 +98,7 @@ func TestActivationResetRefreshesResourcesAfterSafetyRead(t *testing.T) {
 	op, _ := checkpointFixture(t, f)
 	f.prepared.operation = op
 	client := prerequisiteDriftSafetyClient{recoveryActivationClient{f.client}}
-	f.controlPlane.tenant.Client.source = client
+	testTenant(f.controlPlane.tenant.Client).source = client
 	reboot := &recoveryRebooter{fixture: &f}
 	_, err := runActivationStage(f.ctx, client, f.prepared, f.controlPlane, f.workload, f.inventory, f.request, f.journal, time.Millisecond, time.Second, reboot)
 	t.Logf("result=%v submissions=%d claims=%d patches=%v", err, reboot.submissions, f.client.guardCalls, f.client.patches)

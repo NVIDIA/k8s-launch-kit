@@ -5,9 +5,10 @@ package deployment
 
 import (
 	"context"
-	"github.com/nvidia/k8s-launch-kit/pkg/dpf/generation"
 	"testing"
 	"time"
+
+	"github.com/nvidia/k8s-launch-kit/pkg/dpf/generation"
 )
 
 func TestTenantPlanUsesIndependentReleaseVersionAndImmutableIntent(t *testing.T) {
@@ -46,7 +47,7 @@ func TestTenantPlanUsesIndependentReleaseVersionAndImmutableIntent(t *testing.T)
 }
 
 func TestConnectRetainedTenantRejectsMissingInputsBeforeAccess(t *testing.T) {
-	if _, err := connectRetainedTenant(context.Background(), nil, nil, "", nil, nil, time.Second, time.Second); err == nil {
+	if _, err := connectRetainedTenant(testRules(t), context.Background(), nil, nil, "", nil, nil, time.Second, time.Second, nil, nil); err == nil {
 		t.Fatal("incomplete tenant handoff accepted")
 	}
 }

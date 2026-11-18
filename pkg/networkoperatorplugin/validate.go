@@ -25,9 +25,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"os"
 	"path/filepath"
-	"reflect"
 	"sort"
 	"strconv"
 	"strings"
@@ -37,8 +35,10 @@ import (
 
 	"github.com/nvidia/k8s-launch-kit/pkg/bundle"
 	"github.com/nvidia/k8s-launch-kit/pkg/config"
+	"github.com/nvidia/k8s-launch-kit/pkg/helmclient"
+	"github.com/nvidia/k8s-launch-kit/pkg/hostplatform"
 	"github.com/nvidia/k8s-launch-kit/pkg/networkoperatorplugin/crstate"
-	"github.com/nvidia/k8s-launch-kit/pkg/networkoperatorplugin/helmclient"
+	"github.com/nvidia/k8s-launch-kit/pkg/networkoperatorplugin/helmconfig"
 	"github.com/nvidia/k8s-launch-kit/pkg/networkoperatorplugin/preflight"
 	"github.com/nvidia/k8s-launch-kit/pkg/networkoperatorplugin/releases"
 	corev1 "k8s.io/api/core/v1"
@@ -173,40 +173,16 @@ type ComponentVersionResult struct {
 	Kind string
 }
 
-// ValidateManifests reads YAML manifests from manifestDir (skipping example
-// workloads) and classifies each object in the cluster via the crstate
-// registry. Returns a slice of per-object results.
-//
-// Unlike the old "Get and check NotFound" path, this routes every
-// manifest through the same per-Kind validator the deploy state machine
-// uses, so SriovNetworkNodePolicy's silent-failure cross-check, the
-// NicConfigurationTemplate's condition-Reason classification, and
-// NicClusterPolicy's appliedStates breakdown all surface here too.
-func ValidateManifests(ctx context.Context, c client.Client, manifestDir string, flavor ...string) ([]ValidationResult, error) {
-	artifacts, err := bundle.Load(os.DirFS(manifestDir))
+// ValidateBundle checks resource readiness, external installer worker coverage,
+// and live selectors against resolved inventory using one explicit platform.
+// A nil config supports resource-only validation without inventory checks.
+func ValidateBundle(ctx context.Context, c client.Client, artifacts *bundle.Bundle, cfg *config.LaunchKitConfig, platform hostplatform.Selection) ([]ValidationResult, error) {
+	policy, err := resourceReadPolicyFor(platform)
 	if err != nil {
 		return nil, err
 	}
-	return ValidateBundle(ctx, c, artifacts, flavor...)
-}
-
-func ValidateBundle(ctx context.Context, c client.Client, artifacts *bundle.Bundle, flavor ...string) ([]ValidationResult, error) {
-	return ValidateBundleWithConfig(ctx, c, artifacts, nil, flavor...)
-}
-
-// ValidateBundleWithConfig checks external installer worker coverage and live
-// resource selectors against intended source inventory. Legacy callers retain
-// the existing configuration-free compatibility behavior.
-func ValidateBundleWithConfig(ctx context.Context, c client.Client, artifacts *bundle.Bundle, cfg *config.LaunchKitConfig, flavor ...string) ([]ValidationResult, error) {
 	if artifacts == nil {
 		return nil, fmt.Errorf("validation artifact bundle is nil")
-	}
-	ocp := len(flavor) > 0 && flavor[0] == config.FlavorOCP
-	var registry *crstate.Registry
-	if ocp {
-		registry = crstate.NewOpenShift()
-	} else {
-		registry = crstate.NewDefault()
 	}
 	var results []ValidationResult
 	for _, doc := range artifacts.Documents() {
@@ -220,7 +196,7 @@ func ValidateBundleWithConfig(ctx context.Context, c client.Client, artifacts *b
 		}
 		obj := doc.ObjectCopy()
 		if isNicClusterPolicy(obj) {
-			checks, err := secondaryNetworkValidation(ctx, c, obj, cfg, doc.Source().File, flavor...)
+			checks, err := secondaryNetworkValidation(ctx, c, obj, cfg, doc.Source().File, platform)
 			if err != nil {
 				return nil, err
 			}
@@ -231,27 +207,13 @@ func ValidateBundleWithConfig(ctx context.Context, c client.Client, artifacts *b
 			Name: obj.GetName(), Namespace: obj.GetNamespace(),
 			SourceFile: doc.Source().File,
 		}
+		// These Kind-specific checks intentionally apply on both platforms.
 		if isOCPOperatorConfig(obj) {
-			live := &unstructured.Unstructured{}
-			live.SetGroupVersionKind(obj.GroupVersionKind())
-			if getErr := c.Get(ctx, client.ObjectKey{Namespace: obj.GetNamespace(), Name: obj.GetName()}, live); getErr != nil {
-				r.State = crstate.StateNotDeployed
-				r.Reason = getErr.Error()
-				results = append(results, r)
-				continue
+			r.State, r.Reason = validateOperatorConfiguration(ctx, c, obj)
+			// Preserve the existing missing-config result flags.
+			if r.State != crstate.StateNotDeployed {
+				applyLegacyFlags(&r)
 			}
-			merged := live.DeepCopy()
-			if mergeErr := mergeOCPConfiguration(merged, obj); mergeErr != nil {
-				r.State = crstate.StateError
-				r.Reason = mergeErr.Error()
-			} else if !reflect.DeepEqual(merged.Object, live.Object) {
-				r.State = crstate.StateError
-				r.Reason = "operator configuration differs from generated required fields"
-			} else {
-				r.State = crstate.StateSuccess
-				r.Reason = "required operator configuration matches"
-			}
-			applyLegacyFlags(&r)
 			results = append(results, r)
 			continue
 		}
@@ -264,7 +226,7 @@ func ValidateBundleWithConfig(ctx context.Context, c client.Client, artifacts *b
 			results = append(results, r)
 			continue
 		}
-		res, vErr := registry.Validate(ctx, c, obj)
+		res, vErr := policy.check(ctx, c, obj)
 		if vErr != nil {
 			// Transport error — treat as error state. Use the
 			// Reason carried by the Result (registry sets it
@@ -278,9 +240,6 @@ func ValidateBundleWithConfig(ctx context.Context, c client.Client, artifacts *b
 		} else {
 			r.State = res.State
 			r.Reason = res.Reason
-		}
-		if ocp && r.State == crstate.StateSuccess && isOCPSriovNetwork(obj) {
-			r.State, r.Reason = validateOCPNetworkAttachment(ctx, c, obj)
 		}
 		r.Details = res.Details
 		if scopeMessage != "" {
@@ -634,7 +593,7 @@ func checkHelmReleaseValues(ctx context.Context, restConfig *rest.Config, namesp
 		return &HelmValuesCheck{Skipped: true, Reason: "no values.yaml in deployment dir — chart managed out of band"}, nil
 	}
 	if namespace == "" {
-		namespace = "nvidia-network-operator"
+		namespace = helmconfig.DefaultNamespace
 	}
 
 	actionCfg, err := helmclient.NewActionConfig(restConfig, namespace, helmclient.StorageDriver)
@@ -652,33 +611,33 @@ func checkHelmReleaseValues(ctx context.Context, restConfig *rest.Config, namesp
 	// release-over-release) and out of scope for this check.
 	getValues := action.NewGetValues(actionCfg)
 	getValues.AllValues = false
-	deployed, err := getValues.Run(helmclient.DefaultReleaseName)
+	deployed, err := getValues.Run(helmconfig.DefaultReleaseName)
 	if err != nil {
 		if errors.Is(err, driver.ErrReleaseNotFound) {
 			return &HelmValuesCheck{
 				Skipped:     true,
-				Reason:      fmt.Sprintf("no helm release %q in namespace %s — run `l8k deploy` first", helmclient.DefaultReleaseName, namespace),
+				Reason:      fmt.Sprintf("no helm release %q in namespace %s — run `l8k deploy` first", helmconfig.DefaultReleaseName, namespace),
 				Namespace:   namespace,
-				ReleaseName: helmclient.DefaultReleaseName,
+				ReleaseName: helmconfig.DefaultReleaseName,
 			}, nil
 		}
 		return &HelmValuesCheck{
 			Skipped:     true,
 			Reason:      fmt.Sprintf("helm get values failed: %v", err),
 			Namespace:   namespace,
-			ReleaseName: helmclient.DefaultReleaseName,
+			ReleaseName: helmconfig.DefaultReleaseName,
 		}, nil
 	}
 
 	generated := parsed
 	if generated == nil {
-		generated, err = helmclient.UnmarshalValues(generatedValuesYAML)
+		generated, err = bundle.ParseValues(generatedValuesYAML)
 		if err != nil {
 			return &HelmValuesCheck{
 				Skipped:     true,
 				Reason:      fmt.Sprintf("parse generated values.yaml: %v", err),
 				Namespace:   namespace,
-				ReleaseName: helmclient.DefaultReleaseName,
+				ReleaseName: helmconfig.DefaultReleaseName,
 			}, nil
 		}
 	}
@@ -687,7 +646,7 @@ func checkHelmReleaseValues(ctx context.Context, restConfig *rest.Config, namesp
 	mismatches := preflight.DeepEqualValues(deployed, generated)
 	out := &HelmValuesCheck{
 		Namespace:   namespace,
-		ReleaseName: helmclient.DefaultReleaseName,
+		ReleaseName: helmconfig.DefaultReleaseName,
 		AllMatch:    len(mismatches) == 0,
 	}
 	for _, m := range mismatches {
@@ -728,7 +687,7 @@ func findNetworkOperatorHelmRelease(ctx context.Context, c client.Client, namesp
 	}
 	// Prefer the release that deploy and values validation manage. Preserve
 	// legacy custom-name lookup only when it identifies a single release.
-	latest, found := latestByRelease[helmclient.DefaultReleaseName]
+	latest, found := latestByRelease[helmconfig.DefaultReleaseName]
 	if !found {
 		names := make([]string, 0, len(latestByRelease))
 		for name := range latestByRelease {

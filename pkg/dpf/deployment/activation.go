@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/nvidia/k8s-launch-kit/pkg/dpf/config"
+	"github.com/nvidia/k8s-launch-kit/pkg/dpf/deployment/internal/controllercontract"
 	"github.com/nvidia/k8s-launch-kit/pkg/dpf/generation"
 	"github.com/nvidia/k8s-launch-kit/pkg/dpf/hbn"
 	"github.com/nvidia/k8s-launch-kit/pkg/dpf/inventory"
@@ -39,9 +40,10 @@ const (
 )
 
 type activationStageClient interface {
-	workloadStageClient
-	VerifyIdentity(context.Context) error
-	checkActivationPermissions(context.Context, *managementExecution) []PreflightCheck
+	ResourceClient
+	activationBoundaryReader
+	enrollmentBindingReader
+	checkActivationPermissions(context.Context, *managementVerificationInputs) []PreflightCheck
 	patchActivationAnnotation(context.Context, *unstructured.Unstructured, types.UID, string, string, *string) (*unstructured.Unstructured, error)
 	verifyActivationRebootBMCs(context.Context, []activationRebootBMC, time.Duration, *executionJournal) (time.Time, error)
 }
@@ -125,12 +127,12 @@ func activationProgressForNode(observed activationObservation, selected []activa
 	return progress, nil
 }
 
-func activationCompletionReady(observed activationObservation, progress map[string]activationNodeProgress, selected []activationSelectedDevice) bool {
-	if !activationDPUsReady(observed, selected) {
+func activationCompletionReady(rules *controllercontract.Rules, observed activationObservation, progress map[string]activationNodeProgress, selected []activationSelectedDevice) bool {
+	if !activationDPUsReady(rules, observed, selected) {
 		return false
 	}
 	for _, item := range selected {
-		if !activationRemovalComplete(observed, progress[item.nodeName]) {
+		if !activationRemovalComplete(rules, observed, progress[item.nodeName]) {
 			return false
 		}
 		maintenance := observed.maintenance[item.nodeName+"-hold"]
@@ -141,7 +143,7 @@ func activationCompletionReady(observed activationObservation, progress map[stri
 	return true
 }
 
-func activationRemovalComplete(observed activationObservation, progress activationNodeProgress) bool {
+func activationRemovalComplete(rules *controllercontract.Rules, observed activationObservation, progress activationNodeProgress) bool {
 	if progress.maintenanceUID == "" || progress.releasedVersion == "" && !progress.resetAcknowledged || len(progress.dpus) == 0 {
 		return false
 	}
@@ -152,7 +154,7 @@ func activationRemovalComplete(observed activationObservation, progress activati
 	}
 	for name, uid := range progress.dpus {
 		dpu := observed.dpus[name]
-		if dpu == nil || dpu.GetUID() != uid || !EvaluateReadiness(dpu).Ready || !conditionReadiness(dpu, "NodeEffectRemoved", "DPU_STATUS_STALE", true).Ready {
+		if dpu == nil || dpu.GetUID() != uid || !rules.ResourceReadiness(dpu).Ready || !rules.NodeEffectRemoved(dpu).Ready {
 			return false
 		}
 		phase, found, err := unstructured.NestedString(dpu.Object, "status", "phase")
@@ -212,7 +214,7 @@ func runActivationStage(ctx context.Context, client activationStageClient, prepa
 		workload.ControlPlane.enrollment.BundleDigest != receipt.BundleDigest || workload.Software.SoftwareUID == "" {
 		return receipt, activationFailure(journal, "ACTIVATION_RECEIPT_MISMATCH", "Management, tenant, enrollment, software, workload and report receipts do not identify one retained plan.", nil)
 	}
-	if err := validateEnrollmentStageInputs(ctx, client, execution, controlPlane.management, controlPlane.tenant, prepared.selected, prepared.password, journal, interval, requestTimeout); err != nil {
+	if err := validateEnrollmentStageInputs(ctx, client, execution.verificationInputs(), controlPlane.management, controlPlane.tenant, prepared.selected, prepared.password, journal, interval, requestTimeout); err != nil {
 		return receipt, activationFailure(journal, "ACTIVATION_ENROLLMENT_RECEIPT_INVALID", "The selected enrollment receipt is not bound to this retained plan and tenant API.", err)
 	}
 	if !sameEnrollmentReceipts(workload.ControlPlane.enrollment, controlPlane.enrollment) {
@@ -222,25 +224,25 @@ func runActivationStage(ctx context.Context, client activationStageClient, prepa
 		diagnostic := managementIdentityDiagnostic(ctx, err)
 		return receipt, activationFailure(journal, diagnostic.ReasonCode, diagnostic.Message+" DPUDeployment activation remains stopped.", diagnostic)
 	}
-	objects, err := retainedWorkloadObjects(execution)
+	objects, err := retainedWorkloadObjects(execution.verificationInputs())
 	if err != nil {
 		return receipt, activationFailure(journal, "ACTIVATION_WORKLOAD_PLAN_INVALID", "The retained workload prerequisite set is invalid.", err)
 	}
-	if err := verifyWorkloadReceiptSet(ctx, client, execution, controlPlane.tenant.Client, objects, workload.Resources); err != nil {
+	if err := verifyWorkloadReceiptSet(ctx, client, execution.verificationInputs(), controlPlane.tenant.Client, objects, workload.Resources); err != nil {
 		return receipt, activationFailure(journal, "ACTIVATION_WORKLOAD_RECEIPT_CHANGED", "A workload prerequisite or tenant child changed before activation.", err)
 	}
-	deployment, err := retainedDeploymentObject(execution)
+	deployment, err := retainedDeploymentObject(execution.verificationInputs())
 	if err != nil {
 		return receipt, activationFailure(journal, "ACTIVATION_PLAN_INVALID", "The retained DPUDeployment stage is missing or ambiguous.", err)
 	}
-	selected, groups, err := bindActivationHosts(prepared.selected, controlPlane.enrollment, inv, request.Targets, deployment)
+	selected, groups, err := bindActivationHosts(prepared.execution.rules, prepared.selected, controlPlane.enrollment, inv, request.Targets, deployment)
 	if err != nil {
 		return receipt, activationFailure(journal, "ACTIVATION_HOST_BINDING_INVALID", "Selected DPUs cannot be mapped to unique, explicit authenticated host targets.", err)
 	}
-	if err := validateActivationDeployment(deployment, selected, execution.operatorNamespace, controlPlane.tenant.Client.expected); err != nil {
+	if err := validateActivationDeployment(deployment, selected, execution.operatorNamespace, controlPlane.tenant.Client.expectation()); err != nil {
 		return receipt, activationFailure(journal, "ACTIVATION_TARGET_SCOPE_INVALID", "The retained DPUDeployment does not select exactly the enrolled DPUs and tenant.", err)
 	}
-	checks := client.checkActivationPermissions(ctx, execution)
+	checks := client.checkActivationPermissions(ctx, execution.verificationInputs())
 	if err := journalActivationChecks(journal, checks); err != nil {
 		return receipt, err
 	}
@@ -255,7 +257,7 @@ func runActivationStage(ctx context.Context, client activationStageClient, prepa
 	var created *unstructured.Unstructured
 	var established types.UID
 	if prepared.operation != nil {
-		established = prepared.operation.state.DeploymentUID
+		established = prepared.operation.deploymentUID()
 		current, readErr := client.Get(ctx, deployment.DeepCopy())
 		if readErr == nil {
 			if current == nil || execution.reconciler.Verify(deployment, current) != nil || established != "" && current.GetUID() != established {
@@ -267,7 +269,7 @@ func runActivationStage(ctx context.Context, client activationStageClient, prepa
 			return receipt, fmt.Errorf("OPERATION_PARENT_CHANGED: established parent missing/unavailable")
 		}
 	}
-	if err := verifyActivationBoundary(ctx, client, prepared, controlPlane, workload, selected, established, objects, journal, requestTimeout); err != nil {
+	if err := verifyActivationBoundary(ctx, client, newControlPlaneVerificationInputs(prepared, controlPlane, workload), controlPlane.tenant.Client, selected, established, objects, journal, requestTimeout); err != nil {
 		return receipt, err
 	}
 	if created == nil {
@@ -276,30 +278,28 @@ func runActivationStage(ctx context.Context, client activationStageClient, prepa
 				return receipt, err
 			}
 			// Source reads may block; refresh physical/selected safety before creation.
-			if err := verifyActivationBoundary(ctx, client, prepared, controlPlane, workload, selected, "", objects, journal, requestTimeout); err != nil {
+			if err := verifyActivationBoundary(ctx, client, newControlPlaneVerificationInputs(prepared, controlPlane, workload), controlPlane.tenant.Client, selected, "", objects, journal, requestTimeout); err != nil {
 				return receipt, err
 			}
 		}
 		if err := hbn.ValidateRuntimeTrafficBudget(len(selected), time.Until(deadline(ctx))); err != nil {
 			return receipt, activationFailure(journal, "HBN_RUNTIME_BUDGET_INSUFFICIENT", "Preparation consumed the time required for the complete selected traffic matrix; no DPUDeployment will be created.", err)
 		}
-		created, err = executeNativeObject(ctx, client, execution.reconciler, deployment, generation.StageDeployment, journal, false, interval)
+		created, err = executeNativeObject(prepared.execution.rules, ctx, client, execution.reconciler, deployment, generation.StageDeployment, journal, false, interval)
 		if err != nil {
 			return receipt, err
 		}
 	}
 	receipt.DeploymentUID = created.GetUID()
-	if prepared.operation != nil && prepared.operation.state.DeploymentUID == "" {
-		prepared.operation.state.DeploymentUID = created.GetUID()
-		if err := prepared.operation.save(ctx); err != nil {
-			return receipt, err
-		}
+	if err := prepared.operation.bindDeployment(ctx, created.GetUID()); err != nil {
+		return receipt, err
 	}
+
 	refreshHoldScope := func(ctx context.Context) (activationObservation, error) {
-		if err := verifyActivationBoundary(ctx, client, prepared, controlPlane, workload, selected, created.GetUID(), objects, journal, requestTimeout); err != nil {
+		if err := verifyActivationBoundary(ctx, client, newControlPlaneVerificationInputs(prepared, controlPlane, workload), controlPlane.tenant.Client, selected, created.GetUID(), objects, journal, requestTimeout); err != nil {
 			return activationObservation{}, err
 		}
-		current, err := observeActivationScope(ctx, client, execution, deployment, created.GetUID(), selected, receipt.progress)
+		current, err := observeActivationScope(ctx, client, execution.verificationInputs(), deployment, created.GetUID(), selected, receipt.progress)
 		if err != nil || !current.complete {
 			return activationObservation{}, activationFailure(journal, "ACTIVATION_HOLD_SCOPE_CHANGED", "The complete selected activation scope changed before hold release.", err)
 		}
@@ -309,7 +309,7 @@ func runActivationStage(ctx context.Context, client activationStageClient, prepa
 		if err := ctx.Err(); err != nil {
 			return receipt, activationFailure(journal, "ACTIVATION_CANCELED", "Selected DPU activation stopped; inspect durable receipts before retrying.", err)
 		}
-		observed, err := observeActivationScope(ctx, client, execution, deployment, created.GetUID(), selected, receipt.progress)
+		observed, err := observeActivationScope(ctx, client, execution.verificationInputs(), deployment, created.GetUID(), selected, receipt.progress)
 		if err != nil {
 			code := "ACTIVATION_SCOPE_CHANGED"
 			var diagnostic *ReconciliationError
@@ -325,11 +325,11 @@ func runActivationStage(ctx context.Context, client activationStageClient, prepa
 			if err := prepared.operation.verifyHoldHistory(observed); err != nil {
 				return receipt, err
 			}
-			if err := prepared.operation.resolveCompletedResets(ctx, observed, reboot); err != nil {
+			if err := resolveCompletedResets(prepared.execution.rules, ctx, prepared.operation, client, created, execution.plan.Digest(), observed, reboot); err != nil {
 				return receipt, err
 			}
 		}
-		if activationDPUsReady(observed, selected) && len(observed.dpus) == len(selected) {
+		if activationDPUsReady(prepared.execution.rules, observed, selected) && len(observed.dpus) == len(selected) {
 			for _, item := range selected {
 				proof, known := receipt.progress[item.nodeName]
 				if !known || proof.releasedVersion == "" && !proof.resetAcknowledged {
@@ -357,7 +357,7 @@ func runActivationStage(ctx context.Context, client activationStageClient, prepa
 		released, releaseErr := releaseNextSelectedHold(ctx, client, selected, observed, journal, refreshHoldScope, prepared.operation)
 		if released != nil {
 			receipt.progress[released.nodeName] = *released
-			if err := prepared.operation.saveProgress(ctx, receipt.progress); err != nil {
+			if err := prepared.operation.confirmHoldReleased(ctx, *released); err != nil {
 				return receipt, err
 			}
 		}
@@ -400,7 +400,7 @@ func runActivationStage(ctx context.Context, client activationStageClient, prepa
 				}
 			}
 		}
-		if !anyRebootPending && activationCompletionReady(observed, receipt.progress, selected) {
+		if !anyRebootPending && activationCompletionReady(prepared.execution.rules, observed, receipt.progress, selected) {
 			break
 		}
 		if err := activationWait(ctx, interval); err != nil {
@@ -411,10 +411,10 @@ func runActivationStage(ctx context.Context, client activationStageClient, prepa
 			return receipt, activationFailure(journal, code, message, err)
 		}
 	}
-	if err := verifyActivationBoundary(ctx, client, prepared, controlPlane, workload, selected, created.GetUID(), objects, journal, requestTimeout); err != nil {
+	if err := verifyActivationBoundary(ctx, client, newControlPlaneVerificationInputs(prepared, controlPlane, workload), controlPlane.tenant.Client, selected, created.GetUID(), objects, journal, requestTimeout); err != nil {
 		return receipt, err
 	}
-	readyDeployment, err := waitNativeReady(ctx, client, deployment, created.GetUID(), execution.reconciler.Verify, interval, func(state Readiness, terminal bool) error {
+	readyDeployment, err := waitNativeReady(prepared.execution.rules, ctx, client, deployment, created.GetUID(), execution.reconciler.Verify, interval, func(state controllercontract.Readiness, terminal bool) error {
 		status := "waiting"
 		if terminal {
 			status = "failed"
@@ -428,16 +428,16 @@ func runActivationStage(ctx context.Context, client activationStageClient, prepa
 	if err != nil {
 		return receipt, activationFailure(journal, "ACTIVATION_DEPLOYMENT_NOT_READY", "The selected DPUDeployment did not report current controller readiness.", err)
 	}
-	if err := verifyActivationBoundary(ctx, client, prepared, controlPlane, workload, selected, created.GetUID(), objects, journal, requestTimeout); err != nil {
+	if err := verifyActivationBoundary(ctx, client, newControlPlaneVerificationInputs(prepared, controlPlane, workload), controlPlane.tenant.Client, selected, created.GetUID(), objects, journal, requestTimeout); err != nil {
 		return receipt, err
 	}
 	currentDeployment, err := client.Get(ctx, deployment.DeepCopy())
 	if err != nil || currentDeployment == nil || currentDeployment.GetUID() != created.GetUID() || execution.reconciler.Verify(deployment, currentDeployment) != nil ||
-		!EvaluateReadiness(currentDeployment).Ready || readyDeployment == nil || readyDeployment.GetUID() != created.GetUID() {
+		!prepared.execution.rules.ResourceReadiness(currentDeployment).Ready || readyDeployment == nil || readyDeployment.GetUID() != created.GetUID() {
 		return receipt, activationFailure(journal, "ACTIVATION_DEPLOYMENT_CHANGED", "DPUDeployment readiness or retained identity changed before final receipt.", nil)
 	}
-	final, err := observeActivationScope(ctx, client, execution, deployment, created.GetUID(), selected, receipt.progress)
-	if err != nil || !final.complete || final.deployment == nil || !EvaluateReadiness(final.deployment).Ready || !activationCompletionReady(final, receipt.progress, selected) {
+	final, err := observeActivationScope(ctx, client, execution.verificationInputs(), deployment, created.GetUID(), selected, receipt.progress)
+	if err != nil || !final.complete || final.deployment == nil || !prepared.execution.rules.ResourceReadiness(final.deployment).Ready || !activationCompletionReady(prepared.execution.rules, final, receipt.progress, selected) {
 		return receipt, activationFailure(journal, "ACTIVATION_SCOPE_CHANGED", "The complete selected activation scope changed while waiting for deployment readiness.", err)
 	}
 	for _, indexes := range groups {
@@ -458,7 +458,7 @@ func runActivationStage(ctx context.Context, client activationStageClient, prepa
 	return receipt, nil
 }
 
-func retainedDeploymentObject(execution *managementExecution) (*unstructured.Unstructured, error) {
+func retainedDeploymentObject(execution *managementVerificationInputs) (*unstructured.Unstructured, error) {
 	if execution == nil || execution.plan == nil {
 		return nil, fmt.Errorf("retained execution is required")
 	}
@@ -485,7 +485,7 @@ func retainedDeploymentObject(execution *managementExecution) (*unstructured.Uns
 	return object, nil
 }
 
-func bindActivationHosts(selected []enrollmentBMC, enrollment enrollmentStageReceipt, inv *inventory.Inventory, targets []config.Target,
+func bindActivationHosts(rules *controllercontract.Rules, selected []enrollmentBMC, enrollment enrollmentStageReceipt, inv *inventory.Inventory, targets []config.Target,
 	deployment *unstructured.Unstructured,
 ) ([]activationSelectedDevice, map[string][]int, error) {
 	if inv == nil || deployment == nil || len(selected) == 0 || len(enrollment.Devices) != len(selected) {
@@ -495,7 +495,7 @@ func bindActivationHosts(selected []enrollmentBMC, enrollment enrollmentStageRec
 	for i := range selected {
 		devices[i] = selected[i].device
 	}
-	sets, err := activationSetIntents(deployment, devices)
+	sets, err := rules.ActivationSetIntents(deployment, devices)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -542,7 +542,7 @@ func bindActivationHosts(selected []enrollmentBMC, enrollment enrollmentStageRec
 		if len(deviceName) == 0 || len(deviceName) > 62 || len(validation.IsDNS1123Label(deviceName)) != 0 {
 			return nil, nil, fmt.Errorf("selected serial cannot produce a valid DPF device name")
 		}
-		dpuName := generatedDPUEName(nodeName, deviceName)
+		dpuName := rules.GeneratedDPUEName(nodeName, deviceName)
 		set, found := sets[strings.ToLower(item.device.Serial)]
 		if !found {
 			return nil, nil, fmt.Errorf("retained DPUDeployment has no exact selector for a selected serial")
@@ -591,91 +591,7 @@ func uniqueInventoryHost(inv *inventory.Inventory, id string) *inventory.Device 
 	return result
 }
 
-func activationSetIntents(deployment *unstructured.Unstructured, selected []generation.ResolvedDevice) (map[string]*unstructured.Unstructured, error) {
-	if deployment == nil || deployment.GetAPIVersion() != "svc.dpu.nvidia.com/v1alpha1" || deployment.GetKind() != "DPUDeployment" ||
-		len(validation.IsDNS1123Subdomain(deployment.GetName())) != 0 || len(validation.IsDNS1123Label(deployment.GetNamespace())) != 0 || len(selected) == 0 {
-		return nil, fmt.Errorf("retained DPUDeployment and selected device identities are required")
-	}
-	software, softwareFound, softwareErr := unstructured.NestedString(deployment.Object, "spec", "dpus", "blueFieldSoftware")
-	flavor, flavorFound, flavorErr := unstructured.NestedString(deployment.Object, "spec", "dpus", "flavor")
-	if softwareErr != nil || !softwareFound || len(validation.IsDNS1123Subdomain(software)) != 0 || flavorErr != nil || !flavorFound || len(validation.IsDNS1123Subdomain(flavor)) != 0 ||
-		nestedFieldPresent(deployment.Object, "spec", "dpus", "bfb") || nestedFieldPresent(deployment.Object, "spec", "dpus", "flavorTemplate") {
-		return nil, fmt.Errorf("native activation requires explicit BlueFieldSoftware and flavor names, without BFB or flavor templates")
-	}
-	settings, found, err := unstructured.NestedSlice(deployment.Object, "spec", "dpus", "dpuSets")
-	if err != nil || !found || len(settings) != len(selected) {
-		return nil, fmt.Errorf("retained DPUDeployment does not contain one DPUSet selector per selected DPU")
-	}
-	sets := make(map[string]*unstructured.Unstructured, len(selected))
-	seenSuffix := map[string]bool{}
-	for _, settingRaw := range settings {
-		setting, ok := settingRaw.(map[string]any)
-		if !ok {
-			return nil, fmt.Errorf("retained DPUSet selector is malformed")
-		}
-		suffix, ok := setting["nameSuffix"].(string)
-		if !ok || suffix == "" || seenSuffix[suffix] || len(validation.IsDNS1123Subdomain(deployment.GetName()+"-"+suffix)) != 0 {
-			return nil, fmt.Errorf("retained DPUSet name suffix is missing, invalid or duplicated")
-		}
-		seenSuffix[suffix] = true
-		selector, found, nestedErr := unstructured.NestedStringMap(setting, "dpuDeviceSelector", "matchLabels")
-		if nestedErr != nil || !found || len(selector) == 0 {
-			return nil, fmt.Errorf("retained DPUSet device selector is missing or malformed")
-		}
-		matches := 0
-		serial := ""
-		for _, item := range selected {
-			labels := item.SelectorLabels
-			if len(labels) > 0 && reflect.DeepEqual(selector, labels) {
-				matches++
-				serial = strings.ToLower(item.Serial)
-			}
-		}
-		if matches != 1 || sets[serial] != nil {
-			return nil, fmt.Errorf("retained DPUSet selector does not uniquely match one selected device")
-		}
-		clusterSelector, found, nestedErr := unstructured.NestedStringMap(setting, "dpuClusterSelector")
-		if nestedErr != nil || !found || len(clusterSelector) == 0 {
-			return nil, fmt.Errorf("retained DPUSet tenant selector is missing or malformed")
-		}
-		set := &unstructured.Unstructured{Object: map[string]any{
-			"apiVersion": "provisioning.dpu.nvidia.com/v1alpha1",
-			"kind":       "DPUSet",
-			"metadata": map[string]any{
-				"name":      deployment.GetName() + "-" + suffix,
-				"namespace": deployment.GetNamespace(),
-				"labels":    map[string]any{activationParentLabel: deployment.GetNamespace() + "_" + deployment.GetName()},
-			},
-			"spec": map[string]any{
-				"dpuDeviceSelector": map[string]any{"matchLabels": stringMapJSON(selector)},
-				"dpuTemplate": map[string]any{
-					"spec": map[string]any{
-						"blueFieldSoftware": map[string]any{"name": software},
-						"dpuFlavor":         flavor,
-						"cluster": map[string]any{
-							"selector": map[string]any{"matchLabels": stringMapJSON(clusterSelector)},
-						},
-					},
-				},
-			},
-		}}
-		sets[serial] = set
-	}
-	if len(sets) != len(selected) {
-		return nil, fmt.Errorf("retained DPUSet selectors do not cover every selected device")
-	}
-	return sets, nil
-}
-
-func stringMapJSON(values map[string]string) map[string]any {
-	result := make(map[string]any, len(values))
-	for key, value := range values {
-		result[key] = value
-	}
-	return result
-}
-
-func validateActivationDeployment(deployment *unstructured.Unstructured, selected []activationSelectedDevice, namespace string, tenant TenantReadinessExpected) error {
+func validateActivationDeployment(deployment *unstructured.Unstructured, selected []activationSelectedDevice, namespace string, tenant controllercontract.TenantReadinessExpected) error {
 	if deployment == nil || deployment.GetNamespace() != namespace || deployment.GetName() == "" || tenant.Namespace == "" || len(selected) == 0 {
 		return fmt.Errorf("retained DPUDeployment identity differs from the selected tenant")
 	}
@@ -688,18 +604,9 @@ func validateActivationDeployment(deployment *unstructured.Unstructured, selecte
 	return nil
 }
 
-func generatedDPUEName(nodeName, deviceName string) string {
-	const maxLength = 63
-	maxPrefix := maxLength - len(deviceName) - 1
-	if len(nodeName) > maxPrefix {
-		nodeName = nodeName[:maxPrefix]
-	}
-	return nodeName + "-" + deviceName
-}
-
-// observeActivationScope is pure: only the stage's confirmed effects may
-// add to progress. Missing maintenance never authorizes a new operation.
-func observeActivationScope(ctx context.Context, client activationStageClient, execution *managementExecution, deployment *unstructured.Unstructured,
+// observeActivationScope reads live state without changing progress; only the
+// stage's confirmed effects may add to progress. Missing maintenance never authorizes a new operation.
+func observeActivationScope(ctx context.Context, client activationObservationReader, execution *managementVerificationInputs, deployment *unstructured.Unstructured,
 	deploymentUID types.UID, selected []activationSelectedDevice, progress map[string]activationNodeProgress,
 ) (activationObservation, error) {
 	observation := activationObservation{requestors: map[string][]string{}, removed: map[string]bool{}, sets: map[string]*unstructured.Unstructured{}, dpus: map[string]*unstructured.Unstructured{}, nodes: map[string]*unstructured.Unstructured{}, maintenance: map[string]*unstructured.Unstructured{}}
@@ -730,7 +637,7 @@ func observeActivationScope(ctx context.Context, client activationStageClient, e
 		if set == nil {
 			return observation, nil
 		}
-		if set.GetAPIVersion() != "provisioning.dpu.nvidia.com/v1alpha1" || set.GetKind() != "DPUSet" || set.GetNamespace() != deployment.GetNamespace() || set.GetResourceVersion() == "" || set.GetGeneration() < 1 || set.GetDeletionTimestamp() != nil || set.GetUID() == "" || !activationOwnerMatches(set, deployment.GetAPIVersion(), deployment.GetKind(), deployment.GetName(), deploymentUID) || !activationDPUSetMatches(set, want) {
+		if set.GetAPIVersion() != "provisioning.dpu.nvidia.com/v1alpha1" || set.GetKind() != "DPUSet" || set.GetNamespace() != deployment.GetNamespace() || set.GetResourceVersion() == "" || set.GetGeneration() < 1 || set.GetDeletionTimestamp() != nil || set.GetUID() == "" || !activationOwnerMatches(set, deployment.GetAPIVersion(), deployment.GetKind(), deployment.GetName(), deploymentUID) || !activationDPUSetMatches(execution.rules, set, want) {
 			return observation, activationCoordinationError(activationParticipantOwner)
 		}
 		observation.sets[set.GetName()] = set
@@ -779,7 +686,7 @@ func observeActivationScope(ctx context.Context, client activationStageClient, e
 		if dpu == nil {
 			continue
 		}
-		if dpu.GetAPIVersion() != "provisioning.dpu.nvidia.com/v1alpha1" || dpu.GetKind() != "DPU" || dpu.GetNamespace() != deployment.GetNamespace() || dpu.GetResourceVersion() == "" || dpu.GetGeneration() < 1 || dpu.GetDeletionTimestamp() != nil || dpu.GetUID() == "" || !activationOwnerMatches(dpu, "provisioning.dpu.nvidia.com/v1alpha1", "DPUSet", set.GetName(), set.GetUID()) || !activationDPUMatches(dpu, want) {
+		if dpu.GetAPIVersion() != "provisioning.dpu.nvidia.com/v1alpha1" || dpu.GetKind() != "DPU" || dpu.GetNamespace() != deployment.GetNamespace() || dpu.GetResourceVersion() == "" || dpu.GetGeneration() < 1 || dpu.GetDeletionTimestamp() != nil || dpu.GetUID() == "" || !activationOwnerMatches(dpu, "provisioning.dpu.nvidia.com/v1alpha1", "DPUSet", set.GetName(), set.GetUID()) || !activationDPUMatches(execution.rules, dpu, want) {
 			return observation, activationCoordinationError(activationParticipantOwner)
 		}
 		if policyErr := activationNativeNodeEffectPolicy(dpu, "spec", "nodeEffect"); policyErr != nil {
@@ -826,7 +733,7 @@ func observeActivationScope(ctx context.Context, client activationStageClient, e
 	if observation.complete {
 		for _, want := range selected {
 			maintenance := observation.maintenance[want.nodeName+"-hold"]
-			removed := activationRemovalComplete(observation, progress[want.nodeName])
+			removed := activationRemovalComplete(execution.rules, observation, progress[want.nodeName])
 			if maintenance != nil && maintenance.GetDeletionTimestamp() != nil && !removed {
 				proof := progress[want.nodeName]
 				if proof.releasedVersion == "" && !proof.resetAcknowledged {
@@ -876,27 +783,10 @@ func (s activationSelectedDevice) deviceName() string { return strings.ToLower(s
 
 // Read only the qualified consumed references; other controller-populated
 // template fields retain their existing dedicated activation checks.
-func activationSetReferences(set *unstructured.Unstructured) (string, string, error) {
-	if set == nil {
-		return "", "", fmt.Errorf("selected DPUSet intent is missing")
-	}
-	software, found, err := unstructured.NestedStringMap(set.Object, "spec", "dpuTemplate", "spec", "blueFieldSoftware")
-	flavor, flavorFound, flavorErr := unstructured.NestedString(set.Object, "spec", "dpuTemplate", "spec", "dpuFlavor")
-	if err != nil || !found || len(software) != 1 || len(validation.IsDNS1123Subdomain(software["name"])) != 0 || flavorErr != nil || !flavorFound || len(validation.IsDNS1123Subdomain(flavor)) != 0 ||
-		nestedFieldPresent(set.Object, "spec", "dpuTemplate", "spec", "bfb") || nestedFieldPresent(set.Object, "spec", "dpuTemplate", "spec", "dpuFlavorTemplate") {
-		return "", "", fmt.Errorf("selected DPUSet consumed software or flavor reference is missing or unsupported")
-	}
-	return software["name"], flavor, nil
-}
 
-func nestedFieldPresent(object map[string]any, fields ...string) bool {
-	_, found, err := unstructured.NestedFieldNoCopy(object, fields...)
-	return found || err != nil
-}
-
-func activationDPUSetMatches(set *unstructured.Unstructured, selected activationSelectedDevice) bool {
-	software, flavor, err := activationSetReferences(set)
-	wantSoftware, wantFlavor, wantErr := activationSetReferences(selected.dpuSet)
+func activationDPUSetMatches(rules *controllercontract.Rules, set *unstructured.Unstructured, selected activationSelectedDevice) bool {
+	software, flavor, err := rules.ActivationSetReferences(set)
+	wantSoftware, wantFlavor, wantErr := rules.ActivationSetReferences(selected.dpuSet)
 	if err != nil || wantErr != nil || software != wantSoftware || flavor != wantFlavor {
 		return false
 	}
@@ -920,8 +810,8 @@ func activationDPUSetMatches(set *unstructured.Unstructured, selected activation
 	return err == nil && (!found || !force)
 }
 
-func activationDPUMatches(dpu *unstructured.Unstructured, selected activationSelectedDevice) bool {
-	wantSoftware, wantFlavor, wantErr := activationSetReferences(selected.dpuSet)
+func activationDPUMatches(rules *controllercontract.Rules, dpu *unstructured.Unstructured, selected activationSelectedDevice) bool {
+	wantSoftware, wantFlavor, wantErr := rules.ActivationSetReferences(selected.dpuSet)
 	software, softwareFound, softwareErr := unstructured.NestedString(dpu.Object, "spec", "blueFieldSoftware")
 	flavor, flavorFound, flavorErr := unstructured.NestedString(dpu.Object, "spec", "dpuFlavor")
 	if wantErr != nil || softwareErr != nil || !softwareFound || software != wantSoftware || flavorErr != nil || !flavorFound || flavor != wantFlavor || nestedFieldPresent(dpu.Object, "spec", "bfb") {
@@ -1033,8 +923,7 @@ func releaseNextSelectedHold(ctx context.Context, client activationStageClient, 
 			if intentErr != nil {
 				return released, intentErr
 			}
-			operation.state.HoldIntents[item.nodeName] = operationProgress{NodeName: intent.nodeName, MaintenanceUID: intent.maintenanceUID, ReleasedVersion: intent.releasedVersion, Sets: intent.sets, DPUs: intent.dpus, Versions: intent.versions}
-			if err := operation.save(ctx); err != nil {
+			if err := operation.recordHoldIntent(ctx, intent); err != nil {
 				return released, err
 			}
 		}
@@ -1259,10 +1148,10 @@ func invokeSelectedHostReboots(ctx context.Context, client activationStageClient
 		if !requested {
 			return verified, activationFailure(journal, "ACTIVATION_REBOOT_REQUEST_CHANGED", "DPF no longer reports an external reboot request for this selected host.", nil)
 		}
-		if err := verifyActivationBoundary(ctx, client, prepared, controlPlane, workload, selected, deploymentUID, objects, journal, requestTimeout); err != nil {
+		if err := verifyActivationBoundary(ctx, client, newControlPlaneVerificationInputs(prepared, controlPlane, workload), controlPlane.tenant.Client, selected, deploymentUID, objects, journal, requestTimeout); err != nil {
 			return verified, err
 		}
-		current, err := observeActivationScope(ctx, client, prepared.execution, deployment, deploymentUID, selected, resetProgress)
+		current, err := observeActivationScope(ctx, client, prepared.execution.verificationInputs(), deployment, deploymentUID, selected, resetProgress)
 		if err != nil {
 			return verified, activationFailure(journal, "ACTIVATION_REBOOT_SCOPE_CHANGED", "The selected DPU child scope changed during host verification; no host reboot was requested.", err)
 		}
@@ -1323,12 +1212,12 @@ func invokeSelectedHostReboots(ctx context.Context, client activationStageClient
 			// BMC and bootstrap reads can outlast earlier control policy. Refresh
 			// every resource/credential prerequisite after them, without another
 			// slow physical read, then read the exact request/Arm round below.
-			if err := verifyActivationResourceBoundary(ctx, client, prepared, controlPlane, workload, selected, deploymentUID, objects, journal); err != nil {
+			if err := verifyActivationResourceBoundary(ctx, client, newControlPlaneVerificationInputs(prepared, controlPlane, workload), controlPlane.tenant.Client, selected, deploymentUID, objects, journal); err != nil {
 				return verified, err
 			}
 			// The BMC read can take time. A different request or restarted Arm
 			// invalidates its shutdown proof before the one-time claim is created.
-			current, err = observeActivationScope(ctx, client, prepared.execution, deployment, deploymentUID, selected, resetProgress)
+			current, err = observeActivationScope(ctx, client, prepared.execution.verificationInputs(), deployment, deploymentUID, selected, resetProgress)
 			if err != nil {
 				return verified, activationFailure(journal, "ACTIVATION_REBOOT_REQUEST_CHANGED", "The selected cohort changed during the physical reset-safety read.", err)
 			}
@@ -1346,12 +1235,12 @@ func invokeSelectedHostReboots(ctx context.Context, client activationStageClient
 				if err := verifySelectedBootstrapCredentials(ctx, client, controlPlane.tenant.Client, selected, indexes, current, journal); err != nil {
 					return err
 				}
-				if err := verifyActivationResourceBoundary(ctx, client, prepared, controlPlane, workload, selected, deploymentUID, objects, journal); err != nil {
+				if err := verifyActivationResourceBoundary(ctx, client, newControlPlaneVerificationInputs(prepared, controlPlane, workload), controlPlane.tenant.Client, selected, deploymentUID, objects, journal); err != nil {
 					return err
 				}
 				// The new credential and policy reads can outlast the observed
 				// shutdown round. Collect again before persisting the host baseline.
-				fresh, err := observeActivationScope(ctx, client, prepared.execution, deployment, deploymentUID, selected, resetProgress)
+				fresh, err := observeActivationScope(ctx, client, prepared.execution.verificationInputs(), deployment, deploymentUID, selected, resetProgress)
 				if err != nil || ctx.Err() != nil {
 					return activationFailure(journal, "ACTIVATION_REBOOT_REQUEST_CHANGED", "The selected reset scope could not be refreshed before host submission.", errors.Join(err, ctx.Err()))
 				}
@@ -1372,13 +1261,16 @@ func invokeSelectedHostReboots(ctx context.Context, client activationStageClient
 			return verified, activationFailure(journal, "EXTERNAL_HOST_REBOOT_UNVERIFIED", "The reboot callback did not verify the same host and adapter with a changed boot ID and a returned connection.", nil)
 		}
 		resetKey := resetOperationKey(request, sourcePhases)
-		if err := prepared.operation.saveResetObservation(ctx, resetKey, observation); err != nil {
+		matched, err := prepared.operation.recordResetObservation(ctx, resetKey, observation)
+		// Preserve matched physical history even if its CAS failed, while an
+		// observation rejected by saved history never becomes a reboot summary.
+		if matched {
+			verified = append(verified, activationRebootReceipt{HostInputRef: host.InputRef, NodeNames: append([]string(nil), nodeNames...), PreviousBoot: observation.PreviousBootID, CurrentBoot: observation.CurrentBootID})
+		}
+		if err != nil {
 			return verified, err
 		}
-		// Retain the confirmed physical action even if later API readiness or
-		// acknowledgement fails. An empty summary must not imply no reboot.
-		verified = append(verified, activationRebootReceipt{HostInputRef: host.InputRef, NodeNames: append([]string(nil), nodeNames...),
-			PreviousBoot: observation.PreviousBootID, CurrentBoot: observation.CurrentBootID})
+
 		if err := journal.record(executionEvent{Stage: generation.StageDeployment, Operation: "external-host-reboot", Subject: host.InputRef,
 			State: "confirmed", ReasonCode: "EXTERNAL_HOST_REBOOT_VERIFIED", Message: fmt.Sprintf("Same host and adapter reconnected with a changed boot ID (previous %s, current %s); DPF request acknowledgement is still pending.", observation.PreviousBootID, observation.CurrentBootID)}); err != nil {
 			return verified, err
@@ -1387,7 +1279,7 @@ func invokeSelectedHostReboots(ctx context.Context, client activationStageClient
 			diagnostic := managementIdentityDiagnostic(ctx, err)
 			return verified, activationFailure(journal, diagnostic.ReasonCode, diagnostic.Message+" Preserve the host reboot receipt and pending request.", diagnostic)
 		}
-		returned, err := waitActivationAgentReboots(ctx, client, prepared.execution, deployment, deploymentUID, selected, indexes, rounds, resetProgress, interval)
+		returned, err := waitActivationAgentReboots(ctx, client, prepared.execution.verificationInputs(), deployment, deploymentUID, selected, indexes, rounds, resetProgress, interval)
 		if err != nil {
 			return verified, activationFailure(journal, "EXTERNAL_REBOOT_AGENT_UNVERIFIED", "The same pending DPU round did not return a new agent startup and current Arm kernel boot; leave the request in place and do not repeat the host reset.", err)
 		}
@@ -1404,7 +1296,7 @@ func invokeSelectedHostReboots(ctx context.Context, client activationStageClient
 				return verified, err
 			}
 		}
-		if err := prepared.operation.saveResetProofs(ctx, resetKey, proofs); err != nil {
+		if err := prepared.operation.recordResetACKIntent(ctx, resetKey, proofs); err != nil {
 			return verified, err
 		}
 		for _, nodeName := range nodeNames {
@@ -1423,7 +1315,7 @@ func invokeSelectedHostReboots(ctx context.Context, client activationStageClient
 			// Reconnection and current-Arm observation can take minutes, including
 			// on resume. ACK authorizes controller progress, so recheck the complete
 			// policy before reading the exact node/round for the conditional patch.
-			if err := verifyActivationBoundary(ctx, client, prepared, controlPlane, workload, selected, deploymentUID, objects, journal, requestTimeout); err != nil {
+			if err := verifyActivationBoundary(ctx, client, newControlPlaneVerificationInputs(prepared, controlPlane, workload), controlPlane.tenant.Client, selected, deploymentUID, objects, journal, requestTimeout); err != nil {
 				return verified, err
 			}
 			// Fresh and observe-only recovery share this ACK boundary. Observing
@@ -1431,7 +1323,7 @@ func invokeSelectedHostReboots(ctx context.Context, client activationStageClient
 			if err := verifySelectedBootstrapCredentials(ctx, client, controlPlane.tenant.Client, selected, indexes, returned, journal); err != nil {
 				return verified, err
 			}
-			if err := verifyActivationResourceBoundary(ctx, client, prepared, controlPlane, workload, selected, deploymentUID, objects, journal); err != nil {
+			if err := verifyActivationResourceBoundary(ctx, client, newControlPlaneVerificationInputs(prepared, controlPlane, workload), controlPlane.tenant.Client, selected, deploymentUID, objects, journal); err != nil {
 				return verified, err
 			}
 			node, err := client.Get(ctx, dpuNodeIdentity(deployment.GetNamespace(), nodeName))
@@ -1442,7 +1334,7 @@ func invokeSelectedHostReboots(ctx context.Context, client activationStageClient
 			if !found || annotation != "true" {
 				return verified, activationFailure(journal, "EXTERNAL_REBOOT_ACK_STATE_CHANGED", "The selected DPUNode external reboot annotation changed after the host reboot; inspect before retrying.", nil)
 			}
-			fresh, err := observeActivationScope(ctx, client, prepared.execution, deployment, deploymentUID, selected, resetProgress)
+			fresh, err := observeActivationScope(ctx, client, prepared.execution.verificationInputs(), deployment, deploymentUID, selected, resetProgress)
 			if err != nil || !fresh.complete {
 				return verified, activationFailure(journal, "EXTERNAL_REBOOT_ACK_SCOPE_CHANGED", "The selected cohort could not be refreshed immediately before acknowledgement.", err)
 			}
@@ -1487,7 +1379,7 @@ func invokeSelectedHostReboots(ctx context.Context, client activationStageClient
 			resetProgress[nodeName] = completion
 			verified[len(verified)-1].completion = append(verified[len(verified)-1].completion, completion)
 		}
-		if err := prepared.operation.finishReset(ctx, resetKey, resetProgress); err != nil {
+		if err := prepared.operation.confirmResetAcknowledged(ctx, resetKey, verified[len(verified)-1].completion); err != nil {
 			return verified, err
 		}
 		if err := journal.record(executionEvent{Stage: generation.StageDeployment, Operation: "acknowledge-external-reboot", Subject: host.InputRef,
@@ -1560,7 +1452,7 @@ func activationReceiptList(objects map[string]*unstructured.Unstructured) []acti
 	return receipts
 }
 
-func activationDPUsReady(observed activationObservation, selected []activationSelectedDevice) bool {
+func activationDPUsReady(rules *controllercontract.Rules, observed activationObservation, selected []activationSelectedDevice) bool {
 	if len(observed.dpus) != len(selected) {
 		return false
 	}
@@ -1569,7 +1461,7 @@ func activationDPUsReady(observed activationObservation, selected []activationSe
 		if dpu == nil || dpu.GetUID() == "" {
 			return false
 		}
-		readiness := EvaluateReadiness(dpu)
+		readiness := rules.ResourceReadiness(dpu)
 		if !readiness.Ready {
 			return false
 		}
@@ -1706,7 +1598,7 @@ func activationAnnotationPatch(old, replacement *string) ([]byte, error) {
 
 func stringPointer(value string) *string { return &value }
 
-func (c *APIClient) checkActivationPermissions(ctx context.Context, execution *managementExecution) []PreflightCheck {
+func (c *APIClient) checkActivationPermissions(ctx context.Context, execution *managementVerificationInputs) []PreflightCheck {
 	if c == nil || ctx == nil || execution == nil || execution.operatorNamespace == "" {
 		return []PreflightCheck{blockedPreflight("caller.activation", "ACTIVATION_PERMISSION_INPUT_INVALID", "Selected activation permission inputs are unavailable.")}
 	}
@@ -1780,4 +1672,9 @@ func (c *APIClient) patchActivationAnnotation(ctx context.Context, object *unstr
 
 func activationClusterSelectorMatches(setIntent, expected map[string]string) bool {
 	return len(setIntent) > 0 && reflect.DeepEqual(setIntent, expected)
+}
+
+func nestedFieldPresent(object map[string]any, fields ...string) bool {
+	_, found, err := unstructured.NestedFieldNoCopy(object, fields...)
+	return found || err != nil
 }

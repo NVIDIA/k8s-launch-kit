@@ -24,6 +24,7 @@ import (
 
 	"github.com/nvidia/k8s-launch-kit/pkg/config"
 	apperrors "github.com/nvidia/k8s-launch-kit/pkg/errors"
+	"github.com/nvidia/k8s-launch-kit/pkg/hostplatform"
 	"github.com/nvidia/k8s-launch-kit/pkg/kubeclient"
 	"github.com/nvidia/k8s-launch-kit/pkg/networkoperatorplugin"
 	"github.com/nvidia/k8s-launch-kit/pkg/options"
@@ -113,6 +114,14 @@ func (deployRunner) Run(ctx context.Context, request DeployRequest) error {
 	}
 	if request.Flavor == config.FlavorOCP && cfg == nil {
 		return apperrors.NewValidationError("OpenShift deploy requires a cluster config", nil, "Pass --user-config with flavor: ocp and operator namespaces")
+	}
+	flavor := ""
+	if cfg != nil {
+		flavor = cfg.Flavor
+	}
+	deployOpts.Platform, err = hostplatform.Select(flavor)
+	if err != nil {
+		return err
 	}
 	if cfg != nil {
 		deployOpts.Config = cfg

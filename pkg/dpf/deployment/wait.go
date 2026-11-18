@@ -9,6 +9,8 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/nvidia/k8s-launch-kit/pkg/dpf/deployment/internal/controllercontract"
+
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/types"
@@ -23,18 +25,18 @@ type resourceReader interface {
 // Ready without verifying retained intent. The caller must separately verify
 // companion resources and data-plane behavior; notably DPUCluster Ready alone
 // cannot establish tenant convergence.
-func waitNativeReady(ctx context.Context, client resourceReader, desired *unstructured.Unstructured, uid types.UID,
+func waitNativeReady(rules *controllercontract.Rules, ctx context.Context, client resourceReader, desired *unstructured.Unstructured, uid types.UID,
 	verify func(*unstructured.Unstructured, *unstructured.Unstructured) error, interval time.Duration,
-	observe func(Readiness, bool) error,
+	observe func(controllercontract.Readiness, bool) error,
 ) (*unstructured.Unstructured, error) {
-	if ctx == nil || client == nil || desired == nil || uid == "" || verify == nil || observe == nil || interval <= 0 {
+	if rules.Validate() != nil || ctx == nil || client == nil || desired == nil || uid == "" || verify == nil || observe == nil || interval <= 0 {
 		return nil, fmt.Errorf("readiness wait requires a context, resource, established UID, intent verifier, positive interval and result recorder")
 	}
 	if _, bounded := ctx.Deadline(); !bounded {
 		return nil, fmt.Errorf("readiness wait requires an execution deadline")
 	}
 	wanted := desired.DeepCopy()
-	last := Readiness{ReasonCode: "RESOURCE_NOT_OBSERVED", Message: "The resource has not been observed during this wait."}
+	last := controllercontract.Readiness{ReasonCode: "RESOURCE_NOT_OBSERVED", Message: "The resource has not been observed during this wait."}
 	for {
 		if err := ctx.Err(); err != nil {
 			return nil, finishReadinessWait(observe, last, err)
@@ -60,7 +62,7 @@ func waitNativeReady(ctx context.Context, client resourceReader, desired *unstru
 				// the bounded classification, never arbitrary resource contents.
 				return nil, errors.Join(observe(state, true), fmt.Errorf("required resource intent or ownership differs"))
 			}
-			last = EvaluateReadiness(current)
+			last = rules.ResourceReadiness(current)
 			switch last.ReasonCode {
 			case "RESOURCE_TERMINAL_FAILURE", "RESOURCE_DELETING", "RESOURCE_STATUS_INVALID", "RESOURCE_API_UNSUPPORTED", "RESOURCE_KIND_UNSUPPORTED", "DEPLOYMENT_ROLLOUT_FAILED":
 				return nil, errors.Join(observe(last, true), fmt.Errorf("%s: %s", last.ReasonCode, last.Message))
@@ -95,7 +97,7 @@ func retryableRead(err error) bool {
 	return apierrors.IsTimeout(err) || apierrors.IsServerTimeout(err) || apierrors.IsTooManyRequests(err) || apierrors.IsServiceUnavailable(err)
 }
 
-func finishReadinessWait(observe func(Readiness, bool) error, last Readiness, cause error) error {
+func finishReadinessWait(observe func(controllercontract.Readiness, bool) error, last controllercontract.Readiness, cause error) error {
 	code, message := "READINESS_TIMEOUT", "Readiness was not established before the execution deadline."
 	if errors.Is(cause, context.Canceled) {
 		code, message = "READINESS_CANCELED", "The readiness wait was canceled."

@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/nvidia/k8s-launch-kit/pkg/dpf/bootstrap"
+	"github.com/nvidia/k8s-launch-kit/pkg/dpf/deployment/internal/controllercontract"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime/schema"
@@ -79,7 +80,7 @@ func TestNativeObjectExecutionRetainsAttemptsAndStopsAfterPartialFailure(t *test
 		"metadata": map[string]any{"name": "dpfoperatorconfig", "namespace": "dpf"},
 		"spec":     map[string]any{"deploymentMode": "zero-trust", "provisioningController": map[string]any{"installInterface": map[string]any{"installViaRedfish": map[string]any{"discoveredDPUDeviceBMCFactoryResetPolicy": "Never"}}}},
 	}}
-	reconciler, err := NewReconciler(rendered.Manifest, "sha256:"+strings.Repeat("a", 64))
+	reconciler, err := newReconciler(testRulesForManifest(t, rendered.Manifest), "sha256:"+strings.Repeat("a", 64), controllercontract.MetadataPolicy{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -112,11 +113,11 @@ func TestNativeObjectExecutionRetainsAttemptsAndStopsAfterPartialFailure(t *test
 				journal.digest = "sha256:" + strings.Repeat("b", 64)
 			}
 			client := &executionTestAPI{file: f, t: t, loseCreateReply: tc.loseCreateReply, replaceOnRead: tc.replaceOnRead}
-			obj, err := executeNativeObject(ctx, client, reconciler, desired, "dpf-operator-config", journal, true, time.Millisecond)
+			obj, err := executeNativeObject(testRules(t), ctx, client, reconciler, desired, "dpf-operator-config", journal, true, time.Millisecond)
 			if (err == nil) != tc.wantSuccess || client.gets != tc.wantGets || client.creates != tc.wantCreates {
 				t.Fatalf("result err=%v gets=%d creates=%d, want success=%v gets=%d creates=%d", err, client.gets, client.creates, tc.wantSuccess, tc.wantGets, tc.wantCreates)
 			}
-			if tc.wantSuccess && (obj == nil || obj.GetUID() != "created-uid" || !EvaluateReadiness(obj).Ready) {
+			if tc.wantSuccess && (obj == nil || obj.GetUID() != "created-uid" || !testRules(t).ResourceReadiness(obj).Ready) {
 				t.Fatal("success did not carry established ready resource")
 			}
 			if strings.Contains(f.String(), "secret-value") || err != nil && strings.Contains(err.Error(), "secret-value") {

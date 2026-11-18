@@ -10,7 +10,7 @@ import (
 	"strings"
 	"testing"
 
-	dpfdiscovery "github.com/nvidia/k8s-launch-kit/pkg/dpf/discovery"
+	"github.com/nvidia/k8s-launch-kit/pkg/dpf/managementaccess"
 	authorizationv1 "k8s.io/api/authorization/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -45,7 +45,7 @@ func TestSoftwarePermissionsScopeAndFailClosed(t *testing.T) {
 				}
 				return true, &authorizationv1.SelfSubjectAccessReview{Status: status}, nil
 			})
-			api := &APIClient{access: dpfdiscovery.ManagementClient{Client: client}}
+			api := &APIClient{access: managementaccess.Client{Client: client}}
 			desired := &unstructured.Unstructured{Object: map[string]any{"apiVersion": blueFieldSoftwareAPIVersion, "kind": "BlueFieldSoftware", "metadata": map[string]any{"namespace": "workload", "name": "retained-software"}}}
 			checks := api.checkSoftwarePermissions(context.Background(), desired, "operator")
 			wanted := []authorizationv1.ResourceAttributes{
@@ -73,7 +73,7 @@ func TestSoftwarePermissionsScopeAndFailClosed(t *testing.T) {
 
 func TestSoftwarePermissionsInvalidInputsHaveNoAPIEffects(t *testing.T) {
 	client := fake.NewSimpleClientset()
-	api := &APIClient{access: dpfdiscovery.ManagementClient{Client: client}}
+	api := &APIClient{access: managementaccess.Client{Client: client}}
 	desired := &unstructured.Unstructured{Object: map[string]any{"apiVersion": blueFieldSoftwareAPIVersion, "kind": "BlueFieldSoftware", "metadata": map[string]any{"namespace": "workload", "name": "software"}}}
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()

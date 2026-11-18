@@ -66,7 +66,7 @@ func TestEnrollmentWaitsForTenantManagementComponentsBeforeEffects(t *testing.T)
 		return nil
 	}
 	journal := testJournal(execution)
-	result, err := runEnrollmentStage(tenantStageContext(t), fake, execution, bootstrapReceipt, tenantReceipt,
+	result, err := runEnrollmentStage(tenantStageContext(t), fake, execution.verificationInputs(), bootstrapReceipt, tenantReceipt,
 		fake.selected, password, journal, time.Millisecond, time.Second)
 	if err != nil {
 		t.Fatalf("normal tenant-service convergence stopped enrollment: %v", err)
@@ -174,7 +174,7 @@ func TestEnrollmentBootstrapWaitPreservesHardBoundaries(t *testing.T) {
 				return nil
 			}
 			journal := testJournal(execution)
-			err := waitManagementBootstrap(ctx, client, execution, receipt, journal, time.Millisecond)
+			err := waitManagementBootstrap(ctx, client, execution.verificationInputs(), receipt, journal, time.Millisecond)
 			if err == nil || !strings.Contains(err.Error(), tc.want) || base.createCount != 0 {
 				t.Fatalf("invalid bootstrap reached effects or lost its failure: creates=%d err=%v", base.createCount, err)
 			}
@@ -183,7 +183,7 @@ func TestEnrollmentBootstrapWaitPreservesHardBoundaries(t *testing.T) {
 				t.Fatal("the bootstrap read failure exposed raw API error text")
 			}
 			if tc.name == "deadline while pending" {
-				check, projected := operationResumeCheck(ctx, execution, "OPERATION_RESUME_BOOTSTRAP_UNVERIFIED", err)
+				check, projected := operationResumeCheck(ctx, execution.verificationInputs(), "OPERATION_RESUME_BOOTSTRAP_UNVERIFIED", err)
 				if check.ReasonCode != "DPF_CONFIG_READINESS_TIMEOUT" || !errors.Is(projected, context.DeadlineExceeded) {
 					t.Fatalf("pending deadline was relabeled: %+v %v", check, projected)
 				}
@@ -213,7 +213,7 @@ func TestEnrollmentRechecksTenantIdentityAfterBootstrapWait(t *testing.T) {
 		}
 	}
 	journal := testJournal(execution)
-	_, err := runEnrollmentStage(tenantStageContext(t), fake, execution, bootstrapReceipt, tenantReceipt,
+	_, err := runEnrollmentStage(tenantStageContext(t), fake, execution.verificationInputs(), bootstrapReceipt, tenantReceipt,
 		fake.selected, password, journal, time.Millisecond, time.Second)
 	if err == nil || !strings.Contains(err.Error(), "TENANT_API_IDENTITY_CHANGED") || fake.bmcCalls != 0 || fake.base.createCount != 0 {
 		t.Fatalf("stale tenant identity reached enrollment after waiting: err=%v", err)
@@ -227,7 +227,7 @@ func TestLaterEnrollmentBoundaryDoesNotRetryBootstrapFailure(t *testing.T) {
 		return nil
 	}
 	journal := testJournal(execution)
-	_, err := runEnrollmentStage(tenantStageContext(t), fake, execution, bootstrapReceipt, tenantReceipt,
+	_, err := runEnrollmentStage(tenantStageContext(t), fake, execution.verificationInputs(), bootstrapReceipt, tenantReceipt,
 		fake.selected, password, journal, time.Millisecond, time.Second)
 	if err == nil || !strings.Contains(err.Error(), "ENROLLMENT_BOOTSTRAP_CHANGED") {
 		t.Fatalf("later bootstrap drift did not stop discovery: %v", err)

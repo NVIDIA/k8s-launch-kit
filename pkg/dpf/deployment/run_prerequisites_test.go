@@ -96,13 +96,13 @@ func TestAfterActivationCollectorFailureStopsBeforeResourceOrHostEffects(t *test
 	sentinel := errors.New("fresh observer unavailable")
 	called := false
 	raw := []inventory.Check{{ID: "physical.current", Subject: "selected", Vantage: "executor", RequiredPhase: "deploy", State: "unknown", ReasonCode: "UNAVAILABLE"}}
-	verification, _, err := verifyActivatedHostPrerequisites(context.Background(), nil, &preparedControlPlaneRun{execution: &managementExecution{}}, controlPlaneReceipts{}, workloadPreparationReceipt{}, activationStageReceipt{}, config.Request{}, nil, time.Second, func(_ context.Context, _ config.Request, _ *generation.Plan, phase PrerequisitePhase) (PrerequisiteVerification, error) {
+	verification, _, err := verifyActivatedHostPrerequisites(context.Background(), nil, &preparedControlPlaneRun{execution: &managementExecution{managementVerificationInputs: managementVerificationInputs{}}}, controlPlaneReceipts{}, workloadPreparationReceipt{}, activationStageReceipt{}, config.Request{}, nil, time.Second, func(_ context.Context, _ config.Request, _ *generation.Plan, phase PrerequisitePhase) (PrerequisiteVerification, error) {
 		called = true
 		if phase != AfterActivation {
 			t.Fatalf("phase=%s", phase)
 		}
 		return PrerequisiteVerification{Checks: raw}, sentinel
-	})
+	}, nil)
 	if !called || err == nil || !strings.Contains(err.Error(), "post-activation prerequisite collection failed") || !reflect.DeepEqual(raw, verification.Checks) {
 		t.Fatalf("result=%+v err=%v", verification, err)
 	}

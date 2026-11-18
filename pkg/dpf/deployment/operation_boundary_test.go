@@ -77,6 +77,7 @@ func TestRunInitialReservationStopsBeforeFreshCollectionOrEffects(t *testing.T) 
 		object      bool
 		sameBundle  bool
 		foreign     bool
+		checkpoint  string
 		status      int
 		reason      metav1.StatusReason
 		cancel      bool
@@ -84,6 +85,9 @@ func TestRunInitialReservationStopsBeforeFreshCollectionOrEffects(t *testing.T) 
 		observation string
 		provider    bool
 	}{
+		{name: "unsupported checkpoint occupied", object: true, checkpoint: `{"Binding":{"Version":2}}`, want: "OPERATION_RESERVATION_EXISTS"},
+		{name: "unknown checkpoint field occupied", object: true, checkpoint: `{"unknown":true}`, want: "OPERATION_RESERVATION_EXISTS"},
+		{name: "corrupt checkpoint occupied", object: true, checkpoint: `{broken`, want: "OPERATION_RESERVATION_EXISTS"},
 		{name: "same bundle still occupied", object: true, sameBundle: true, want: "OPERATION_RESERVATION_EXISTS"},
 		{name: "different bundle occupied", object: true, want: "OPERATION_RESERVATION_EXISTS"},
 		{name: "foreign object occupies name", object: true, foreign: true, want: "OPERATION_RESERVATION_EXISTS"},
@@ -109,6 +113,9 @@ func TestRunInitialReservationStopsBeforeFreshCollectionOrEffects(t *testing.T) 
 					digest = retained.Index().BundleDigest
 				}
 				object = &corev1.ConfigMap{ObjectMeta: metav1.ObjectMeta{Name: operationName(deployment), Namespace: deployment.GetNamespace(), UID: activationIntegrationGuardUID, ResourceVersion: "5", Labels: map[string]string{operationLabel: "v1"}}, Data: map[string]string{"checkpoint.json": `{"Binding":{"BundleDigest":"` + digest + `"}}`}}
+				if tc.checkpoint != "" {
+					object.Data["checkpoint.json"] = tc.checkpoint
+				}
 				if tc.foreign {
 					object.Labels = nil
 				}
@@ -124,7 +131,7 @@ func TestRunInitialReservationStopsBeforeFreshCollectionOrEffects(t *testing.T) 
 				return PrerequisiteVerification{}, errors.New("stop after cold-core vacancy proof")
 			})
 			request.Access = api.request
-			result, runErr := runWithImageResolver(ctx, request, retainedTestImageResolver)
+			result, runErr := runWithTransports(ctx, request, runTransports{resolveImage: retainedTestImageResolver})
 			mu.Lock()
 			after, _ := json.Marshal(object)
 			reads := operationReads
@@ -237,7 +244,7 @@ func TestInitialReservationRechecksManagementIdentityBeforeCoreAbsence(t *testin
 	}
 	api.uid.Store("replacement-management")
 	err = checkInitialOperationVacancy(context.Background(), client, execution)
-	if err == nil || operationReservationCheck(execution, err).ReasonCode != "OPERATION_MANAGEMENT_UNMEASURED" || api.writes.Load() != 0 {
+	if err == nil || operationReservationCheck(execution.verificationInputs(), err).ReasonCode != "OPERATION_MANAGEMENT_UNMEASURED" || api.writes.Load() != 0 {
 		t.Fatalf("identity drift became vacancy: %v", err)
 	}
 }

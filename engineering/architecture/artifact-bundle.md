@@ -11,6 +11,16 @@ files in memory. It retains the original bytes, source filename and document
 number, parsed Kubernetes objects, and normalized Helm values. Both loading
 paths use the same filename rules and deterministic order.
 
+The lower-level `ParseResources` entrypoint validates resource YAML and
+identities while retaining each caller-supplied source name and physical
+document number. Host `FromFiles` shares its decoder and identity checker,
+applying filename roles and values rules in sorted file order with one
+complete-set identity map. DPF stage validation supplies its indexed nested paths
+to `ParseResources`, then applies stage membership, destination, namespace and projection
+rules in the DPF bundle package. Helm SDK setup is shared through
+`pkg/helmclient`; namespace and storage-driver choices remain explicit inputs,
+with Host defaults applied by Host callers.
+
 Files containing `example` in the basename are validation workloads. Other
 resource files are deployment inputs. Only the exact name `values.yaml` is
 Helm input. The loader rejects reserved alternatives such as `values.yml` and
@@ -44,8 +54,9 @@ inventory stays in the effective configuration rather than being duplicated in
 each manifest. Deploy checks desired selectors before writes and readiness checks
 live selectors against intended source metadata. Library callers supply that
 configuration through `DeployOptions.Config` or
-`ValidateBundleWithConfig(ctx, client, bundle, config, flavor...)`. The existing
-`ValidateBundle` API remains available for legacy artifact-only inputs; annotated
+`ValidateBundle(ctx, client, bundle, config, platform)`. Both APIs require an
+explicit `hostplatform.Selection`; deployment carries it in `DeployOptions.Platform`.
+Resource-only validation passes a nil config and an explicit platform; annotated
 hardware resources require their configuration. The explicit `[""]` source reference
 preserves an unnamed sole source and resolves only against exactly one unnamed
 configured source. Selector-only preset inputs retain

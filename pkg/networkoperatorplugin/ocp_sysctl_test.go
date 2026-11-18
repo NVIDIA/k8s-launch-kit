@@ -8,13 +8,14 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"github.com/nvidia/k8s-launch-kit/pkg/bundle"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 
+	"github.com/nvidia/k8s-launch-kit/pkg/bundle"
 	"github.com/nvidia/k8s-launch-kit/pkg/config"
+	"github.com/nvidia/k8s-launch-kit/pkg/hostplatform"
 	"github.com/nvidia/k8s-launch-kit/pkg/networkoperatorplugin/crstate"
 	"github.com/stretchr/testify/require"
 	corev1 "k8s.io/api/core/v1"
@@ -242,7 +243,7 @@ func TestSysctlPatchArtifactRoundTripAndEdits(t *testing.T) {
 	require.NoError(t, err)
 	require.Contains(t, got, "site_custom")
 	require.NotContains(t, got, "arp_announce", "deploy must use the artifact, not a hidden built-in list")
-	results, err := ValidateBundle(context.Background(), c, artifacts, config.FlavorOCP)
+	results, err := ValidateBundle(context.Background(), c, artifacts, nil, hostplatform.OpenShift)
 	require.NoError(t, err)
 	require.Len(t, results, 1)
 	require.Equal(t, crstate.StateSuccess, results[0].State)
@@ -250,7 +251,7 @@ func TestSysctlPatchArtifactRoundTripAndEdits(t *testing.T) {
 	require.NoError(t, c.Get(context.Background(), client.ObjectKeyFromObject(initial), live))
 	live.Data["allowlist.conf"] = ""
 	require.NoError(t, c.Update(context.Background(), live))
-	results, err = ValidateBundle(context.Background(), c, artifacts, config.FlavorOCP)
+	results, err = ValidateBundle(context.Background(), c, artifacts, nil, hostplatform.OpenShift)
 	require.NoError(t, err)
 	require.Equal(t, crstate.StateError, results[0].State)
 

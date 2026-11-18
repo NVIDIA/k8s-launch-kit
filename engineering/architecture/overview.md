@@ -299,11 +299,56 @@ pipeline remain capability rejections before client construction.
 DPF deploy reserves one typed, nonsecret ConfigMap checkpoint in the existing
 operator namespace before DPUDeployment creation. `--resume` binds its exact
 namespace/name/UID and retained plan, reconstructs verified prerequisite receipts,
-and restores activation history. Conditional patches, immutable reset claims and
+and restores activation history. One deployment-local owner records named parent,
+hold, reset and host-network transitions. Stages receive detached purpose-specific
+views; current API and physical verification stays with each stage. Persistence
+uncertainty stops new effects for the entire attempt, including repeated transition
+paths. Conditional patches, immutable reset claims and
 host-local transaction journals retain ownership of their individual effects;
 the checkpoint does not provide physical fencing or automatic adoption. Existing
-claims select observation-only recovery, and completed host work is inspected
+claims select observation-only recovery. A lost reset-ACK completion response
+requires the same immutable claim and fresh selected controller/Arm/host proof
+before recording controller advancement; a missing or replaced claim blocks
+recovery. An acknowledged reset permanently closes its phase-bound logical
+request; a reappeared pending annotation cannot renew reset or ACK authority.
+Physical reset observations matching saved history, and host-local results,
+remain visible through later checkpoint failures. Rejected reset observations
+never enter the reboot summary. Completed host work is inspected
 without configuration fallback. Each attempt produces fresh runtime evidence.
+
+DPF deployment stages consume their own read/check ports and the effects needed
+by that stage; they do not inherit prior stages' installers or writers. Management
+and tenant access remain separate identity domains. Tenant readers own child,
+allocation, permission and runtime Pod observations directly, without exposing
+upstream client factories. Runtime receives copied verification data and narrow
+management/tenant readers, plus explicit bounded command, traffic and image I/O.
+Its inputs and lease closure retain no operation store, first-create callback,
+installer, selector/activation patcher, resetter or host configurer. The retained
+plan, bundle and compiled schemas remain immutable data owners.
+Management preparation selects one concrete immutable controller rules value from
+the validated retained release, profile and renderer, with the existing compiled
+`generation.ObjectSchemas`, before opening management access. Catalog discovery
+support does not select controller semantics. Unsupported tuples fail before
+access or effects; the rules add no persisted compatibility version or second
+schema/default registry.
+
+`pkg/dpf/deployment/internal/controllercontract` owns the pure resource,
+enrollment, workload and tenant status projections, Kamaji/keepalived comparison,
+controller metadata tokens, activation names/references, narrow admission
+normalization and HBN expected specs/App values. Selected rules travel through
+verification inputs, tenant source verification and waiters. Projections use
+explicit retained inputs and detached outputs; fresh observations, cohort and
+identity selection, ownership, leases, checkpoint transitions and final physical
+and runtime fences remain in deployment. The reconciler's `Ensure` still performs
+read/create/race I/O; only its controller comparison projections are pure.
+Schema validation and pruning precede narrow DPUFlavor/DPUCluster normalization.
+The comparison API copies the schema-defaulted inputs again to keep its ownership
+contract explicit and preserve desired/current schema diagnostic ordering.
+
+Private I/O composition may select a typed request limiter before native client
+construction for deterministic transport tests. Ordinary application calls pass
+nil and preserve client-go pacing, credentials, TLS and request controls; the
+limiter does not replace a client, request or verification result.
 
 DPF runtime measurement uses a resource/allocation fence distinct from the full
 physical mutation fence. Both share management, tenant, workload/software,
@@ -322,6 +367,35 @@ spec comparison, alongside identity, metadata, readiness and scope checks. Live
 observations are never cached by UID or generation.
 
 ## Deployment and validation internals
+
+
+Host deployment selects a concrete `kubernetesDeploymentPolicy` or
+`openShiftDeploymentPolicy` from the operation's explicit
+`hostplatform.Selection`. The six-method, internal `deploymentPolicy` boundary
+owns artifact classification, platform prerequisites, bootstrap, preflight,
+post-preflight configuration and dependent-API retry eligibility. Kubernetes
+bootstrap retains managed/external Helm ownership and the pre-Helm overwrite
+removal check. OpenShift requires external OLM operators and configures them only
+after preflight, with the sysctl allowlist checked before other operator writes.
+Both use the same apply, fresh observation, target-scope and reapply loops.
+
+Optional OpenShift operator-install manifests remain a separate artifact bucket.
+The shared coordinator skips them, and static validation excludes them before
+live resource reads. The OpenShift prerequisite policy retains the instruction
+to apply these manifests manually when the required operators are not ready.
+
+The separate two-method `resourceReadPolicy` has concrete Kubernetes/OpenShift
+implementations. It supplies the existing `crstate` readiness registry to deploy
+and performs standalone resource checks, including OpenShift's generated NAD
+check. It exposes no deployment effects. Kind-specific operator configuration
+validation still runs on either platform. Rendering, connectivity and cleanup
+retain their existing owners.
+
+This split preserves existing policy differences: OpenShift deploy still executes
+stray-resource scans before filtering their results. Standalone OpenShift
+validation skips Helm checks and does not perform the comprehensive OLM
+prerequisite gate used by deploy. These retained differences are not new
+qualification claims; static validation also lacks deploy's apply-history gate.
 
 ```mermaid
 flowchart TB
@@ -359,10 +433,43 @@ flowchart TB
 | `pkg/target` | Names, phases, capabilities, common invocation policy, registry, operation contract | Cobra, Host options, DPF options, Kubernetes clients |
 | `pkg/target/host` | Typed Host requests, explicit-value semantics, Host path/config resolution, phase services | DPF implementation or cross-target composition |
 | `pkg/app` | Discover/generate/root workflow state and Network Operator plugin coordination | CLI parsing or process exit |
+| `pkg/dpf/app` | Discover, generate and deploy operation composition; pure generation/retained-plan resolution, explicit access and artifact I/O, collectors and permission checks, publication and external reboot composition | CLI binding, process signals, final output or deployment state machine |
+| `pkg/dpf/managementaccess` | Bounded explicit management credential/TLS snapshots, client construction and fresh cluster identity reads | Discovery inventory, deployment eligibility, ambient Host kubeconfig fallback or cached identity success |
+| `pkg/dpf/deployment/internal/controllercontract` | Explicit selected immutable controller semantics and pure expected/status projections, reusing retained generation schemas | Live reads, ownership/effect authority, retries, operation or receipt state |
+| `pkg/dpf/discovery` | Expanded management inventory, provisioning observations and discovery checks using explicit management access | Credential loading or base management access construction |
 | `pkg/networkoperatorplugin` | Discovery, rendering, deployment state machine, validation primitives | Target selection |
 | `pkg/config`, `pkg/options` | Host configuration, YAML presence and option models | A universal union of Host and DPF configuration |
 | `pkg/configflags`, `pkg/configinput`, `pkg/resolve` | Shared option bindings, explicit CLI inputs, configuration resolution and validation | CLI process exit or cluster orchestration |
 | `pkg/ui`, `pkg/errors`, `pkg/log` | Presentation, structured failures, and logging | Domain decisions |
+
+DPF adapters call `app.Discover`, `app.GenerateBundle` and `app.Deploy` with
+typed requests and context. Adapters retain signals, writers, progress policy,
+user-facing error projection and final output. Generation's public-file loading,
+chart retrieval, rendering and publication are explicit I/O, separate from pure
+`app.ResolveGeneration`. Fresh generation selects maintained release defaults;
+retained deployment uses the validated plan's fixed recipe and compares current
+settings, source selection and exact physical bindings against it. Deployment
+validates the bundle and retained plan before opening access. A preparation error
+has no execution result; once `deployment.Run` starts, its typed outcome is
+available even on failure. Deployment retains the lifecycle state machine and
+all effect fences. The application composes the bounded external SSH rebooter,
+including its one-submission and observation-only recovery behavior.
+
+The application shares concrete collector assembly across standalone discovery
+and native deployment prerequisite collection. Standalone discovery selects fresh
+permission planning and release-dependent BMC observations; deployment binds
+authorization and provisioning to its retained plan. Resume defers lifecycle
+eligibility, and post-activation additionally records artifact inputs without
+re-reading origin bytes. Each collection keeps its own probe journal. Both
+standalone discovery and prerequisite publication retain their existing bounded
+cancellation-independent publication budgets. Caller authorization uses the
+actual generated or retained bundle and fresh management identity.
+
+DPF discovery, probes and deployment share the concrete management access client.
+Each `managementaccess.Open` snapshots the explicit bounded credential and TLS
+references at its existing call boundary; identity observations make fresh remote
+reads through that snapshot. Discovery owns expanded inventory and provisioning
+observations. Generation retains access references without opening credentials.
 
 ## Build, release, and documentation supply chain
 

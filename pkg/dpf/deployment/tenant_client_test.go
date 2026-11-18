@@ -12,6 +12,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/nvidia/k8s-launch-kit/pkg/dpf/deployment/internal/controllercontract"
+
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
@@ -28,7 +30,7 @@ type tenantSourceStub struct {
 	mutate  func(int, *tenantSources)
 }
 
-func (s *tenantSourceStub) observeTenantSources(ctx context.Context, _ TenantReadinessExpected) (tenantSources, error) {
+func (s *tenantSourceStub) observeTenantSources(ctx context.Context, _ controllercontract.TenantReadinessExpected) (tenantSources, error) {
 	if err := ctx.Err(); err != nil {
 		return tenantSources{}, err
 	}
@@ -39,7 +41,7 @@ func (s *tenantSourceStub) observeTenantSources(ctx context.Context, _ TenantRea
 	return s.sources, nil
 }
 
-func tenantSourceFixture(t *testing.T) (TenantReadinessExpected, tenantSources) {
+func tenantSourceFixture(t *testing.T) (controllercontract.TenantReadinessExpected, tenantSources) {
 	t.Helper()
 	expected, observed := readyTenantFixture(t)
 	if err := unstructured.SetNestedField(observed.DPUCluster.Object, "v"+strings.TrimPrefix(expected.KubernetesVersion, "v"), "status", "version"); err != nil {
@@ -57,18 +59,18 @@ func tenantSourceFixture(t *testing.T) (TenantReadinessExpected, tenantSources) 
 
 func TestTenantSourcesBindCredentialsAndResourceIdentity(t *testing.T) {
 	expected, sources := tenantSourceFixture(t)
-	original, endpoint, data, err := validateTenantSources(expected, "dc-uid", sources)
+	original, endpoint, data, err := validateTenantSources(testRules(t), expected, "dc-uid", sources)
 	if err != nil || endpoint != "https://192.0.2.20:30538" || len(data) == 0 {
 		t.Fatalf("unexpected binding: endpoint=%s err=%v", endpoint, err)
 	}
 	sources.secret.ResourceVersion = "2"
 	sources.observed.DPUCluster.SetResourceVersion("3")
-	unchanged, _, _, err := validateTenantSources(expected, "dc-uid", sources)
+	unchanged, _, _, err := validateTenantSources(testRules(t), expected, "dc-uid", sources)
 	if err != nil || unchanged != original {
 		t.Fatal("metadata-only updates invalidated source identity")
 	}
 	sources.secret.Data["super-admin.conf"] = append(sources.secret.Data["super-admin.conf"], '\n')
-	changed, _, _, err := validateTenantSources(expected, "dc-uid", sources)
+	changed, _, _, err := validateTenantSources(testRules(t), expected, "dc-uid", sources)
 	if err != nil || changed == original {
 		t.Fatal("credential byte change was not bound")
 	}
@@ -91,7 +93,7 @@ func TestTenantSourcesRejectDriftAndMalformedCredentials(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			expected, sources := tenantSourceFixture(t)
 			mutate(&sources)
-			_, _, _, err := validateTenantSources(expected, "dc-uid", sources)
+			_, _, _, err := validateTenantSources(testRules(t), expected, "dc-uid", sources)
 			if err == nil {
 				t.Fatal("invalid source accepted")
 			}
@@ -102,12 +104,12 @@ func TestTenantSourcesRejectDriftAndMalformedCredentials(t *testing.T) {
 	}
 }
 
-func tenantIdentityClientFixture(t *testing.T, expected TenantReadinessExpected, source *tenantSourceStub) (*tenantClient, *int) {
+func tenantIdentityClientFixture(t *testing.T, expected controllercontract.TenantReadinessExpected, source *tenantSourceStub) (*tenantClient, *int) {
 	t.Helper()
 	return tenantIdentityClientFixtureWithHandler(t, expected, source, nil)
 }
 
-func tenantIdentityClientFixtureWithHandler(t *testing.T, expected TenantReadinessExpected, source *tenantSourceStub, handle func(http.ResponseWriter, *http.Request) bool) (*tenantClient, *int) {
+func tenantIdentityClientFixtureWithHandler(t *testing.T, expected controllercontract.TenantReadinessExpected, source *tenantSourceStub, handle func(http.ResponseWriter, *http.Request) bool) (*tenantClient, *int) {
 	t.Helper()
 	requests := 0
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -131,11 +133,11 @@ func tenantIdentityClientFixtureWithHandler(t *testing.T, expected TenantReadine
 	if err != nil {
 		t.Fatal(err)
 	}
-	digest, _, _, err := validateTenantSources(expected, "dc-uid", source.sources)
+	digest, _, _, err := validateTenantSources(testRules(t), expected, "dc-uid", source.sources)
 	if err != nil {
 		t.Fatal(err)
 	}
-	return &tenantClient{source: source, expected: expected, dpuClusterUID: "dc-uid", sourceDigest: digest, systemUID: "tenant-system", api: api}, &requests
+	return &tenantClient{rules: testRules(t), source: source, expected: expected, dpuClusterUID: "dc-uid", sourceDigest: digest, systemUID: "tenant-system", api: api}, &requests
 }
 
 func TestTenantIdentityChecksSourceBeforeAndAfterAPIReads(t *testing.T) {
@@ -183,11 +185,11 @@ func TestTenantIdentityRejectsReplacedTenantAndCancellation(t *testing.T) {
 func TestTenantClientRejectsIncompleteBindingBeforeConnecting(t *testing.T) {
 	expected, sources := tenantSourceFixture(t)
 	source := &tenantSourceStub{sources: sources}
-	if _, err := newTenantClient(context.Background(), source, expected, "", time.Second); err == nil || source.calls != 0 {
+	if _, err := newTenantClient(context.Background(), testRules(t), source, expected, "", time.Second, nil, nil); err == nil || source.calls != 0 {
 		t.Fatal("incomplete binding accessed management sources")
 	}
 	source.sources.secret.Data = map[string][]byte{"admin.conf": []byte("secret-canary")}
-	if _, err := newTenantClient(context.Background(), source, expected, "dc-uid", time.Second); err == nil || strings.Contains(err.Error(), "secret-canary") {
+	if _, err := newTenantClient(context.Background(), testRules(t), source, expected, "dc-uid", time.Second, nil, nil); err == nil || strings.Contains(err.Error(), "secret-canary") {
 		t.Fatal("invalid credential source accepted or leaked")
 	}
 }

@@ -122,7 +122,7 @@ func TestBootstrapActivationWaitAllowsRegistrationCleanup(t *testing.T) {
 	f.client.base.resources[key] = m.join
 	f.client.bootstrapTenantHandler = state.serve
 	client := &bootstrapJoinWaitRegistrationClient{bootstrapJoinWaitClient: bootstrapJoinWaitClient{recoveryActivationClient{f.client}}, state: state, joinKey: key}
-	f.controlPlane.tenant.Client.source = client
+	testTenant(f.controlPlane.tenant.Client).source = client
 	ctx, cancel := context.WithTimeout(f.ctx, 3*time.Second)
 	defer cancel()
 	reboot := &recoveryRebooter{fixture: &f}

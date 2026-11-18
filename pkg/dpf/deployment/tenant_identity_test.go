@@ -11,6 +11,8 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/nvidia/k8s-launch-kit/pkg/dpf/deployment/internal/controllercontract"
+
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 )
@@ -64,7 +66,7 @@ func TestTenantIdentityVerifierMarksOnlyBoundDifferences(t *testing.T) {
 			s.sources.observed.DPUCluster.Object["status"] = map[string]any{}
 		}},
 		{name: "failed read", edit: func(c *tenantClient, _ *tenantSourceStub) {
-			c.source = tenantWaitSourceFunc(func(context.Context, TenantReadinessExpected) (tenantSources, error) {
+			c.source = tenantWaitSourceFunc(func(context.Context, controllercontract.TenantReadinessExpected) (tenantSources, error) {
 				return tenantSources{}, apierrors.NewServiceUnavailable("private-api-canary")
 			})
 		}},

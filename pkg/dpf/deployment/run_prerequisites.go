@@ -17,7 +17,7 @@ import (
 // verifyActivatedHostPrerequisites replaces no observation with a pre-reset
 // value. Fresh complete host/network facts must pass before rebinding the
 // activation receipt used by host configuration and runtime measurements.
-func verifyActivatedHostPrerequisites(ctx context.Context, client *APIClient, prepared *preparedControlPlaneRun, control controlPlaneReceipts, workload workloadPreparationReceipt, activation activationStageReceipt, access config.Request, journal *executionJournal, timeout time.Duration, verify PrerequisiteVerifier) (PrerequisiteVerification, activationStageReceipt, error) {
+func verifyActivatedHostPrerequisites(ctx context.Context, client resumePrerequisiteReader, prepared *preparedControlPlaneRun, control controlPlaneReceipts, workload workloadPreparationReceipt, activation activationStageReceipt, access config.Request, journal *executionJournal, timeout time.Duration, verify PrerequisiteVerifier, inspect hostNetworkConfigurer) (PrerequisiteVerification, activationStageReceipt, error) {
 	request, err := cloneRequestForPrerequisites(access)
 	if err != nil {
 		return PrerequisiteVerification{}, activation, fmt.Errorf("copy post-activation prerequisite request")
@@ -26,7 +26,7 @@ func verifyActivatedHostPrerequisites(ctx context.Context, client *APIClient, pr
 	if err != nil {
 		return verification, activation, fmt.Errorf("post-activation prerequisite collection failed")
 	}
-	verification, err = assessOwnedResumePrerequisites(ctx, client, prepared, control, workload, verification, access, journal, timeout, AfterActivation)
+	verification, err = assessOwnedResumePrerequisites(ctx, client, prepared, control, workload, verification, access, journal, timeout, AfterActivation, inspect)
 	if err != nil {
 		return verification, activation, err
 	}
@@ -37,16 +37,16 @@ func verifyActivatedHostPrerequisites(ctx context.Context, client *APIClient, pr
 	return verification, refreshed, err
 }
 
-func rebindActivatedHostInventory(ctx context.Context, client activationStageClient, prepared *preparedControlPlaneRun, control controlPlaneReceipts, activation activationStageReceipt, observedInventory *inventory.Inventory, targets []config.Target) (activationStageReceipt, error) {
+func rebindActivatedHostInventory(ctx context.Context, client activationObservationReader, prepared *preparedControlPlaneRun, control controlPlaneReceipts, activation activationStageReceipt, observedInventory *inventory.Inventory, targets []config.Target) (activationStageReceipt, error) {
 	current, err := cloneInventory(observedInventory)
 	if err != nil {
 		return activation, fmt.Errorf("copy post-activation host inventory")
 	}
-	deployment, err := retainedDeploymentObject(prepared.execution)
+	deployment, err := retainedDeploymentObject(prepared.execution.verificationInputs())
 	if err != nil {
 		return activation, err
 	}
-	selected, groups, err := bindActivationHosts(prepared.selected, control.enrollment, current, targets, deployment)
+	selected, groups, err := bindActivationHosts(prepared.execution.rules, prepared.selected, control.enrollment, current, targets, deployment)
 	if err != nil {
 		return activation, err
 	}
@@ -64,8 +64,8 @@ func rebindActivatedHostInventory(ctx context.Context, client activationStageCli
 			return activation, fmt.Errorf("POST_ACTIVATION_HOST_CHANGED: selected physical binding changed")
 		}
 	}
-	observed, err := observeActivationScope(ctx, client, prepared.execution, deployment, activation.DeploymentUID, selected, activation.progress)
-	if err != nil || !observed.complete || !EvaluateReadiness(observed.deployment).Ready || !activationCompletionReady(observed, activation.progress, selected) {
+	observed, err := observeActivationScope(ctx, client, prepared.execution.verificationInputs(), deployment, activation.DeploymentUID, selected, activation.progress)
+	if err != nil || !observed.complete || !prepared.execution.rules.ResourceReadiness(observed.deployment).Ready || !activationCompletionReady(prepared.execution.rules, observed, activation.progress, selected) {
 		return activation, fmt.Errorf("POST_ACTIVATION_SCOPE_CHANGED: current activation completion could not be proven")
 	}
 	activation.selected, activation.groups = selected, groups

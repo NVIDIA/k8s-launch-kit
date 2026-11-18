@@ -34,8 +34,8 @@ type controlPlaneReceipts struct {
 // prepareControlPlaneWithExecution binds enrollment credentials and checks
 // effect scope against the already validated plan. Run uses this after fresh
 // prerequisite verification so the same execution is reused by every stage.
-func prepareControlPlaneWithExecution(ctx context.Context, client enrollmentManagementClient, execution *managementExecution, journal *executionJournal,
-	probes probe.Runner, request config.Request, interval, requestTimeout time.Duration,
+func prepareControlPlaneWithExecution(ctx context.Context, client controlPlanePreparationReader, execution *managementExecution, journal *executionJournal,
+	request config.Request, interval, requestTimeout time.Duration,
 ) (*preparedControlPlaneRun, error) {
 	if ctx == nil || client == nil || execution == nil || execution.plan == nil || journal == nil || interval <= 0 || requestTimeout < time.Second || requestTimeout > 2*time.Minute {
 		return nil, fmt.Errorf("control-plane execution requires a prepared plan, client, report and bounded polling/request controls")
@@ -57,7 +57,7 @@ func prepareControlPlaneWithExecution(ctx context.Context, client enrollmentMana
 	if err != nil {
 		return nil, err
 	}
-	if _, err := selectedEnrollmentDiscoveries(execution, selected); err != nil {
+	if _, err := selectedEnrollmentDiscoveries(execution.verificationInputs(), selected); err != nil {
 		return nil, err
 	}
 	if err := journalTenantChecks(journal, "site-allocation", managementnetwork.CheckTenantAllocation(intent.Bootstrap.Tenant)); err != nil {
@@ -69,17 +69,17 @@ func prepareControlPlaneWithExecution(ctx context.Context, client enrollmentMana
 	if err := client.verifyEnrollmentBMCs(ctx, selected, requestTimeout, journal); err != nil {
 		return nil, err
 	}
-	if err := guardEnrollmentScope(ctx, client, execution, selected); err != nil {
+	if err := guardEnrollmentScope(ctx, client, execution.verificationInputs(), selected); err != nil {
 		code, message, cause := enrollmentScopeDiagnostic(ctx, err, "ENROLLMENT_SCOPE_UNSAFE")
 		return nil, enrollmentStageFailure(journal, code, message, cause)
 	}
 	return &preparedControlPlaneRun{execution: execution, selected: selected, password: password}, nil
 }
 
-func runPreparedControlPlane(ctx context.Context, client enrollmentManagementClient, prepared *preparedControlPlaneRun,
+func runPreparedControlPlane(ctx context.Context, management managementRunnerClient, tenant tenantStageManagementClient, enrollment enrollmentManagementClient, network tenantNetworkChecker, prepared *preparedControlPlaneRun,
 	probes probe.Runner, journal *executionJournal, interval, requestTimeout time.Duration,
 ) (controlPlaneReceipts, error) {
-	if ctx == nil || client == nil || prepared == nil || prepared.execution == nil || prepared.execution.plan == nil || journal == nil || interval <= 0 ||
+	if ctx == nil || management == nil || tenant == nil || enrollment == nil || network == nil || prepared == nil || prepared.execution == nil || prepared.execution.plan == nil || journal == nil || interval <= 0 ||
 		requestTimeout < time.Second || requestTimeout > 2*time.Minute || len(prepared.selected) == 0 || prepared.password == "" {
 		return controlPlaneReceipts{}, fmt.Errorf("prepared control-plane execution requires retained intent, selected credentials and bounded controls")
 	}
@@ -87,19 +87,19 @@ func runPreparedControlPlane(ctx context.Context, client enrollmentManagementCli
 		return controlPlaneReceipts{}, err
 	}
 	execution := prepared.execution
-	managementReceipt, err := runPreparedManagement(ctx, client, execution, journal, interval)
+	managementReceipt, err := runPreparedManagement(ctx, management, execution, journal, interval)
 	if err != nil {
 		return controlPlaneReceipts{}, err
 	}
 	runID := "tenant-" + rand.Text()
 	observeNetwork := func(ctx context.Context, tenant bootstrap.Tenant) ([]inventory.Check, error) {
-		return client.checkTenantNetwork(ctx, tenant, probes, runID, requestTimeout)
+		return network.checkTenantNetwork(ctx, tenant, probes, runID, requestTimeout)
 	}
-	tenantReceipt, err := runTenantStage(ctx, client, execution, managementReceipt, journal, interval, requestTimeout, observeNetwork)
+	tenantReceipt, err := runTenantStage(ctx, tenant, execution, managementReceipt, journal, interval, requestTimeout, observeNetwork)
 	if err != nil {
 		return controlPlaneReceipts{}, err
 	}
-	enrollmentReceipt, err := runEnrollmentStage(ctx, client, execution, managementReceipt, tenantReceipt, prepared.selected, prepared.password, journal, interval, requestTimeout)
+	enrollmentReceipt, err := runEnrollmentStage(ctx, enrollment, execution.verificationInputs(), managementReceipt, tenantReceipt, prepared.selected, prepared.password, journal, interval, requestTimeout)
 	if err != nil {
 		return controlPlaneReceipts{management: managementReceipt, tenant: tenantReceipt, enrollment: enrollmentReceipt}, err
 	}

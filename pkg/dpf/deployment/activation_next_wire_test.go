@@ -76,8 +76,8 @@ func (c *activationLifecycleClient) patchActivationAnnotation(ctx context.Contex
 }
 
 func bindActivationLifecycleClient(f *activationIntegrationFixture, c *activationLifecycleClient) {
-	f.controlPlane.tenant.Client.source = c
-	f.workload.ControlPlane.tenant.Client.source = c
+	testTenant(f.controlPlane.tenant.Client).source = c
+	testTenant(f.workload.ControlPlane.tenant.Client).source = c
 	f.client.tenant.source = c
 	f.client.base.tenant.source = c
 }
@@ -103,7 +103,7 @@ func TestActivationControllerWireLifecycle(t *testing.T) {
 				t.Fatalf("real controller coordination/removal: calls=%d claims=%d live-maintenance=%d receipt=%#v err=%v", calls, f.client.guardCalls, len(f.client.maint), receipt.Maintenance, err)
 			}
 			for _, dpu := range f.client.dpus {
-				if !EvaluateReadiness(&dpu).Ready || !conditionReadiness(&dpu, "NodeEffectRemoved", "DPU_STATUS_STALE", true).Ready {
+				if !testRules(t).ResourceReadiness(&dpu).Ready || !testRules(t).NodeEffectRemoved(&dpu).Ready {
 					t.Fatal("DPU did not reach current Ready and NodeEffectRemoved")
 				}
 			}
@@ -114,7 +114,7 @@ func TestActivationControllerWireLifecycle(t *testing.T) {
 // Independent pinned-controller fixture. Expected Service values are assembled
 // from retained inputs here, rather than by the production expected-spec helper.
 func (f *activationIntegrationFake) seedActivationVersions(deployment *unstructured.Unstructured) error {
-	objects, err := retainedWorkloadObjects(f.execution)
+	objects, err := retainedWorkloadObjects(f.execution.verificationInputs())
 	if err != nil {
 		return err
 	}
@@ -217,7 +217,7 @@ func (f *activationIntegrationFake) seedActivationVersions(deployment *unstructu
 	chain.SetAnnotations(map[string]string{"svc.dpu.nvidia.com/dpuservicechain-version": "aabbccddee"})
 	f.versions = []unstructured.Unstructured{}
 	for _, object := range []*unstructured.Unstructured{service, chain} {
-		normalized, e := f.execution.reconciler.schemas.DefaultedCopy(object)
+		normalized, e := f.execution.rules.DefaultedCopy(object)
 		if e != nil {
 			return e
 		}
@@ -252,7 +252,7 @@ func completeActivationWithoutReset(f *activationIntegrationFake, nodeName strin
 	f.maint = remaining
 	ready := true
 	for _, dpu := range f.dpus {
-		if !EvaluateReadiness(&dpu).Ready {
+		if !f.execution.rules.ResourceReadiness(&dpu).Ready {
 			ready = false
 		}
 	}
@@ -481,7 +481,7 @@ func TestActivationVersionGraphRejectsForeignOrChangedCoordination(t *testing.T)
 		}},
 	}
 	baseline := newActivationIntegrationFixtureFromExecution(t, execution, false)
-	desired, err := retainedDeploymentObject(execution)
+	desired, err := retainedDeploymentObject(execution.verificationInputs())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -500,7 +500,7 @@ func TestActivationVersionGraphRejectsForeignOrChangedCoordination(t *testing.T)
 				}
 				before := objects.versions[0].DeepCopy()
 				beforeChain := objects.versions[1].DeepCopy()
-				_, complete, err := compileActivationVersionGraph(execution, objects.deployment, sets, objects.versions[:1], objects.versions[1:])
+				_, complete, err := compileActivationVersionGraph(execution.verificationInputs(), objects.deployment, sets, objects.versions[:1], objects.versions[1:])
 				if err == nil || complete {
 					t.Fatalf("foreign graph projection accepted: complete=%v err=%v", complete, err)
 				}
@@ -578,7 +578,7 @@ func TestActivationVersionPermissionsCoverBothEarlyBoundaries(t *testing.T) {
 		})
 	}
 	harness.reviews = nil
-	checks := client.checkActivationPermissions(context.Background(), &managementExecution{operatorNamespace: "dpf-operator-system"})
+	checks := client.checkActivationPermissions(context.Background(), &managementVerificationInputs{operatorNamespace: "dpf-operator-system"})
 	if len(checks) == 0 {
 		t.Fatal("missing activation permission checks")
 	}
@@ -592,7 +592,7 @@ func TestActivationVersionPermissionsCoverBothEarlyBoundaries(t *testing.T) {
 
 func TestHBNServiceProjectionKeepsRawAppInputsIndependent(t *testing.T) {
 	f := newActivationIntegrationFixture(t)
-	deployment, err := retainedDeploymentObject(f.prepared.execution)
+	deployment, err := retainedDeploymentObject(f.prepared.execution.verificationInputs())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -601,7 +601,7 @@ func TestHBNServiceProjectionKeepsRawAppInputsIndependent(t *testing.T) {
 		t.Fatal(err)
 	}
 	var template, configuration *unstructured.Unstructured
-	objects, err := retainedWorkloadObjects(f.prepared.execution)
+	objects, err := retainedWorkloadObjects(f.prepared.execution.verificationInputs())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -638,21 +638,21 @@ func TestHBNServiceProjectionKeepsRawAppInputsIndependent(t *testing.T) {
 	// even when a separate Service-normalization result is subsequently changed.
 	unstructured.RemoveNestedField(configuration.Object, "spec", "serviceConfiguration", "serviceDaemonSet", "annotations")
 	configurationBefore := configuration.DeepCopy()
-	projection, err := compileHBNServiceSpec(f.prepared.execution, template, configuration, service.GetName(), created.GetNamespace(), hbnContainerName, id, selector, cluster, names)
+	projection, err := f.prepared.execution.rules.HBNServiceSpec(template, configuration, service.GetName(), created.GetNamespace(), hbnContainerName, id, selector, cluster, names)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, exists := projection.daemonSet["annotations"]; exists {
+	if _, exists := projection.DaemonSet["annotations"]; exists {
 		t.Fatal("raw App inputs acquired an absent Service field")
 	}
-	rawBefore, err := json.Marshal([]any{projection.source, projection.values, projection.daemonSet})
+	rawBefore, err := json.Marshal([]any{projection.Source, projection.Values, projection.DaemonSet})
 	if err != nil {
 		t.Fatal(err)
 	}
-	_ = unstructured.SetNestedField(projection.spec, "schema-only", "serviceDaemonSet", "labels", "test")
-	_ = unstructured.SetNestedField(projection.spec, "schema-only", "helmChart", "values", "test")
-	_ = unstructured.SetNestedField(projection.spec, "schema-only", "helmChart", "source", "repoURL")
-	rawAfter, err := json.Marshal([]any{projection.source, projection.values, projection.daemonSet})
+	_ = unstructured.SetNestedField(projection.Spec, "schema-only", "serviceDaemonSet", "labels", "test")
+	_ = unstructured.SetNestedField(projection.Spec, "schema-only", "helmChart", "values", "test")
+	_ = unstructured.SetNestedField(projection.Spec, "schema-only", "helmChart", "source", "repoURL")
+	rawAfter, err := json.Marshal([]any{projection.Source, projection.Values, projection.DaemonSet})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -660,9 +660,9 @@ func TestHBNServiceProjectionKeepsRawAppInputsIndependent(t *testing.T) {
 		t.Fatal("Service normalization aliases raw App or retained inputs")
 	}
 	// Raw outputs also own their maps independently of retained source inputs.
-	projection.values["raw-only"] = "independent"
-	projection.daemonSet["raw-only"] = "independent"
-	projection.source["repoURL"] = "raw-only"
+	projection.Values["raw-only"] = "independent"
+	projection.DaemonSet["raw-only"] = "independent"
+	projection.Source["repoURL"] = "raw-only"
 	if !reflect.DeepEqual(template, templateBefore) || !reflect.DeepEqual(configuration, configurationBefore) {
 		t.Fatal("raw output mutation escaped into retained input")
 	}
@@ -852,7 +852,7 @@ func TestActivationFirstFalseRequiresActualResetProofAndOwnParticipant(t *testin
 func TestActivationRejectsUnsupportedLabelChangePolicyBeforeEffects(t *testing.T) {
 	execution := prepareSoftwareStageExecution(t, []string{"SERIAL-A"})
 	baseline := newActivationIntegrationFixtureFromExecution(t, execution, false)
-	desired, err := retainedDeploymentObject(execution)
+	desired, err := retainedDeploymentObject(execution.verificationInputs())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -875,7 +875,7 @@ func TestActivationRejectsUnsupportedLabelChangePolicyBeforeEffects(t *testing.T
 				t.Fatal(err)
 			}
 			before := set.DeepCopy()
-			_, complete, err := compileActivationVersionGraph(execution, created, map[string]*unstructured.Unstructured{set.GetName(): set}, baseline.client.versions[:1], baseline.client.versions[1:])
+			_, complete, err := compileActivationVersionGraph(execution.verificationInputs(), created, map[string]*unstructured.Unstructured{set.GetName(): set}, baseline.client.versions[:1], baseline.client.versions[1:])
 			if test.allowed {
 				if err != nil || !complete {
 					t.Fatalf("pinned false/default rejected: complete=%v err=%v", complete, err)

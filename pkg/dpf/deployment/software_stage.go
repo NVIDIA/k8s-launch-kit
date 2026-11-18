@@ -16,7 +16,9 @@ import (
 )
 
 type softwareStageManagementClient interface {
-	enrollmentManagementClient
+	ResourceClient
+	enrollmentBoundaryReader
+	enrollmentBindingReader
 	softwareVerificationClient
 	checkSoftwarePermissions(context.Context, *unstructured.Unstructured, string) []PreflightCheck
 }
@@ -26,7 +28,7 @@ var _ softwareStageManagementClient = (*APIClient)(nil)
 // runSoftwareStage creates or verifies only the retained BlueFieldSoftware
 // object and validates the bytes currently served from the DPF cache. The
 // receipts are fresh identity boundaries, not a lease on later DPU operations.
-func runSoftwareStage(ctx context.Context, client softwareStageManagementClient, execution *managementExecution,
+func runSoftwareStage(ctx context.Context, client softwareStageManagementClient, execution *managementVerificationInputs,
 	receipts controlPlaneReceipts, selected []enrollmentBMC, password string, journal *executionJournal,
 	interval, requestTimeout time.Duration, maxBytes int64,
 ) (softwareVerificationReceipt, error) {
@@ -93,7 +95,7 @@ func runSoftwareStage(ctx context.Context, client softwareStageManagementClient,
 		diagnostic := managementIdentityDiagnostic(ctx, err)
 		return softwareVerificationReceipt{}, softwareStageFailure(journal, diagnostic.ReasonCode, diagnostic.Message+" No BlueFieldSoftware creation may begin.", diagnostic)
 	}
-	current, err := executeNativeObject(ctx, client, execution.reconciler, desired, generation.StageWorkload, journal, true, interval)
+	current, err := executeNativeObject(execution.rules, ctx, client, execution.reconciler, desired, generation.StageWorkload, journal, true, interval)
 	if err != nil {
 		return softwareVerificationReceipt{}, err
 	}
@@ -101,7 +103,7 @@ func runSoftwareStage(ctx context.Context, client softwareStageManagementClient,
 		State: "attempted", ReasonCode: "SOFTWARE_CACHE_VERIFICATION_STARTED", Message: "Read selected cached components through the current release-bound DPF registry and compare retained digests."}); err != nil {
 		return softwareVerificationReceipt{}, err
 	}
-	verified, err := verifyStagedSoftware(ctx, client, execution.reconciler, desired, current,
+	verified, err := verifyStagedSoftware(execution.rules, ctx, client, execution.reconciler, desired, current,
 		intent.Software, selectedSoftwarePSIDs(intent), registryNamespace, release.Operator.Image, maxBytes)
 	if err != nil {
 		return softwareVerificationReceipt{}, softwareStageFailure(journal, "SOFTWARE_BYTES_UNVERIFIED", "The selected cached software bytes could not be verified against retained digests.", err)
@@ -138,7 +140,7 @@ func runSoftwareStage(ctx context.Context, client softwareStageManagementClient,
 	return verified, nil
 }
 
-func verifySoftwareStageBoundary(ctx context.Context, client enrollmentManagementClient, execution *managementExecution,
+func verifySoftwareStageBoundary(ctx context.Context, client enrollmentBoundaryReader, execution *managementVerificationInputs,
 	receipts controlPlaneReceipts, selected []enrollmentBMC, requestTimeout time.Duration, password string, journal *executionJournal,
 ) error {
 	if receipts.enrollment.BundleDigest != execution.plan.Digest() || !softwareEnrollmentReceiptMatches(receipts.enrollment.Devices, selected) {
@@ -182,7 +184,7 @@ func softwareSelectedMatchesIntent(intent generation.ResolvedIntent, selected []
 	return true
 }
 
-func retainedBlueFieldSoftware(execution *managementExecution) (*unstructured.Unstructured, error) {
+func retainedBlueFieldSoftware(execution *managementVerificationInputs) (*unstructured.Unstructured, error) {
 	if execution == nil || execution.plan == nil {
 		return nil, fmt.Errorf("validated retained plan is required")
 	}

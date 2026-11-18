@@ -13,6 +13,7 @@ import (
 
 	"github.com/nvidia/k8s-launch-kit/pkg/bundle"
 	"github.com/nvidia/k8s-launch-kit/pkg/config"
+	"github.com/nvidia/k8s-launch-kit/pkg/hostplatform"
 	"github.com/nvidia/k8s-launch-kit/pkg/profiles"
 	"github.com/nvidia/k8s-launch-kit/pkg/ui"
 	"github.com/stretchr/testify/require"
@@ -170,7 +171,7 @@ func TestSecondaryNetworkConflictPrecedesHelmAndOverwriteRemediation(t *testing.
 				helmCalls++
 				return nil
 			}
-			err = applyBundleWithInstaller(context.Background(), c, artifacts, DeployOptions{RestConfig: &rest.Config{}, NetworkOperator: &config.NetworkOperatorConfig{HelmRepoURL: "https://example.invalid", Version: "v1"}, DryRun: dryRun, OverwriteExisting: overwrite}, install)
+			err = applyBundleWithInstaller(context.Background(), c, artifacts, DeployOptions{Platform: hostplatform.Kubernetes, RestConfig: &rest.Config{}, NetworkOperator: &config.NetworkOperatorConfig{HelmRepoURL: "https://example.invalid", Version: "v1"}, DryRun: dryRun, OverwriteExisting: overwrite}, install)
 			require.ErrorContains(t, err, "refusing to install multus")
 			require.Zero(t, helmCalls)
 			require.Zero(t, c.mutations)
@@ -210,8 +211,8 @@ func TestSecondaryNetworkOpenShiftDeployRejectsManagedOwnership(t *testing.T) {
 	ctx := ui.WithOutput(context.Background(), ui.NewSilent())
 	for _, component := range []string{"multus", "cniPlugins"} {
 		ncp := &unstructured.Unstructured{Object: map[string]interface{}{"apiVersion": "mellanox.com/v1alpha1", "kind": "NicClusterPolicy", "metadata": map[string]interface{}{"name": "policy"}, "spec": map[string]interface{}{"secondaryNetwork": map[string]interface{}{component: map[string]interface{}{"image": "installer"}}}}}
-		require.NoError(t, checkSecondaryNetworkDeployment(ctx, c, ncp, &config.LaunchKitConfig{}), "Kubernetes permits installing when no installer is detected")
-		err := checkSecondaryNetworkDeployment(ctx, c, ncp, &config.LaunchKitConfig{Flavor: config.FlavorOCP})
+		require.NoError(t, checkSecondaryNetworkDeployment(ctx, c, ncp, &config.LaunchKitConfig{}, hostplatform.Kubernetes), "Kubernetes permits installing when no installer is detected")
+		err := checkSecondaryNetworkDeployment(ctx, c, ncp, &config.LaunchKitConfig{Flavor: config.FlavorOCP}, hostplatform.OpenShift)
 		require.ErrorContains(t, err, component+" must be externally managed on OpenShift")
 	}
 }
@@ -231,7 +232,7 @@ func TestSecondaryNetworkOverwriteRefusesLegacyPolicyTeardownBeforeHelm(t *testi
 					helmCalls++
 					return nil
 				}
-				err = applyBundleWithInstaller(context.Background(), c, artifacts, DeployOptions{RestConfig: &rest.Config{}, NetworkOperator: &config.NetworkOperatorConfig{Namespace: "operator-system", HelmRepoURL: "https://example.invalid", Version: "v1"}, DryRun: dryRun, OverwriteExisting: true}, install)
+				err = applyBundleWithInstaller(context.Background(), c, artifacts, DeployOptions{Platform: hostplatform.Kubernetes, RestConfig: &rest.Config{}, NetworkOperator: &config.NetworkOperatorConfig{Namespace: "operator-system", HelmRepoURL: "https://example.invalid", Version: "v1"}, DryRun: dryRun, OverwriteExisting: true}, install)
 				require.ErrorContains(t, err, "refusing to remove NicClusterPolicy legacy-policy")
 				require.ErrorContains(t, err, component)
 				require.Zero(t, helmCalls)
@@ -257,7 +258,7 @@ func TestSecondaryNetworkNonOverwriteExternalOnlyDoesNotRequireNCPList(t *testin
 	})
 	artifacts, err := bundle.FromFiles([]bundle.File{{Name: "10-nicclusterpolicy.yaml", Content: "apiVersion: mellanox.com/v1alpha1\nkind: NicClusterPolicy\nmetadata:\n  name: policy\nspec:\n  nvIpam: {}\n"}})
 	require.NoError(t, err)
-	err = applyBundleWithInstaller(context.Background(), c, artifacts, DeployOptions{SkipHelmChart: true, NetworkOperator: &config.NetworkOperatorConfig{Namespace: "operator-system"}}, nil)
+	err = applyBundleWithInstaller(context.Background(), c, artifacts, DeployOptions{Platform: hostplatform.Kubernetes, SkipHelmChart: true, NetworkOperator: &config.NetworkOperatorConfig{Namespace: "operator-system"}}, nil)
 	require.ErrorContains(t, err, "apply boundary reached")
 	require.True(t, applyReached, "denied optional reads and non-overwrite NCPList must not block omission")
 }
@@ -284,7 +285,7 @@ func TestSecondaryNetworkOverwriteDeniedInspectionAndCancellationHaveNoEffects(t
 		if canceled {
 			cancel()
 		}
-		err = applyBundleWithInstaller(ctx, c, artifacts, DeployOptions{RestConfig: &rest.Config{}, NetworkOperator: &config.NetworkOperatorConfig{Namespace: "operator-system", HelmRepoURL: "https://example.invalid", Version: "v1"}, OverwriteExisting: true}, install)
+		err = applyBundleWithInstaller(ctx, c, artifacts, DeployOptions{Platform: hostplatform.Kubernetes, RestConfig: &rest.Config{}, NetworkOperator: &config.NetworkOperatorConfig{Namespace: "operator-system", HelmRepoURL: "https://example.invalid", Version: "v1"}, OverwriteExisting: true}, install)
 		cancel()
 		if canceled {
 			require.ErrorIs(t, err, context.Canceled)

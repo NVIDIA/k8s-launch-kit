@@ -56,7 +56,7 @@ func TestBootstrapBeforeSubmitRequiresCompleteCurrentScope(t *testing.T) {
 			// This fixture has expected-name registrations, excusing only the
 			// credential predicate. Final scope completeness remains mandatory.
 			client := &bootstrapSubmissionScopeClient{recoveryActivationClient: recoveryActivationClient{f.client}, mode: mode, cancel: cancel}
-			f.controlPlane.tenant.Client.source = client
+			testTenant(f.controlPlane.tenant.Client).source = client
 			reboot := &recoveryRebooter{fixture: &f, beforeBaseline: func() { client.armed.Store(true) }}
 			_, err := runActivationStage(f.ctx, client, f.prepared, f.controlPlane, f.workload, f.inventory, f.request, f.journal, time.Millisecond, time.Second, reboot)
 			if err == nil || !client.injected || reboot.submissions != 0 || len(f.client.guards) != 1 {

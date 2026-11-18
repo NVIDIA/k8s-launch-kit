@@ -10,6 +10,8 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/nvidia/k8s-launch-kit/pkg/dpf/deployment/internal/controllercontract"
+
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 )
 
@@ -24,9 +26,9 @@ func TestHBNRuntimeIdentityFailureKeepsTruthfulReasonAndCause(t *testing.T) {
 				f.ctx = ctx
 				journal := testJournal(execution)
 				file := journal.file.(*managementMemoryFile)
-				original := f.controlPlane.tenant.Client.source
+				original := testTenant(f.controlPlane.tenant.Client).source
 				injected := false
-				f.controlPlane.tenant.Client.source = tenantWaitSourceFunc(func(ctx context.Context, expected TenantReadinessExpected) (tenantSources, error) {
+				testTenant(f.controlPlane.tenant.Client).source = tenantWaitSourceFunc(func(ctx context.Context, expected controllercontract.TenantReadinessExpected) (tenantSources, error) {
 					ready := phase == "entry"
 					if phase == "exit" {
 						ready = runtimeDiagnosticExitReady(t, file)
@@ -42,7 +44,7 @@ func TestHBNRuntimeIdentityFailureKeepsTruthfulReasonAndCause(t *testing.T) {
 						case "unavailable":
 							return tenantSources{}, apierrors.NewServiceUnavailable("private-token-api-canary")
 						case "UID drift":
-							f.controlPlane.tenant.Client.systemUID = "different-current-uid"
+							testTenant(f.controlPlane.tenant.Client).systemUID = "different-current-uid"
 						}
 					}
 					return original.observeTenantSources(ctx, expected)

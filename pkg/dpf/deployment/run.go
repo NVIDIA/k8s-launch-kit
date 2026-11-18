@@ -29,6 +29,7 @@ import (
 	"github.com/nvidia/k8s-launch-kit/pkg/dpf/sshprobe"
 	"github.com/nvidia/k8s-launch-kit/pkg/ui"
 	"k8s.io/apimachinery/pkg/types"
+	"k8s.io/client-go/util/flowcontrol"
 )
 
 const (
@@ -201,14 +202,35 @@ type ActivationObjectID struct {
 // A complete cross-host matrix establishes point-in-time HBN workload traffic;
 // a one-host run remains provisioned with cross-host traffic unmeasured.
 func Run(ctx context.Context, request RunRequest) (RunResult, error) {
-	return runWithImageResolver(ctx, request, resolveHBNRuntimeImage)
+	return runWithTransports(ctx, request, runTransports{resolveImage: resolveHBNRuntimeImage})
 }
 
-// Keep the metadata transport dependency private. Both the early prerequisite
-// and fresh runtime acceptance use it; the early identity is never cached.
-func runWithImageResolver(ctx context.Context, request RunRequest, resolveImage hbnImageResolver) (result RunResult, runErr error) {
+// runTransports selects bounded I/O at the composition root. The native clients,
+// lease observations and fixed lifecycle remain the same for every caller.
+type runTransports struct {
+	requestLimiter       flowcontrol.RateLimiter
+	resolveImage         hbnImageResolver
+	enrollmentCollector  enrollmentBMCCollector
+	tenantDial           tenantDialContext
+	configureHostNetwork hostNetworkConfigurer
+	inspectHostNetwork   hostNetworkConfigurer
+	readRuntimeCommand   hbnRuntimeRead
+	probeTraffic         hbnHostTrafficProbe
+}
+
+func runWithTransports(ctx context.Context, request RunRequest, transports runTransports) (result RunResult, runErr error) {
+	resolveImage := transports.resolveImage
 	if resolveImage == nil {
 		return RunResult{}, fmt.Errorf("deployment requires an image metadata resolver")
+	}
+	if transports.configureHostNetwork == nil {
+		transports.configureHostNetwork = sshprobe.ConfigureHostWorkloadNetwork
+	}
+	if transports.inspectHostNetwork == nil {
+		transports.inspectHostNetwork = sshprobe.InspectHostWorkloadNetwork
+	}
+	if transports.probeTraffic == nil {
+		transports.probeTraffic = sshprobe.ProbeHostWorkloadTraffic
 	}
 	if ctx == nil {
 		return RunResult{}, fmt.Errorf("deployment run requires a context")
@@ -310,14 +332,14 @@ func runWithImageResolver(ctx context.Context, request RunRequest, resolveImage 
 	var prepared *preparedControlPlaneRun
 	var controlPlane controlPlaneReceipts
 	var workload workloadPreparationReceipt
-	client, err := NewAPIClient(ctx, access, intent.Management, intent.KubernetesVersion)
+	client, err := newAPIClient(ctx, access, intent.Management, intent.KubernetesVersion, transports.enrollmentCollector, transports.tenantDial, transports.requestLimiter)
 	if request.Resume == nil {
 		if err != nil {
 			err = operationReservationFailure(ctx, "OPERATION_MANAGEMENT_UNMEASURED", err)
 		} else {
 			err = checkInitialOperationVacancy(ctx, client, execution)
 		}
-		check := operationReservationCheck(execution, err)
+		check := operationReservationCheck(execution.verificationInputs(), err)
 		result.Checks = append(result.Checks, check)
 		reportErr := reportOperationReservation(ctx, journal, check)
 		if err != nil || reportErr != nil {
@@ -325,14 +347,14 @@ func runWithImageResolver(ctx context.Context, request RunRequest, resolveImage 
 		}
 	} else {
 		failResume := func(code string, cause error) (RunResult, error) {
-			check, failure := operationResumeCheck(ctx, execution, code, cause)
+			check, failure := operationResumeCheck(ctx, execution.verificationInputs(), code, cause)
 			result.Checks = append(result.Checks, check)
 			return result, errors.Join(failure, reportOperationResume(ctx, journal, check))
 		}
 		if err != nil {
 			return failResume("OPERATION_RESUME_MANAGEMENT_UNVERIFIED", err)
 		}
-		if err = client.checkOperationPermissions(ctx, execution); err != nil {
+		if err = client.checkOperationPermissions(ctx, execution.verificationInputs()); err != nil {
 			return failResume("OPERATION_RESUME_PERMISSION_UNVERIFIED", err)
 		}
 		operation, loadErr := loadDeploymentOperation(ctx, client, execution, request.Resume)
@@ -360,7 +382,7 @@ func runWithImageResolver(ctx context.Context, request RunRequest, resolveImage 
 	}
 	verification, err := request.VerifyPrerequisites(ctx, observerRequest, execution.plan, BeforeActivation)
 	if err == nil && request.Resume != nil {
-		verification, err = assessOwnedResumePrerequisites(ctx, client, prepared, controlPlane, workload, verification, access, journal, requestTimeout, BeforeActivation)
+		verification, err = assessOwnedResumePrerequisites(ctx, client, prepared, controlPlane, workload, verification, access, journal, requestTimeout, BeforeActivation, transports.inspectHostNetwork)
 	}
 	result.Checks = appendRunChecks(result.Checks, verification.Checks)
 	if len(verification.Checks) > 0 {
@@ -404,15 +426,15 @@ func runWithImageResolver(ctx context.Context, request RunRequest, resolveImage 
 		return result, fmt.Errorf("bind management client to retained identity: %w", err)
 	}
 	probes := probe.Runner{Assets: catalog.ProbeAssets(), Journal: probeLog.record}
-	if err := client.checkOperationPermissions(ctx, execution); err != nil {
+	if err := client.checkOperationPermissions(ctx, execution.verificationInputs()); err != nil {
 		return result, err
 	}
 	if request.Resume != nil {
 		prepared.beforeDeploymentCreate = func(observeCtx context.Context) error {
-			return verifyFirstDeploymentSources(observeCtx, client, execution, workload.Software, workloadChartSourceVerifier(request.VerifyChartSource), journal, maxBytes)
+			return verifyFirstDeploymentSources(observeCtx, client, execution.verificationInputs(), workload.Software, workloadChartSourceVerifier(request.VerifyChartSource), journal, maxBytes)
 		}
 	} else {
-		prepared, err = prepareControlPlaneWithExecution(ctx, client, execution, journal, probes, access, interval, requestTimeout)
+		prepared, err = prepareControlPlaneWithExecution(ctx, client, execution, journal, access, interval, requestTimeout)
 		if err != nil {
 			return result, err
 		}
@@ -421,19 +443,19 @@ func runWithImageResolver(ctx context.Context, request RunRequest, resolveImage 
 		if checkErr != nil {
 			return result, checkErr
 		}
-		controlPlane, err = runPreparedControlPlane(ctx, client, prepared, probes, journal, interval, requestTimeout)
+		controlPlane, err = runPreparedControlPlane(ctx, client, client, client, client, prepared, probes, journal, interval, requestTimeout)
 		if err != nil {
 			return result, err
 		}
 		result.LastCompletedStage = generation.StageEnrollment
 		progress.Update("Staging software and HBN workload resources")
-		workload, err = runPreparedWorkload(ctx, client, prepared, controlPlane, probes, journal, interval, requestTimeout, maxBytes, workloadChartSourceVerifier(request.VerifyChartSource), objects)
+		workload, err = runPreparedWorkload(ctx, client, client, prepared, controlPlane, journal, interval, requestTimeout, maxBytes, workloadChartSourceVerifier(request.VerifyChartSource), objects)
 		if err != nil {
 			return result, err
 		}
 		prepared.operation, err = reserveDeploymentOperation(ctx, client, prepared, workload)
 		if err != nil {
-			check := operationReservationCheck(execution, err)
+			check := operationReservationCheck(execution.verificationInputs(), err)
 			result.Checks = append(result.Checks, check)
 			return result, errors.Join(err, reportOperationReservation(ctx, journal, check))
 		}
@@ -452,7 +474,7 @@ func runWithImageResolver(ctx context.Context, request RunRequest, resolveImage 
 	}
 	result.LastCompletedStage = generation.StageDeployment
 	progress.Update("Rechecking current host and network prerequisites after activation")
-	verification, activation, err = verifyActivatedHostPrerequisites(ctx, client, prepared, controlPlane, workload, activation, access, journal, requestTimeout, request.VerifyPrerequisites)
+	verification, activation, err = verifyActivatedHostPrerequisites(ctx, client, prepared, controlPlane, workload, activation, access, journal, requestTimeout, request.VerifyPrerequisites, transports.inspectHostNetwork)
 	result.Checks = appendRunChecks(result.Checks, verification.Checks)
 	if journalErr := journalPhasePrerequisiteChecks(journal, verification.Checks, AfterActivation); journalErr != nil {
 		return result, journalErr
@@ -463,18 +485,27 @@ func runWithImageResolver(ctx context.Context, request RunRequest, resolveImage 
 	progress.Update("Configuring selected host workload interfaces from fresh DPF allocations")
 	result.HostNetworking, err = runHostWorkloadNetworkStage(ctx, client, prepared, controlPlane, workload, activation, journal, requestTimeout,
 		func(observeCtx context.Context) (hostWorkloadLeaseSnapshot, error) {
-			return observeHostWorkloadLeaseSnapshot(observeCtx, client, controlPlane.tenant.Client, execution.plan, execution.reconciler, workload, requestTimeout)
-		}, sshprobe.ConfigureHostWorkloadNetwork, sshprobe.InspectHostWorkloadNetwork)
+			return observeHostWorkloadLeaseSnapshot(observeCtx, client, controlPlane.tenant.Client, execution.plan, execution.reconciler, newWorkloadLeaseInputs(workload), requestTimeout)
+		}, transports.configureHostNetwork, transports.inspectHostNetwork)
 	if err != nil {
 		return result, err
 	}
 	result.LastCompletedStage = hostWorkloadNetworkStage
 	progress.Update("Validating HBN BGP, installed routes and all directed host traffic pairs")
-	runtimeResult, err := runHBNRuntimeStage(ctx, client, prepared, controlPlane, workload, activation, result.HostNetworking, journal, requestTimeout, hbnRuntimeTransports{
+	if transports.readRuntimeCommand == nil {
+		transports.readRuntimeCommand = controlPlane.tenant.Client.readRuntimeCommand
+	}
+	// Capture only the lease consumer's narrow ports and copied receipt data.
+	var leaseManagement managementLeaseReader = client
+	var leaseTenant tenantAllocationReader = controlPlane.tenant.Client
+	leaseInputs := newWorkloadLeaseInputs(workload)
+	runtimeInputs := newControlPlaneVerificationInputs(prepared, controlPlane, workload)
+	leasePlan, leaseReconciler := runtimeInputs.execution.plan, runtimeInputs.execution.reconciler
+	runtimeResult, err := runHBNRuntimeStage(ctx, client, runtimeInputs, controlPlane.tenant.Client, activation, result.HostNetworking, journal, requestTimeout, hbnRuntimeTransports{
 		readLeases: func(observeCtx context.Context) (hostWorkloadLeaseSnapshot, error) {
-			return observeHostWorkloadLeaseSnapshot(observeCtx, client, controlPlane.tenant.Client, execution.plan, execution.reconciler, workload, requestTimeout)
+			return observeHostWorkloadLeaseSnapshot(observeCtx, leaseManagement, leaseTenant, leasePlan, leaseReconciler, leaseInputs, requestTimeout)
 		},
-		readCommand: controlPlane.tenant.Client.hbnExec.read, probeTraffic: sshprobe.ProbeHostWorkloadTraffic, resolveImage: resolveImage,
+		readCommand: transports.readRuntimeCommand, probeTraffic: transports.probeTraffic, resolveImage: resolveImage,
 	})
 	result.HBNRuntime = &runtimeResult
 	if err != nil {

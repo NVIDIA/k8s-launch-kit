@@ -87,7 +87,7 @@ func TestRetainedTenantConstructorPreservesProducedIdentityDiagnostic(t *testing
 				}
 			}}
 			journal := &executionJournal{file: file, digest: plan.Digest()}
-			_, err = connectRetainedTenant(ctx, harness.management, plan, current.GetUID(), reconciler, journal, time.Millisecond, time.Second)
+			_, err = connectRetainedTenant(testRules(t), ctx, harness.management, plan, current.GetUID(), reconciler, journal, time.Millisecond, time.Second, nil, nil)
 			want := "TENANT_API_IDENTITY_CHANGED"
 			switch scenario {
 			case "cancel":

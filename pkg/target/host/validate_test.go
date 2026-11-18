@@ -22,10 +22,14 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/nvidia/k8s-launch-kit/pkg/bundle"
 	"github.com/nvidia/k8s-launch-kit/pkg/config"
+	"github.com/nvidia/k8s-launch-kit/pkg/hostplatform"
+	"github.com/nvidia/k8s-launch-kit/pkg/networkoperatorplugin"
 	"github.com/nvidia/k8s-launch-kit/pkg/networkoperatorplugin/connectivity"
+	"github.com/nvidia/k8s-launch-kit/pkg/networkoperatorplugin/crstate"
 	"github.com/nvidia/k8s-launch-kit/pkg/networkoperatorplugin/releases"
 	"github.com/nvidia/k8s-launch-kit/pkg/ui"
 	"github.com/stretchr/testify/assert"
@@ -650,4 +654,54 @@ func TestValidateUsesEffectiveOperatorNamespaceForGatewayPoolLookup(t *testing.T
 	}
 	require.ErrorIs(t, runner.Run(context.Background(), ValidateRequest{Kubeconfig: "test-kubeconfig", DeploymentFiles: dir, UserConfig: path, ReportPath: "-", OutputFormat: "text"}), capturedErr)
 	assert.Equal(t, "custom-ipam", captured)
+}
+
+func TestWaitForReconcileRetainsExplicitOpenShiftSelection(t *testing.T) {
+	artifacts, err := bundle.FromFiles([]bundle.File{{Name: "10-policy.yaml", Content: `apiVersion: mellanox.com/v1alpha1
+kind: NicClusterPolicy
+metadata:
+  name: policy
+spec:
+  nvIpam: {}
+`}})
+	require.NoError(t, err)
+	live := artifacts.Documents()[0].ObjectCopy()
+	live.Object["status"] = map[string]interface{}{
+		"state": "notReady",
+		"appliedStates": []interface{}{
+			map[string]interface{}{"name": "state-multus-cni", "state": "error"},
+			map[string]interface{}{"name": "state-container-networking-plugins", "state": "notReady"},
+			map[string]interface{}{"name": "state-nv-ipam-cni", "state": "ready"},
+		},
+	}
+	c := fake.NewClientBuilder().WithObjects(live).Build()
+	initial := []networkoperatorplugin.ValidationResult{{Kind: "NicClusterPolicy", Name: "policy", State: crstate.StateInProgress}}
+	// A nil config deliberately exercises resource-only selection through polling.
+	results := waitForReconcileWithInterval(context.Background(), c, artifacts, initial, time.Second, hostplatform.OpenShift, time.Millisecond, nil)
+	require.Len(t, results, 3)
+	require.True(t, results[0].Skipped)
+	require.True(t, results[1].Skipped)
+	require.Equal(t, crstate.StateSuccess, results[2].State)
+	require.Contains(t, results[2].Details["state-multus-cni"], "UNVERIFIED")
+}
+
+func TestValidateRetainsBestEffortPlatformWithPartialConfig(t *testing.T) {
+	for _, flavor := range []string{"unknown", config.FlavorK8s, config.FlavorOCP} {
+		t.Run(flavor, func(t *testing.T) {
+			dir := t.TempDir()
+			require.NoError(t, os.WriteFile(filepath.Join(dir, "values.yaml"), []byte("operator: {}\n"), 0o600))
+			configPath := filepath.Join(t.TempDir(), "config.yaml")
+			require.NoError(t, os.WriteFile(configPath, []byte("flavor: "+flavor+"\nnetworkOperator:\n  selectedRelease: \"99.9\"\n"), 0o600))
+			clientCreated := false
+			sentinel := errors.New("client construction reached after partial config")
+			runner := validateRunner{newKubeClient: func(string) (ctrlclient.Client, *rest.Config, error) {
+				clientCreated = true
+				return nil, nil, sentinel
+			}}
+			err := runner.Run(context.Background(), ValidateRequest{Kubeconfig: "test", DeploymentFiles: dir, UserConfig: configPath, ReportPath: "-", OutputFormat: "json", Connectivity: Explicit[bool]{Set: true, Value: false}})
+			require.True(t, clientCreated)
+			require.ErrorContains(t, err, sentinel.Error())
+			require.Equal(t, apperrors.ExitCluster, apperrors.ExitCodeFromError(err))
+		})
+	}
 }

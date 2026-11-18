@@ -6,8 +6,8 @@ import (
 	"context"
 	"fmt"
 	"github.com/nvidia/k8s-launch-kit/pkg/dpf/config"
-	"github.com/nvidia/k8s-launch-kit/pkg/dpf/discovery"
 	"github.com/nvidia/k8s-launch-kit/pkg/dpf/inventory"
+	"github.com/nvidia/k8s-launch-kit/pkg/dpf/managementaccess"
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 	corev1 "k8s.io/api/core/v1"
@@ -136,7 +136,7 @@ var _ = Describe("probe integrity", func() {
 	It("rejects absent image assets before Kubernetes writes", func() {
 		client := fake.NewClientset()
 		runner := Runner{}
-		_, _, e := runner.Run(context.Background(), config.Request{}, discovery.ManagementClient{Client: client}, &inventory.Inventory{})
+		_, _, e := runner.Run(context.Background(), config.Request{}, managementaccess.Client{Client: client}, &inventory.Inventory{})
 		Expect(e).To(HaveOccurred())
 		Expect(client.Actions()).To(BeEmpty())
 	})
@@ -191,7 +191,7 @@ var _ = Describe("probe integrity", func() {
 						return true, p, nil
 					})
 					inv := &inventory.Inventory{Collection: inventory.Collection{RunID: "image-check"}, Management: &inventory.Management{Nodes: []inventory.Node{{Name: "cp", UID: "node-uid", Ready: true, OS: "linux", Architecture: architecture}}}, Evidence: map[string]inventory.Evidence{}}
-					_, cleanup, err := (Runner{Assets: assets, Journal: func([]Receipt) error { return nil }}).Run(context.Background(), config.Request{ImageRepository: repository, Timeout: time.Minute, RequestTimeout: time.Second}, discovery.ManagementClient{Client: client, REST: &rest.Config{Host: "https://api.invalid"}, Namespace: "default"}, inv)
+					_, cleanup, err := (Runner{Assets: assets, Journal: func([]Receipt) error { return nil }}).Run(context.Background(), config.Request{ImageRepository: repository, Timeout: time.Minute, RequestTimeout: time.Second}, managementaccess.Client{Client: client, REST: &rest.Config{Host: "https://api.invalid"}, Namespace: "default"}, inv)
 					Expect(created).To(BeTrue())
 					Expect(cleanup.State).To(Equal("complete"))
 					Expect(cleanup.Leftovers).To(BeEmpty())
@@ -219,7 +219,7 @@ var _ = Describe("probe integrity", func() {
 		assets := Assets{Qualified: true, Repository: "repo/probe", ManifestDigest: "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", PlatformDigests: map[string]string{"amd64": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"}}
 		runner := Runner{Assets: assets, Journal: func([]Receipt) error { return nil }}
 		inv := &inventory.Inventory{Collection: inventory.Collection{RunID: "run"}, Management: &inventory.Management{Nodes: []inventory.Node{{Name: "cp", UID: "node", Ready: true, OS: "linux", Architecture: "amd64"}}}, Evidence: map[string]inventory.Evidence{}}
-		_, _, e := runner.Run(context.Background(), config.Request{Timeout: time.Minute, RequestTimeout: time.Second}, discovery.ManagementClient{Client: client, REST: &rest.Config{Host: "https://api.invalid"}, Namespace: "default"}, inv)
+		_, _, e := runner.Run(context.Background(), config.Request{Timeout: time.Minute, RequestTimeout: time.Second}, managementaccess.Client{Client: client, REST: &rest.Config{Host: "https://api.invalid"}, Namespace: "default"}, inv)
 		Expect(e).To(MatchError(ContainSubstring("admission changed")))
 		for _, a := range client.Actions() {
 			Expect(a.GetResource().Resource).NotTo(Equal("pods"))
@@ -247,7 +247,7 @@ var _ = Describe("probe failure regressions", func() {
 		})
 		runner := Runner{Assets: Assets{Qualified: true, Repository: "repo/probe", ManifestDigest: "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", PlatformDigests: map[string]string{"amd64": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"}}, Journal: func([]Receipt) error { return nil }}
 		inv := &inventory.Inventory{Collection: inventory.Collection{RunID: "conflict"}, Management: &inventory.Management{Nodes: []inventory.Node{{Name: "ready", UID: "node", Ready: true, OS: "linux", Architecture: "amd64"}}}}
-		_, cleanup, err := runner.Run(context.Background(), config.Request{Timeout: time.Minute, RequestTimeout: time.Second}, discovery.ManagementClient{Client: client, REST: &rest.Config{Host: "https://api.invalid"}, Namespace: "default"}, inv)
+		_, cleanup, err := runner.Run(context.Background(), config.Request{Timeout: time.Minute, RequestTimeout: time.Second}, managementaccess.Client{Client: client, REST: &rest.Config{Host: "https://api.invalid"}, Namespace: "default"}, inv)
 		Expect(err).To(HaveOccurred())
 		Expect(cleanup.State).To(Equal("complete"))
 		Expect(cleanup.Leftovers).To(BeEmpty())

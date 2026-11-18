@@ -64,8 +64,8 @@ func TestActivationPendingCohortDefersRemainingHostWithoutReplayingCompletedPeer
 			life := &activationLifecycleClient{activationIntegrationFake: f.client}
 			c := &pendingActivationClient{activationLifecycleClient: life}
 			bindActivationLifecycleClient(&f, life)
-			f.controlPlane.tenant.Client.source = c
-			desired, err := retainedDeploymentObject(execution)
+			testTenant(f.controlPlane.tenant.Client).source = c
+			desired, err := retainedDeploymentObject(execution.verificationInputs())
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -82,7 +82,7 @@ func TestActivationPendingCohortDefersRemainingHostWithoutReplayingCompletedPeer
 			remaining := 1 - tc.completed
 			peer := selected[tc.completed]
 			target := selected[remaining]
-			observed, err := observeActivationScope(f.ctx, c, execution, desired, created.GetUID(), selected, nil)
+			observed, err := observeActivationScope(f.ctx, c, execution.verificationInputs(), desired, created.GetUID(), selected, nil)
 			if err != nil || !observed.complete {
 				t.Fatalf("initial scope: %v", err)
 			}
@@ -96,8 +96,13 @@ func TestActivationPendingCohortDefersRemainingHostWithoutReplayingCompletedPeer
 			}
 			op, store := checkpointFixture(t, f)
 			f.prepared.operation = op
-			op.state.DeploymentUID = created.GetUID()
-			objects, err := retainedWorkloadObjects(execution)
+			if err := op.bindDeployment(f.ctx, created.GetUID()); err != nil {
+				t.Fatal(err)
+			}
+			if err := op.bindChildren(f.ctx, observed); err != nil {
+				t.Fatal(err)
+			}
+			objects, err := retainedWorkloadObjects(execution.verificationInputs())
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -135,7 +140,7 @@ func TestActivationPendingCohortDefersRemainingHostWithoutReplayingCompletedPeer
 					_ = unstructured.SetNestedSlice(c.dpus[i].Object, []any{conditionMap("Ready", "False", "Progressing", 1), conditionMap("NodeEffectRemoved", "False", "Progressing", 1)}, "status", "conditions")
 				}
 			}
-			observed, err = observeActivationScope(f.ctx, c, execution, desired, created.GetUID(), selected, progress)
+			observed, err = observeActivationScope(f.ctx, c, execution.verificationInputs(), desired, created.GetUID(), selected, progress)
 			if err != nil || !observed.complete {
 				t.Fatalf("pre-transition: %v", err)
 			}
@@ -236,7 +241,7 @@ func TestActivationPendingCohortDefersRemainingHostWithoutReplayingCompletedPeer
 				}
 				return
 			}
-			coherent, err := observeActivationScope(f.ctx, c, execution, desired, created.GetUID(), selected, progress)
+			coherent, err := observeActivationScope(f.ctx, c, execution.verificationInputs(), desired, created.GetUID(), selected, progress)
 			if err != nil || !coherent.complete || !coherent.removed[peer.nodeName] {
 				t.Fatalf("normal progress did not settle: %v", err)
 			}

@@ -14,7 +14,7 @@ import (
 
 // assessPendingResetHosts admits only the unavailable host observations caused
 // by the exact owned pending request. It is never used after activation.
-func assessPendingResetHosts(ctx context.Context, client activationStageClient, prepared *preparedControlPlaneRun, proof ownedResumePrerequisites, original, current *inventory.Inventory, checks []inventory.Check, phase PrerequisitePhase) ([]inventory.Check, error) {
+func assessPendingResetHosts(ctx context.Context, client activationObservationReader, prepared *preparedControlPlaneRun, proof ownedResumePrerequisites, original, current *inventory.Inventory, checks []inventory.Check, phase PrerequisitePhase) ([]inventory.Check, error) {
 	if phase == AfterActivation {
 		return checks, nil
 	}
@@ -39,14 +39,15 @@ func assessPendingResetHosts(ctx context.Context, client activationStageClient, 
 	if original == nil || current == nil || current.HBN == nil || prepared.operation == nil || proof.parentUID == "" {
 		return nil, fmt.Errorf("owned pending reset requires original physical scope and established parent")
 	}
-	deployment, err := retainedDeploymentObject(prepared.execution)
+	deployment, err := retainedDeploymentObject(prepared.execution.verificationInputs())
 	if err != nil {
 		return nil, err
 	}
-	observed, err := observeActivationScope(ctx, client, prepared.execution, deployment, proof.parentUID, proof.selected, prepared.operation.restoreProgress())
+	observed, err := observeActivationScope(ctx, client, prepared.execution.verificationInputs(), deployment, proof.parentUID, proof.selected, prepared.operation.restoreProgress())
 	if err != nil || !observed.complete {
 		return nil, fmt.Errorf("owned pending reset scope cannot be observed")
 	}
+	roundHistory, progress := prepared.operation.resetRoundHistory(), prepared.operation.restoreProgress()
 	for _, index := range indexes {
 		item := proof.selected[index]
 		pending, actionable, err := selectedHostRebootPending(observed, proof.selected, []int{index})
@@ -57,17 +58,17 @@ func assessPendingResetHosts(ctx context.Context, client activationStageClient, 
 		if err != nil {
 			return nil, err
 		}
-		for _, reset := range prepared.operation.state.Resets {
-			if previous, found := reset.Rounds[round.uid]; found && previous.Source == round.source && !liveRound(previous).sameRequest(round) {
+		for _, reset := range roundHistory {
+			if previous, found := reset[round.uid]; found && previous.Source == round.source && !liveRound(previous).sameRequest(round) {
 				return nil, fmt.Errorf("recorded pending reset round changed")
 			}
 		}
-		prior, known := prepared.operation.state.Progress[item.nodeName]
+		prior, known := progress[item.nodeName]
 		maintenance := observed.maintenance[item.nodeName+"-hold"]
-		if !known || prior.ReleasedVersion == "" || maintenance == nil || prior.MaintenanceUID != maintenance.GetUID() {
+		if !known || prior.releasedVersion == "" || maintenance == nil || prior.maintenanceUID != maintenance.GetUID() {
 			return nil, fmt.Errorf("owned pending reset has no recorded maintenance release history")
 		}
-		if _, configured := prepared.operation.state.Hosts[item.item.device.Serial]; configured {
+		if prepared.operation.hasHostRequest(item.item.device.Serial) {
 			return nil, fmt.Errorf("configured host cannot defer its current physical/backend proof")
 		}
 		if err := pendingHostPhysicalBinding(item, original); err != nil {

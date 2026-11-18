@@ -17,10 +17,12 @@
 package host
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"testing"
 
+	"github.com/nvidia/k8s-launch-kit/pkg/hostplatform"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
@@ -161,4 +163,59 @@ func TestLoadUserConfigAppliesExplicitSkipNetworkOperatorHelmOverride(t *testing
 		require.NotNil(t, cfg.NetworkOperator)
 		assert.False(t, cfg.NetworkOperator.SkipHelmChart)
 	})
+}
+
+// Raw input retains namespace presence, while effective metadata restores the
+// resolved values without the raw presence flags. Characterize both paths.
+func TestLoadUserConfigFlavorSelectionPreservesNamespacePaths(t *testing.T) {
+	for _, from := range []string{config.FlavorK8s, config.FlavorOCP} {
+		to := config.FlavorOCP
+		if from == config.FlavorOCP {
+			to = config.FlavorK8s
+		}
+		for _, source := range []struct{ name, fields, value string }{
+			{"omitted", "", ""},
+			{"null", "sriov:\n  operatorNamespace: null\n", ""},
+			{"empty", "sriov:\n  operatorNamespace: \"\"\n", ""},
+			{"explicit platform default", "sriov:\n  operatorNamespace: openshift-sriov-network-operator\n", config.DefaultSriovOperatorNamespace},
+			{"custom", "sriov:\n  operatorNamespace: custom-sriov\n", "custom-sriov"},
+		} {
+			for _, effective := range []bool{false, true} {
+				t.Run(fmt.Sprintf("%s-to-%s/%s/effective=%t", from, to, source.name, effective), func(t *testing.T) {
+					raw := []byte("flavor: " + from + "\n" + source.fields)
+					path := filepath.Join(t.TempDir(), "cluster-config.yaml")
+					require.NoError(t, os.WriteFile(path, raw, 0o600))
+					input := UserConfigInput{Explicit: path}
+					if effective {
+						initial, _, err := LoadUserConfig(input, options.Options{})
+						require.NoError(t, err)
+						saved, err := config.WriteEffectiveConfig(t.TempDir(), initial)
+						require.NoError(t, err)
+						input = UserConfigInput{Explicit: saved}
+					}
+					cfg, _, err := LoadUserConfig(input, options.Options{Flavor: to})
+					require.NoError(t, err)
+					platform, err := hostplatform.Select(cfg.Flavor)
+					require.NoError(t, err)
+					require.Equal(t, hostplatform.Selection(to), platform)
+					require.NoError(t, platform.Validate())
+					expected := source.value
+					if to == config.FlavorOCP && expected == "" {
+						expected = config.DefaultSriovOperatorNamespace
+					}
+					if effective && to == config.FlavorK8s && expected == config.DefaultSriovOperatorNamespace {
+						expected = ""
+					}
+					actual := ""
+					if cfg.Sriov != nil {
+						actual = cfg.Sriov.OperatorNamespace
+					}
+					require.Equal(t, expected, actual)
+					savedRaw, err := os.ReadFile(path)
+					require.NoError(t, err)
+					require.Equal(t, raw, savedRaw)
+				})
+			}
+		}
+	}
 }

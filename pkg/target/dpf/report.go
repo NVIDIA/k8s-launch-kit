@@ -9,11 +9,11 @@ import (
 	"slices"
 	"strings"
 	"text/tabwriter"
-	"unicode"
 
 	"github.com/nvidia/k8s-launch-kit/pkg/dpf/config"
 	"github.com/nvidia/k8s-launch-kit/pkg/dpf/discovery"
 	"github.com/nvidia/k8s-launch-kit/pkg/dpf/inventory"
+	"github.com/nvidia/k8s-launch-kit/pkg/ui"
 )
 
 // textReport presents the same decisions as the structured report. Internal
@@ -31,12 +31,12 @@ func textReport(w io.Writer, report inventory.Report, input config.Input) error 
 	}
 	fmt.Fprintf(&out, "DPF discovery %s", status)
 	if report.Discovery.Mode != "" {
-		fmt.Fprintf(&out, " (%s)", displayText(report.Discovery.Mode))
+		fmt.Fprintf(&out, " (%s)", ui.DisplayText(report.Discovery.Mode))
 	}
 	fmt.Fprintln(&out)
 	labels := reportLabels(input, report.Inventory)
 	if report.Readiness != nil {
-		fmt.Fprintf(&out, "HBN-BGP readiness: %s\n", displayText(report.Readiness.State))
+		fmt.Fprintf(&out, "HBN-BGP readiness: %s\n", ui.DisplayText(report.Readiness.State))
 		var blockers []inventory.Check
 		for _, check := range report.Readiness.Checks {
 			if check.State != "passed" {
@@ -63,7 +63,7 @@ func textReport(w io.Writer, report inventory.Report, input config.Input) error 
 	if inv := report.Inventory; inv != nil {
 		fmt.Fprintf(&out, "Identified: %d/%d hosts, %d/%d DPUs; host-to-DPU mappings: %d\n", observedCount(inv.Hosts), len(inv.Hosts), observedCount(inv.DPUs), len(inv.DPUs), len(inv.Associations))
 		if inv.Software != nil {
-			fmt.Fprintf(&out, "Software comparison catalog: DPF %s\n", displayText(inv.Software.Version))
+			fmt.Fprintf(&out, "Software comparison catalog: DPF %s\n", ui.DisplayText(inv.Software.Version))
 		}
 		writeDevices(&out, inv, report.Discovery.Checks, labels)
 	}
@@ -85,12 +85,12 @@ func textReport(w io.Writer, report inventory.Report, input config.Input) error 
 		fmt.Fprintln(&out, "\nProblems preventing successful discovery:")
 		writeChecks(&out, blockers, labels)
 		for _, problem := range report.Errors {
-			fmt.Fprintf(&out, "  - %s: %s", subjectLabel(labels, problem.InputRef), displayText(problem.Message))
+			fmt.Fprintf(&out, "  - %s: %s", subjectLabel(labels, problem.InputRef), ui.DisplayText(problem.Message))
 			if problem.Code != "" {
-				fmt.Fprintf(&out, " [%s]", displayText(problem.Code))
+				fmt.Fprintf(&out, " [%s]", ui.DisplayText(problem.Code))
 			}
 			if problem.Stage != "" {
-				fmt.Fprintf(&out, " (stage: %s)", displayText(problem.Stage))
+				fmt.Fprintf(&out, " (stage: %s)", ui.DisplayText(problem.Stage))
 			}
 			if problem.HTTPStatus != 0 {
 				fmt.Fprintf(&out, " (HTTP %d)", problem.HTTPStatus)
@@ -110,16 +110,16 @@ func textReport(w io.Writer, report inventory.Report, input config.Input) error 
 		writeChecks(&out, deferred, labels)
 	}
 	if report.Inventory != nil {
-		fmt.Fprintf(&out, "\nCleanup: %s\n", displayText(report.Discovery.Cleanup.State))
+		fmt.Fprintf(&out, "\nCleanup: %s\n", ui.DisplayText(report.Discovery.Cleanup.State))
 	}
 	if len(report.Artifacts) > 0 {
 		fmt.Fprintln(&out, "\nSaved files:")
 		for _, artifact := range report.Artifacts {
 			name := map[string]string{"inventory": "Inventory", "partial": "Partial inventory", "report": "Detailed report", "source-backup": "Previous configuration"}[artifact.Kind]
 			if name == "" {
-				name = displayText(artifact.Kind)
+				name = ui.DisplayText(artifact.Kind)
 			}
-			fmt.Fprintf(&out, "  %s: %s\n", name, displayText(artifact.Path))
+			fmt.Fprintf(&out, "  %s: %s\n", name, ui.DisplayText(artifact.Path))
 		}
 	}
 	_, err := io.WriteString(w, out.String())
@@ -141,7 +141,7 @@ func reportLabels(input config.Input, inv *inventory.Inventory) map[string]strin
 	nameCounts := map[string]int{}
 	for _, endpoint := range append(slices.Clone(input.Site.Discovery.Hosts), input.Site.Discovery.DPUs...) {
 		if endpoint.Name != nil {
-			nameCounts[displayText(*endpoint.Name)]++
+			nameCounts[ui.DisplayText(*endpoint.Name)]++
 		}
 	}
 	for _, group := range []struct {
@@ -154,13 +154,13 @@ func reportLabels(input config.Input, inv *inventory.Inventory) map[string]strin
 				label = endpoint.SSH.Address
 			}
 			if endpoint.Name != nil && *endpoint.Name != "" {
-				if nameCounts[displayText(*endpoint.Name)] == 1 {
+				if nameCounts[ui.DisplayText(*endpoint.Name)] == 1 {
 					label = *endpoint.Name
 				} else {
 					label = *endpoint.Name + " (" + label + ")"
 				}
 			}
-			labels[fmt.Sprintf("/discovery/%s/%d", group.role, i)] = displayText(label)
+			labels[fmt.Sprintf("/discovery/%s/%d", group.role, i)] = ui.DisplayText(label)
 		}
 	}
 	if inv != nil {
@@ -186,7 +186,7 @@ func reportLabels(input config.Input, inv *inventory.Inventory) map[string]strin
 					continue
 				}
 				if key != "" {
-					labels[key] = displayText(label)
+					labels[key] = ui.DisplayText(label)
 				}
 			}
 		}
@@ -238,7 +238,7 @@ func writeDevices(out io.Writer, inv *inventory.Inventory, checks []inventory.Ch
 		if serial == "" {
 			serial = "unknown"
 		}
-		fmt.Fprintf(table, "%s\t%s\t%s\t%s\t%s\n", subjectLabel(labels, device.RecordKey), displayText(model), displayText(serial), host, administrator)
+		fmt.Fprintf(table, "%s\t%s\t%s\t%s\t%s\n", subjectLabel(labels, device.RecordKey), ui.DisplayText(model), ui.DisplayText(serial), host, administrator)
 	}
 	_ = table.Flush() // The destination is the report's strings.Builder.
 }
@@ -281,15 +281,6 @@ func writeChecks(out io.Writer, checks []inventory.Check, labels map[string]stri
 		if message == "" {
 			message = "No passing result was established; inspect the detailed report."
 		}
-		fmt.Fprintf(out, "  - %s: %s\n", strings.Join(g.subjects, ", "), displayText(message))
+		fmt.Fprintf(out, "  - %s: %s\n", strings.Join(g.subjects, ", "), ui.DisplayText(message))
 	}
-}
-
-func displayText(value string) string {
-	return strings.Map(func(r rune) rune {
-		if unicode.IsControl(r) {
-			return ' '
-		}
-		return r
-	}, value)
 }

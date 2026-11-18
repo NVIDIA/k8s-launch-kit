@@ -89,7 +89,7 @@ func (f *softwarePreparationFake) List(ctx context.Context, wanted *unstructured
 	}
 }
 
-func (f *softwarePreparationFake) getTenantWorkloadChild(_ context.Context, tenant *tenantClient, parent *unstructured.Unstructured) (*unstructured.Unstructured, error) {
+func (f *softwarePreparationFake) workloadChild(_ context.Context, tenant *tenantClient, parent *unstructured.Unstructured) (*unstructured.Unstructured, error) {
 	if tenant == nil || parent == nil {
 		return nil, fmt.Errorf("tenant and parent required")
 	}
@@ -194,12 +194,12 @@ func (f *softwarePreparationFake) checkTenantNetwork(_ context.Context, _ bootst
 	return []inventory.Check{{ID: "test.network", State: "passed", ReasonCode: "NETWORK_FIXTURE", Message: "fixture observation"}}, nil
 }
 
-func (f *softwarePreparationFake) connectTenant(ctx context.Context, _ *generation.Plan, uid types.UID, _ *Reconciler, _ *executionJournal, _, _ time.Duration) (*tenantClient, error) {
+func (f *softwarePreparationFake) connectTenant(ctx context.Context, _ *generation.Plan, uid types.UID, _ *Reconciler, _ *executionJournal, _, _ time.Duration) (tenantStageReader, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
 	f.tenant.dpuClusterUID = string(uid)
-	return f.tenant, nil
+	return &fixtureTenantReader{tenantClient: f.tenant, child: f.workloadChild}, nil
 }
 
 func TestRunSoftwarePreparationPassesOneRetainedBundleThroughStages(t *testing.T) {
@@ -256,7 +256,7 @@ func TestRunSoftwarePreparationPassesOneRetainedBundleThroughStages(t *testing.T
 
 func TestRunWorkloadPreparationStopsBeforeDPUDeployment(t *testing.T) {
 	execution, selected, prepared, request, journal, probeRunner := workloadPreparationFixture(t)
-	objects, err := retainedWorkloadObjects(execution)
+	objects, err := retainedWorkloadObjects(execution.verificationInputs())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -272,7 +272,7 @@ func TestRunWorkloadPreparationStopsBeforeDPUDeployment(t *testing.T) {
 			}
 			sawHostReservations = sawHostReservations || found && len(ranges) > 0
 		}
-		child, err := prepared.getTenantWorkloadChild(context.Background(), prepared.tenant, object)
+		child, err := prepared.workloadChild(context.Background(), prepared.tenant, object)
 		if err != nil {
 			t.Fatal(err)
 		}

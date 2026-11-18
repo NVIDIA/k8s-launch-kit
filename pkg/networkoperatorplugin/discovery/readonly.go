@@ -25,6 +25,7 @@ import (
 
 	nicop "github.com/Mellanox/nic-configuration-operator/api/v1alpha1"
 	"github.com/nvidia/k8s-launch-kit/pkg/config"
+	"github.com/nvidia/k8s-launch-kit/pkg/hostplatform"
 	"github.com/nvidia/k8s-launch-kit/pkg/networkoperatorplugin/secondarynetwork"
 	"github.com/nvidia/k8s-launch-kit/pkg/nicconfigdaemon"
 	"github.com/nvidia/k8s-launch-kit/pkg/ui"
@@ -280,7 +281,7 @@ func DiscoverReadOnly(ctx context.Context, kubeClient client.Client, opts ...Rea
 			return nil, fmt.Errorf("DiscoverReadOnly: discover host DOCA-HOST packages: %w", err)
 		}
 	}
-	cfg.DiscoveredSecondaryNetwork, err = secondarynetwork.DiscoverEvidence(ctx, kubeClient)
+	cfg.DiscoveredSecondaryNetwork, err = secondarynetwork.DiscoverEvidence(ctx, kubeClient, hostplatform.Kubernetes)
 	if err != nil {
 		return nil, err
 	}

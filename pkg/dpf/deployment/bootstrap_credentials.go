@@ -19,7 +19,6 @@ import (
 
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/client-go/tools/clientcmd"
@@ -127,9 +126,9 @@ func bootstrapCredentialDiagnostic(err error) string {
 // registration still has usable bootstrap material at this observation. A
 // present expected-name Node is not an ownership or readiness proof and grants
 // no exemption from the independent activation, Node, lease or runtime fences.
-func verifyAbsentRegistrationCredentials(ctx context.Context, management ResourceClient, tenant *tenantClient, expected *unstructured.Unstructured, journal *executionJournal) error {
+func verifyAbsentRegistrationCredentials(ctx context.Context, management resourceReader, tenant tenantBootstrapReader, expected *unstructured.Unstructured, journal *executionJournal) error {
 	fail := func(code string) error { return bootstrapCredentialFailure(journal, code) }
-	if ctx == nil || management == nil || tenant == nil || tenant.api == nil || expected == nil || expected.GetUID() == "" || expected.GetGeneration() <= 0 {
+	if ctx == nil || management == nil || tenant == nil || expected == nil || expected.GetUID() == "" || expected.GetGeneration() <= 0 {
 		return fail("BOOTSTRAP_CREDENTIALS_UNMEASURED")
 	}
 	if ctx.Err() != nil {
@@ -177,15 +176,11 @@ func verifyAbsentRegistrationCredentials(ctx context.Context, management Resourc
 	if !ok {
 		return materialFailure("BOOTSTRAP_JOIN_SECRET_UNVERIFIED")
 	}
-	sources, err := tenant.source.observeTenantSources(ctx, tenant.expected)
+	endpoint, adminData, err := tenant.bootstrapCredentialSource(ctx)
 	if err != nil {
 		if ctx.Err() != nil {
 			return bootstrapInspectionCanceled(journal, ctx.Err())
 		}
-		return fail("BOOTSTRAP_TENANT_UNVERIFIED")
-	}
-	digest, endpoint, adminData, err := validateTenantSources(tenant.expected, tenant.dpuClusterUID, sources)
-	if err != nil || digest != tenant.sourceDigest {
 		return fail("BOOTSTRAP_TENANT_UNVERIFIED")
 	}
 	admin, err := clientcmd.Load(adminData)
@@ -200,14 +195,14 @@ func verifyAbsentRegistrationCredentials(ctx context.Context, management Resourc
 	if !ok {
 		return materialFailure("BOOTSTRAP_JOIN_SECRET_UNVERIFIED")
 	}
-	token, err := tenant.api.CoreV1().Secrets("kube-system").Get(ctx, "bootstrap-token-"+id, metav1.GetOptions{})
+	token, err := tenant.readSecret(ctx, "kube-system", "bootstrap-token-"+id)
 	if err != nil {
 		return materialReadFailure("BOOTSTRAP_TOKEN_UNAVAILABLE", err)
 	}
 	if code := validateBootstrapToken(token, dpu, id, secret, time.Now()); code != "" {
 		return materialFailure(code)
 	}
-	info, err := tenant.api.CoreV1().ConfigMaps("kube-public").Get(ctx, "cluster-info", metav1.GetOptions{})
+	info, err := tenant.readConfigMap(ctx, "kube-public", "cluster-info")
 	if err != nil {
 		return materialReadFailure("BOOTSTRAP_JWS_UNVERIFIED", err)
 	}
@@ -225,7 +220,7 @@ func verifyAbsentRegistrationCredentials(ctx context.Context, management Resourc
 	if !valid || joinAgain.UID != join.UID || !bytes.Equal(joinAgain.Data["join"], join.Data["join"]) {
 		return materialFailure("BOOTSTRAP_CREDENTIALS_CHANGED")
 	}
-	tokenAgain, err := tenant.api.CoreV1().Secrets("kube-system").Get(ctx, token.Name, metav1.GetOptions{})
+	tokenAgain, err := tenant.readSecret(ctx, "kube-system", token.Name)
 	if err != nil {
 		return materialReadFailure("BOOTSTRAP_CREDENTIALS_CHANGED", err)
 	}
@@ -240,7 +235,7 @@ func verifyAbsentRegistrationCredentials(ctx context.Context, management Resourc
 	if !bytes.Equal(tokenAgain.Data["expiration"], token.Data["expiration"]) {
 		return materialFailure("BOOTSTRAP_CREDENTIALS_CHANGED")
 	}
-	infoAgain, err := tenant.api.CoreV1().ConfigMaps("kube-public").Get(ctx, "cluster-info", metav1.GetOptions{})
+	infoAgain, err := tenant.readConfigMap(ctx, "kube-public", "cluster-info")
 	if err != nil {
 		return materialReadFailure("BOOTSTRAP_CREDENTIALS_CHANGED", err)
 	}
@@ -250,7 +245,7 @@ func verifyAbsentRegistrationCredentials(ctx context.Context, management Resourc
 	if infoAgain.UID != info.UID || infoAgain.Data["kubeconfig"] != info.Data["kubeconfig"] || infoAgain.Data["jws-kubeconfig-"+id] != info.Data["jws-kubeconfig-"+id] {
 		return materialFailure("BOOTSTRAP_CREDENTIALS_CHANGED")
 	}
-	_, err = tenant.api.CoreV1().Nodes().Get(ctx, dpu.GetName(), metav1.GetOptions{})
+	_, err = tenant.readNode(ctx, dpu.GetName())
 	if ctx.Err() != nil {
 		return bootstrapInspectionCanceled(journal, ctx.Err())
 	}
@@ -263,18 +258,18 @@ func verifyAbsentRegistrationCredentials(ctx context.Context, management Resourc
 // observeBootstrapRegistration reports expected-name presence only. Both the
 // initial inspection and final material-failure decision use the same stable
 // Node observation; neither claims ownership or readiness.
-func observeBootstrapRegistration(ctx context.Context, tenant *tenantClient, dpu *unstructured.Unstructured) (bool, string) {
+func observeBootstrapRegistration(ctx context.Context, tenant tenantBootstrapReader, dpu *unstructured.Unstructured) (bool, string) {
 	if ctx.Err() != nil {
 		return false, "BOOTSTRAP_CREDENTIALS_UNMEASURED"
 	}
-	node, err := tenant.api.CoreV1().Nodes().Get(ctx, dpu.GetName(), metav1.GetOptions{})
+	node, err := tenant.readNode(ctx, dpu.GetName())
 	if apierrors.IsNotFound(err) {
 		return false, ""
 	}
 	if err != nil || node == nil || node.Name != dpu.GetName() || node.Namespace != "" || node.UID == "" || node.ResourceVersion == "" || node.DeletionTimestamp != nil {
 		return false, "BOOTSTRAP_REGISTRATION_UNMEASURED"
 	}
-	again, err := tenant.api.CoreV1().Nodes().Get(ctx, dpu.GetName(), metav1.GetOptions{})
+	again, err := tenant.readNode(ctx, dpu.GetName())
 	if err != nil || again == nil || again.Name != node.Name || again.Namespace != "" || again.ResourceVersion == "" || again.UID != node.UID || again.DeletionTimestamp != nil {
 		return false, "BOOTSTRAP_REGISTRATION_UNMEASURED"
 	}
@@ -287,7 +282,7 @@ func observeBootstrapRegistration(ctx context.Context, tenant *tenantClient, dpu
 // finishBootstrapMaterialFailure handles normal producer progress once, before
 // recording a failure: registration can appear while DPF cleans up join data.
 // It never retries material reads or waives tenant/DPU/registration identity.
-func finishBootstrapMaterialFailure(ctx context.Context, management ResourceClient, tenant *tenantClient, dpu *unstructured.Unstructured, code string, readErr error, journal *executionJournal) error {
+func finishBootstrapMaterialFailure(ctx context.Context, management resourceReader, tenant tenantBootstrapReader, dpu *unstructured.Unstructured, code string, readErr error, journal *executionJournal) error {
 	if ctx.Err() != nil {
 		return bootstrapInspectionCanceled(journal, ctx.Err())
 	}
@@ -313,7 +308,7 @@ func finishBootstrapMaterialFailure(ctx context.Context, management ResourceClie
 	return bootstrapCredentialReadFailure(journal, code, readErr)
 }
 
-func bootstrapDPUMatches(current, expected *unstructured.Unstructured, tenant *tenantClient) bool {
+func bootstrapDPUMatches(current, expected *unstructured.Unstructured, tenant tenantBootstrapReader) bool {
 	if current == nil || current.GetAPIVersion() != "provisioning.dpu.nvidia.com/v1alpha1" || current.GetKind() != "DPU" {
 		return false
 	}
@@ -325,10 +320,10 @@ func bootstrapDPUMatches(current, expected *unstructured.Unstructured, tenant *t
 	}
 	name, _, e1 := unstructured.NestedString(current.Object, "spec", "cluster", "name")
 	namespace, _, e2 := unstructured.NestedString(current.Object, "spec", "cluster", "namespace")
-	return e1 == nil && e2 == nil && name == tenant.expected.Name && namespace == tenant.expected.Namespace
+	return e1 == nil && e2 == nil && name == tenant.expectation().Name && namespace == tenant.expectation().Namespace
 }
 
-func verifyBootstrapIdentityClosure(ctx context.Context, management ResourceClient, tenant *tenantClient, dpu *unstructured.Unstructured, journal *executionJournal) error {
+func verifyBootstrapIdentityClosure(ctx context.Context, management resourceReader, tenant tenantBootstrapReader, dpu *unstructured.Unstructured, journal *executionJournal) error {
 	if ctx.Err() != nil {
 		return bootstrapInspectionCanceled(journal, ctx.Err())
 	}
@@ -454,7 +449,7 @@ func bootstrapClusterInfoValid(info *corev1.ConfigMap, endpoint string, ca []byt
 
 // verifySelectedBootstrapCredentials consumes the already ownership-qualified
 // activation snapshot; missing or replaced selected identities cannot be omitted.
-func verifySelectedBootstrapCredentials(ctx context.Context, client ResourceClient, tenant *tenantClient, selected []activationSelectedDevice, indexes []int, observed activationObservation, journal *executionJournal) error {
+func verifySelectedBootstrapCredentials(ctx context.Context, client resourceReader, tenant tenantBootstrapReader, selected []activationSelectedDevice, indexes []int, observed activationObservation, journal *executionJournal) error {
 	for _, index := range indexes {
 		if index < 0 || index >= len(selected) {
 			return bootstrapCredentialFailure(journal, "BOOTSTRAP_DPU_CHANGED")

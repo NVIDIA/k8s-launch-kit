@@ -11,9 +11,9 @@ import (
 	"github.com/nvidia/k8s-launch-kit/pkg/bundle"
 	"github.com/nvidia/k8s-launch-kit/pkg/config"
 	pkgerrors "github.com/nvidia/k8s-launch-kit/pkg/errors"
+	"github.com/nvidia/k8s-launch-kit/pkg/hostplatform"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 )
 
 const (
@@ -67,11 +67,14 @@ func TestPrepareDeploymentObjectsExcludesOperatorInstall(t *testing.T) {
 // validated as deployed state, since deploy does not apply them.
 func TestValidateBundleSkipsOperatorInstall(t *testing.T) {
 	artifacts, err := bundle.FromFiles([]bundle.File{
+		{Name: "00-operator-namespaces.yaml", Content: testOperatorNamespaceDoc},
+		{Name: "00-operatorgroups.yaml", Content: testOperatorGroupDoc},
 		{Name: "00-subscriptions.yaml", Content: testSubscriptionDoc},
 	})
 	require.NoError(t, err)
 
-	results, err := ValidateBundle(context.Background(), fake.NewClientBuilder().Build(), artifacts, config.FlavorOCP)
+	// A nil client also proves these artifacts are skipped before live reads.
+	results, err := ValidateBundle(context.Background(), nil, artifacts, nil, hostplatform.OpenShift)
 	require.NoError(t, err)
 	assert.Empty(t, results, "install artifacts are not part of validated deployed state")
 }

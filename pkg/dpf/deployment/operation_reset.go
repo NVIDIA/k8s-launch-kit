@@ -6,12 +6,12 @@ package deployment
 import (
 	"context"
 	"fmt"
+	"maps"
+	"reflect"
 	"time"
 
 	"github.com/nvidia/k8s-launch-kit/pkg/dpf/inventory"
 
-	apierrors "k8s.io/apimachinery/pkg/api/errors"
-	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/types"
 )
 
@@ -26,185 +26,231 @@ func resetOperationKey(request ActivationRequest, phases map[types.UID]string) s
 	return request.HostSystemUUID + "/" + inventory.Digest("dpf-reset-phase-v1", phases)
 }
 
-// prepareOperationReset recognizes an existing one-shot claim before any
-// submission branch. It never replaces one or renews its physical permission.
-func prepareOperationReset(ctx context.Context, operation *deploymentOperation, client ResourceClient, deployment *unstructured.Unstructured, digest string, request *ActivationRequest, phases map[types.UID]string, rounds map[types.UID]activationRebootRound, reboot ExternalRebooter) (map[types.UID]activationRebootRound, *ActivationObservation, error) {
-	if operation == nil {
-		return rounds, nil, nil
+func (o *deploymentOperation) recordResetIntent(ctx context.Context, request ActivationRequest, phases map[types.UID]string, rounds map[types.UID]activationRebootRound) (operationReset, bool, error) {
+	if err := o.writable(); err != nil {
+		return operationReset{}, false, err
 	}
-	key := resetOperationKey(*request, phases)
-	desired, identityDigest, err := activationRebootGuardObject(deployment, digest, *request, phases)
-	if err != nil {
-		return nil, nil, err
+	key := resetOperationKey(request, phases)
+	if err := o.validateResetRequest(request, phases, rounds); err != nil {
+		return operationReset{}, false, err
 	}
-	prior, known := operation.state.Resets[key]
-	if known {
-		if len(prior.Rounds) != len(rounds) {
-			return nil, nil, fmt.Errorf("RESET_ACTION_REQUIRED: saved cohort changed")
+	if prior, known := o.state.Resets[key]; known {
+		// Completion closes this phase-bound logical request permanently. A
+		// reappeared pending annotation cannot renew its ACK authority.
+		if prior.Acknowledged {
+			return operationReset{}, true, fmt.Errorf("RESET_ACTION_REQUIRED: reset request already acknowledged")
+		}
+		if !reflect.DeepEqual(copyOperationRequest(prior.Request), copyOperationRequest(request)) || len(prior.Rounds) != len(rounds) {
+			return operationReset{}, true, o.bindingConflict("RESET_ACTION_REQUIRED: saved cohort changed")
 		}
 		for uid, current := range rounds {
 			old, exists := prior.Rounds[uid]
 			if !exists || !liveRound(old).sameRequest(current) {
-				return nil, nil, fmt.Errorf("RESET_ACTION_REQUIRED: pending round changed")
+				return operationReset{}, true, o.bindingConflict("RESET_ACTION_REQUIRED: pending round changed")
 			}
 		}
-	} else {
-		prior = operationReset{Request: *request, Rounds: map[types.UID]operationRound{}}
-		for uid, round := range rounds {
-			prior.Rounds[uid] = savedRound(round)
-		}
-		operation.state.Resets[key] = prior
-		if err := operation.save(ctx); err != nil {
-			return nil, nil, err
-		}
+		return copyOperationReset(prior), true, nil
 	}
-	claim, readErr := client.Get(ctx, desired.DeepCopy())
-	if readErr == nil {
-		if !known || !activationRebootGuardMatches(claim, desired, identityDigest) || prior.ClaimUID != "" && prior.ClaimUID != claim.GetUID() {
-			return nil, nil, fmt.Errorf("RESET_ACTION_REQUIRED: existing claim has no exact saved operation binding")
-		}
-		observer, ok := reboot.(ExternalRebootObserver)
-		if !ok || !validUUID(prior.Baseline) {
-			return nil, nil, fmt.Errorf("RESET_ACTION_REQUIRED: claim exists without recoverable host baseline; no submission permitted")
-		}
-		observation, err := observer.ObserveExternal(ctx, *request, prior.Baseline)
-		if err != nil {
-			return nil, nil, err
-		}
-		if prior.Observation.CurrentBootID != "" && observation.CurrentBootID != prior.Observation.CurrentBootID {
-			return nil, nil, fmt.Errorf("RESET_ACTION_REQUIRED: an additional host boot was observed")
-		}
-		restored := map[types.UID]activationRebootRound{}
-		for uid, round := range prior.Rounds {
-			restored[uid] = liveRound(round)
-		}
-		return restored, &observation, nil
+	prior := operationReset{Request: copyOperationRequest(request), Rounds: map[types.UID]operationRound{}}
+	for uid, round := range rounds {
+		prior.Rounds[uid] = savedRound(round)
 	}
-	if !apierrors.IsNotFound(readErr) || prior.ClaimUID != "" || prior.Baseline != "" {
-		return nil, nil, fmt.Errorf("RESET_ACTION_REQUIRED: claim unavailable/missing; it may not be recreated")
-	}
-	// The native adapter must call this after authenticating the selected host and
-	// before command submission. A stale checkpoint writer fails before its action.
-	request.recordClaim = func(uid types.UID) error {
-		value := operation.state.Resets[key]
-		if value.ClaimUID != "" || !validUUID(string(uid)) {
-			return fmt.Errorf("RESET_CLAIM_CHANGED: claim receipt already bound or invalid")
-		}
-		value.ClaimUID = uid
-		operation.state.Resets[key] = value
-		return operation.save(ctx)
-	}
-	request.BeforeSubmit = func(observation ActivationObservation) error {
-		if observation.HostSystemUUID != request.HostSystemUUID || observation.HostAdapterSerial != request.HostAdapterSerial || !validUUID(observation.PreviousBootID) {
-			return fmt.Errorf("RESET_BASELINE_INVALID: authenticated host baseline required")
-		}
-		claim, err := client.Get(ctx, desired.DeepCopy())
-		if err != nil || !activationRebootGuardMatches(claim, desired, identityDigest) || operation.state.Resets[key].ClaimUID == "" || claim.GetUID() != operation.state.Resets[key].ClaimUID {
-			return fmt.Errorf("RESET_CLAIM_CHANGED: cannot persist baseline")
-		}
-		value := operation.state.Resets[key]
-		if value.Baseline != "" {
-			return fmt.Errorf("RESET_ACTION_REQUIRED: baseline already recorded")
-		}
-		value.Baseline = observation.PreviousBootID
-		value.ClaimUID = claim.GetUID()
-		operation.state.Resets[key] = value
-		return operation.save(ctx)
-	}
-	return rounds, nil, nil
+	o.state.Resets[key] = prior
+	return copyOperationReset(prior), false, o.save(ctx)
 }
-
-func (o *deploymentOperation) saveResetObservation(ctx context.Context, key string, observation ActivationObservation) error {
-	if o == nil {
-		return nil
+func (o *deploymentOperation) validateResetRequest(request ActivationRequest, phases map[types.UID]string, rounds map[types.UID]activationRebootRound) error {
+	if o.state.DeploymentUID == "" || request.HostInputRef == "" || request.HostEndpoint == "" || !validUUID(request.HostSystemUUID) || request.HostAdapterSerial == "" || request.HostAdapterKey == "" || len(request.DPUNodes) == 0 || len(rounds) == 0 || len(phases) != len(rounds) {
+		return fmt.Errorf("RESET_ACTION_REQUIRED: exact bound host request required")
 	}
-	value, ok := o.state.Resets[key]
-	if !ok || value.Baseline != observation.PreviousBootID || !validUUID(observation.CurrentBootID) || observation.CurrentBootID == value.Baseline {
-		return fmt.Errorf("RESET_ACTION_REQUIRED: physical proof does not match saved baseline")
+	seenNodes, seenDPUs := map[string]bool{}, map[types.UID]bool{}
+	for _, node := range request.DPUNodes {
+		child, known := o.state.Children["DPUNode/"+node.NodeName]
+		if !known || child.UID != node.NodeUID || seenNodes[node.NodeName] || node.RebootMethod != "SystemLevelReset" || len(node.SelectedDPUs) == 0 {
+			return fmt.Errorf("RESET_ACTION_REQUIRED: node cohort changed")
+		}
+		seenNodes[node.NodeName] = true
+		for _, dpu := range node.SelectedDPUs {
+			child, known := o.state.Children["DPU/"+dpu.DPUName]
+			round, hasRound := rounds[dpu.DPUUID]
+			enrolled := false
+			for _, device := range o.state.Enrollment.Devices {
+				if device.Serial == dpu.SerialNumber && device.DPUNodeUID == node.NodeUID {
+					enrolled = true
+				}
+			}
+			if !known || child.UID != dpu.DPUUID || !enrolled || seenDPUs[dpu.DPUUID] || dpu.HostAdapterKey == "" || dpu.AdapterSerial == "" || !hasRound || round.uid != dpu.DPUUID || round.generation != child.Generation || phases[dpu.DPUUID] != round.source || !validOperationRound(savedRound(round)) {
+				return fmt.Errorf("RESET_ACTION_REQUIRED: DPU round cohort changed")
+			}
+			seenDPUs[dpu.DPUUID] = true
+		}
 	}
-	value.Observation = observation
+	if len(seenDPUs) != len(rounds) {
+		return fmt.Errorf("RESET_ACTION_REQUIRED: foreign round")
+	}
+	return nil
+}
+func validOperationRound(round operationRound) bool {
+	return round.UID != "" && round.Generation > 0 && supportedActivationRebootSourcePhase(round.Source) && !round.Requested.IsZero() && !round.Startup.IsZero() && validUUID(round.KernelBoot)
+}
+func (o *deploymentOperation) bindResetClaim(ctx context.Context, key string, uid types.UID) error {
+	if err := o.writable(); err != nil {
+		return err
+	}
+	value, known := o.state.Resets[key]
+	if !known || value.ClaimUID != "" || value.Baseline != "" || value.Acknowledged || !validUUID(string(uid)) {
+		return fmt.Errorf("RESET_CLAIM_CHANGED: claim receipt already bound or invalid")
+	}
+	value.ClaimUID = uid
+	o.state.Resets[key] = value
+	return o.save(ctx)
+}
+func (o *deploymentOperation) recordResetBaseline(ctx context.Context, key string, claimUID types.UID, observation ActivationObservation) error {
+	if err := o.writable(); err != nil {
+		return err
+	}
+	value, known := o.state.Resets[key]
+	if !known || value.ClaimUID == "" || value.ClaimUID != claimUID || value.Baseline != "" || value.Acknowledged || observation.HostSystemUUID != value.Request.HostSystemUUID || observation.HostAdapterSerial != value.Request.HostAdapterSerial || !validUUID(observation.PreviousBootID) {
+		return fmt.Errorf("RESET_BASELINE_INVALID: exact authenticated claim and host baseline required")
+	}
+	value.Baseline = observation.PreviousBootID
 	o.state.Resets[key] = value
 	return o.save(ctx)
 }
 
-func (o *deploymentOperation) saveResetProofs(ctx context.Context, key string, proofs map[types.UID]activationRebootRound) error {
+// recordResetObservation reports whether the observation matched saved history.
+// A match is neither fresh authority nor durable success: true can accompany a
+// persistence error, so callers retain physical history but must stop effects.
+// A nil owner preserves stage-only observations without a checkpoint contract.
+func (o *deploymentOperation) recordResetObservation(ctx context.Context, key string, observation ActivationObservation) (bool, error) {
 	if o == nil {
-		return nil
+		return true, nil
 	}
-	value := o.state.Resets[key]
-	value.ArmProofs = map[types.UID]operationRound{}
-	for uid, proof := range proofs {
-		value.ArmProofs[uid] = savedRound(proof)
+	if err := o.writable(); err != nil {
+		return false, err
 	}
-	value.ACKIntent = true
+	value, known := o.state.Resets[key]
+	if !known || value.ClaimUID == "" || !validUUID(value.Baseline) || value.Baseline != observation.PreviousBootID || observation.HostSystemUUID != value.Request.HostSystemUUID || observation.HostAdapterSerial != value.Request.HostAdapterSerial || !observation.Reconnected || !validUUID(observation.CurrentBootID) || observation.CurrentBootID == value.Baseline || value.Observation.CurrentBootID != "" && value.Observation.CurrentBootID != observation.CurrentBootID {
+		return false, fmt.Errorf("RESET_ACTION_REQUIRED: physical proof does not match saved baseline")
+	}
+	value.Observation = copyOperationObservation(observation)
 	o.state.Resets[key] = value
-	return o.save(ctx)
+	return true, o.save(ctx)
 }
-
-func (o *deploymentOperation) finishReset(ctx context.Context, key string, progress map[string]activationNodeProgress) error {
-	if o == nil {
-		return nil
+func validateResetACKHistory(value operationReset) error {
+	physical := value.Observation
+	if !validUUID(string(value.ClaimUID)) || !validUUID(value.Baseline) || physical.HostSystemUUID != value.Request.HostSystemUUID || physical.HostAdapterSerial != value.Request.HostAdapterSerial || physical.PreviousBootID != value.Baseline || !physical.Reconnected || !validUUID(physical.CurrentBootID) || physical.CurrentBootID == value.Baseline || len(value.Rounds) == 0 || len(value.ArmProofs) != len(value.Rounds) {
+		return fmt.Errorf("RESET_ACTION_REQUIRED: complete physical and Arm proofs required")
 	}
-	value := o.state.Resets[key]
-	value.Acknowledged = true
-	o.state.Resets[key] = value
-	return o.saveProgress(ctx, progress)
-}
-
-// resolveCompletedResets handles a lost ACK/checkpoint response only from saved
-// physical/current-Arm proofs and current exact ready controller advancement.
-func (o *deploymentOperation) resolveCompletedResets(ctx context.Context, observed activationObservation, reboot ExternalRebooter) error {
-	if o == nil {
-		return nil
-	}
-	for key, reset := range o.state.Resets {
-		if reset.Acknowledged {
-			continue
-		}
-		pending := false
-		for _, node := range reset.Request.DPUNodes {
-			current := observed.nodes[node.NodeName]
-			if current == nil || current.GetUID() != node.NodeUID {
-				return fmt.Errorf("RESET_ACTION_REQUIRED: saved node replaced")
-			}
-			if current.GetAnnotations()[activationExternalRebootKey] == "true" {
-				pending = true
-			}
-		}
-		if pending {
-			continue
-		}
-		if !reset.ACKIntent || !reset.Observation.Reconnected || len(reset.ArmProofs) != len(reset.Rounds) || len(reset.Rounds) == 0 {
-			return fmt.Errorf("RESET_ACTION_REQUIRED: absent request does not prove acknowledged reset history")
-		}
-		observer, ok := reboot.(ExternalRebootObserver)
-		if !ok {
-			return fmt.Errorf("RESET_ACTION_REQUIRED: observation backend unavailable")
-		}
-		host, err := observer.ObserveExternal(ctx, reset.Request, reset.Baseline)
-		if err != nil || host.CurrentBootID != reset.Observation.CurrentBootID {
-			return fmt.Errorf("RESET_ACTION_REQUIRED: current host boot proof changed")
-		}
-		for _, node := range reset.Request.DPUNodes {
-			for _, selected := range node.SelectedDPUs {
-				dpu := observed.dpus[selected.DPUName]
-				proof, exists := reset.ArmProofs[selected.DPUUID]
-				if !exists || dpu == nil || dpu.GetUID() != selected.DPUUID || dpu.GetGeneration() != proof.Generation || !EvaluateReadiness(dpu).Ready || !conditionReadiness(dpu, "NodeEffectRemoved", "DPU_STATUS_STALE", true).Ready {
-					return fmt.Errorf("RESET_ACTION_REQUIRED: current completed DPU proof unavailable")
-				}
-				boot, _, _ := unstructured.NestedString(dpu.Object, "status", "agentStatus", "lastObservedPendingNvconfig", "bootID")
-				startup, _, _ := unstructured.NestedString(dpu.Object, "status", "agentStatus", "lastStartupTime")
-				at, err := time.Parse(time.RFC3339Nano, startup)
-				if err != nil || !at.Equal(proof.Startup) || boot != proof.KernelBoot {
-					return fmt.Errorf("RESET_ACTION_REQUIRED: current Arm proof changed")
-				}
-			}
-		}
-		reset.Acknowledged = true
-		o.state.Resets[key] = reset
-		if err := o.save(ctx); err != nil {
-			return err
+	for uid, prior := range value.Rounds {
+		proof, found := value.ArmProofs[uid]
+		if !found || uid != proof.UID || !validOperationRound(proof) || !liveRound(prior).sameRequest(liveRound(proof)) || !proof.Startup.After(prior.Startup) || !proof.Startup.After(prior.Requested) || proof.KernelBoot == prior.KernelBoot {
+			return fmt.Errorf("RESET_ACTION_REQUIRED: Arm proof changed or incomplete")
 		}
 	}
 	return nil
+}
+func (o *deploymentOperation) recordResetACKIntent(ctx context.Context, key string, proofs map[types.UID]activationRebootRound) error {
+	if o == nil {
+		return nil
+	}
+	if err := o.writable(); err != nil {
+		return err
+	}
+	value, known := o.state.Resets[key]
+	if !known {
+		return fmt.Errorf("RESET_ACTION_REQUIRED: unknown reset intent")
+	}
+	retained := make(map[types.UID]operationRound, len(proofs))
+	for uid, proof := range proofs {
+		if saved, known := value.ArmProofs[uid]; known && !reflect.DeepEqual(saved, savedRound(proof)) {
+			return o.bindingConflict("RESET_ACTION_REQUIRED: saved Arm proof changed")
+		}
+		retained[uid] = savedRound(proof)
+	}
+	value.ArmProofs, value.ACKIntent = retained, true
+	if err := validateResetACKHistory(value); err != nil {
+		return err
+	}
+	o.state.Resets[key] = value
+	return o.save(ctx)
+}
+func (o *deploymentOperation) confirmResetAcknowledged(ctx context.Context, key string, completions []activationNodeProgress) error {
+	if o == nil {
+		return nil
+	}
+	if err := o.writable(); err != nil {
+		return err
+	}
+	value, known := o.state.Resets[key]
+	if !known || !value.ACKIntent || validateResetACKHistory(value) != nil || len(completions) != len(value.Request.DPUNodes) {
+		return fmt.Errorf("RESET_ACTION_REQUIRED: exact ACK intent and completions required")
+	}
+	progress := maps.Clone(o.state.Progress)
+	seen := map[string]bool{}
+	for _, proof := range completions {
+		p := savedProgress(proof)
+		if err := o.validateProgress(p); err != nil {
+			return err
+		}
+		var node *ActivationNode
+		for i := range value.Request.DPUNodes {
+			if value.Request.DPUNodes[i].NodeName == p.NodeName {
+				node = &value.Request.DPUNodes[i]
+			}
+		}
+		if node == nil || seen[p.NodeName] || !p.ResetAcknowledged || p.ReleasedVersion != "" || len(node.SelectedDPUs) != len(p.DPUs) {
+			return fmt.Errorf("RESET_ACTION_REQUIRED: completion outside reset cohort")
+		}
+		for _, dpu := range node.SelectedDPUs {
+			if p.DPUs[dpu.DPUName] != dpu.DPUUID {
+				return fmt.Errorf("RESET_ACTION_REQUIRED: completed DPU changed")
+			}
+		}
+		if prior, exists := progress[p.NodeName]; exists && !sameProgressCohort(prior, p) {
+			return o.bindingConflict("RESET_ACTION_REQUIRED: completion bindings changed")
+		}
+		seen[p.NodeName] = true
+		progress[p.NodeName] = p
+	}
+	value.Acknowledged = true
+	o.state.Resets[key], o.state.Progress = value, progress
+	return o.save(ctx)
+}
+
+// operationArmBoot is a bounded observed value, not a freshness capability.
+type operationArmBoot struct {
+	Generation int64
+	Startup    time.Time
+	KernelBoot string
+}
+
+func (o *deploymentOperation) confirmResetControllerAdvance(ctx context.Context, key string, host ActivationObservation, nodes map[string]activationObjectReceipt, armBoots map[types.UID]operationArmBoot) error {
+	if err := o.writable(); err != nil {
+		return err
+	}
+	value, known := o.state.Resets[key]
+	if !known || !value.ACKIntent || validateResetACKHistory(value) != nil || host.HostSystemUUID != value.Request.HostSystemUUID || host.HostAdapterSerial != value.Request.HostAdapterSerial || !host.Reconnected || host.PreviousBootID != value.Baseline || host.CurrentBootID != value.Observation.CurrentBootID {
+		return fmt.Errorf("RESET_ACTION_REQUIRED: controller advance differs from saved physical proofs")
+	}
+	if len(nodes) != len(value.Request.DPUNodes) || len(armBoots) != len(value.Rounds) {
+		return fmt.Errorf("RESET_ACTION_REQUIRED: complete controller identity and Arm observations required")
+	}
+	for _, node := range value.Request.DPUNodes {
+		current, known := nodes[node.NodeName]
+		prior := o.state.Children["DPUNode/"+node.NodeName]
+		if !known || current.Name != node.NodeName || current.UID != node.NodeUID || current.Generation != prior.Generation {
+			return fmt.Errorf("RESET_ACTION_REQUIRED: saved node replaced or changed")
+		}
+		for _, selected := range node.SelectedDPUs {
+			current, known := armBoots[selected.DPUUID]
+			saved, proved := value.ArmProofs[selected.DPUUID]
+			if !known || !proved || current.Generation != saved.Generation || !current.Startup.Equal(saved.Startup) || current.KernelBoot != saved.KernelBoot {
+				return fmt.Errorf("RESET_ACTION_REQUIRED: current Arm observation differs from saved proof")
+			}
+		}
+	}
+
+	value.Acknowledged = true
+	o.state.Resets[key] = value
+	return o.save(ctx)
 }

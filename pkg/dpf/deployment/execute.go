@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/nvidia/k8s-launch-kit/pkg/dpf/deployment/internal/controllercontract"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 )
 
@@ -22,10 +23,10 @@ type nativeObjectReconciler interface {
 // current-intent readiness. It is a stage building block, not a deployment
 // success predicate. Its caller owns prerequisite checks and the additional
 // tenant, selected-device, artifact and data-plane barriers.
-func executeNativeObject(ctx context.Context, client ResourceClient, reconciler nativeObjectReconciler,
+func executeNativeObject(rules *controllercontract.Rules, ctx context.Context, client ResourceClient, reconciler nativeObjectReconciler,
 	desired *unstructured.Unstructured, stage string, journal *executionJournal, wait bool, interval time.Duration,
 ) (*unstructured.Unstructured, error) {
-	if ctx == nil || client == nil || reconciler == nil || desired == nil || stage == "" || journal == nil {
+	if rules.Validate() != nil || ctx == nil || client == nil || reconciler == nil || desired == nil || stage == "" || journal == nil {
 		return nil, fmt.Errorf("native execution requires context, client, reconciler, desired resource, stage and report")
 	}
 	if err := ctx.Err(); err != nil {
@@ -83,7 +84,7 @@ func executeNativeObject(ctx context.Context, client ResourceClient, reconciler 
 	if !wait {
 		return current.DeepCopy(), nil
 	}
-	return waitNativeReady(ctx, client, object, current.GetUID(), reconciler.Verify, interval, func(state Readiness, terminal bool) error {
+	return waitNativeReady(rules, ctx, client, object, current.GetUID(), reconciler.Verify, interval, func(state controllercontract.Readiness, terminal bool) error {
 		event.Operation, event.State = "readiness", "waiting"
 		if terminal {
 			event.State = "failed"

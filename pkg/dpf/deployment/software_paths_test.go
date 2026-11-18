@@ -18,19 +18,19 @@ func TestSoftwareCacheTargetsUsePinnedDPFPathsAndSelectedLocks(t *testing.T) {
 	desired, current, locks, selected := softwareCacheFixture()
 	desiredBefore, currentBefore, locksBefore := desired.DeepCopy(), current.DeepCopy(), cloneSoftwareForTest(locks)
 
-	got, err := softwareCacheTargets(desired, current, locks, selected)
+	got, err := softwareCacheTargets(testRules(t), desired, current, locks, selected)
 	if err != nil {
-		t.Fatalf("softwareCacheTargets() error = %v", err)
+		t.Fatalf("softwareCacheTargets(testRules(t), ) error = %v", err)
 	}
 	want := []softwareCacheTarget{
 		{component: softwareComponentOSISO, cachePath: "/bfb/operator-hbn-software-bf4 os.iso", sha256: strings.Repeat("a", 64)},
 		{component: softwareComponentPLDM, psid: "MT_TESTPSID", cachePath: "/bfb/components/operator-hbn-software-MT_TESTPSID-firmware.bin", sha256: strings.Repeat("b", 64)},
 	}
 	if !reflect.DeepEqual(got, want) {
-		t.Fatalf("softwareCacheTargets() = %#v, want %#v", got, want)
+		t.Fatalf("softwareCacheTargets(testRules(t), ) = %#v, want %#v", got, want)
 	}
 	if !reflect.DeepEqual(desired, desiredBefore) || !reflect.DeepEqual(current, currentBefore) || !reflect.DeepEqual(locks, locksBefore) {
-		t.Fatal("softwareCacheTargets() mutated desired/live objects or retained locks")
+		t.Fatal("softwareCacheTargets(testRules(t), ) mutated desired/live objects or retained locks")
 	}
 }
 
@@ -38,12 +38,12 @@ func TestSoftwareCacheTargetsDeduplicateSelectedDevicesByPSID(t *testing.T) {
 	desired, current, locks, selected := softwareCacheFixture()
 	selected = append(selected, "MT_TESTPSID")
 
-	got, err := softwareCacheTargets(desired, current, locks, selected)
+	got, err := softwareCacheTargets(testRules(t), desired, current, locks, selected)
 	if err != nil {
-		t.Fatalf("softwareCacheTargets() error = %v", err)
+		t.Fatalf("softwareCacheTargets(testRules(t), ) error = %v", err)
 	}
 	if len(got) != 2 || got[1].component != softwareComponentPLDM || got[1].psid != "MT_TESTPSID" {
-		t.Fatalf("softwareCacheTargets() = %#v, want one PLDM target for the repeated selected PSID", got)
+		t.Fatalf("softwareCacheTargets(testRules(t), ) = %#v, want one PLDM target for the repeated selected PSID", got)
 	}
 }
 
@@ -54,9 +54,9 @@ func TestSoftwareCacheTargetEscapesURLPathCharacters(t *testing.T) {
 	_ = unstructured.SetNestedField(current.Object, locks.PLDM["mt_testpsid"].URL, "spec", "pldmFwBundle", "MT_TESTPSID")
 	_ = unstructured.SetNestedField(current.Object, "/bfb/components/operator-hbn-software-MT_TESTPSID-firmware#rev?v1.bin", "status", "downloadedComponents", "pldmFwBundle", "mt_testpsid")
 
-	targets, err := softwareCacheTargets(desired, current, locks, selected)
+	targets, err := softwareCacheTargets(testRules(t), desired, current, locks, selected)
 	if err != nil {
-		t.Fatalf("softwareCacheTargets() error = %v", err)
+		t.Fatalf("softwareCacheTargets(testRules(t), ) error = %v", err)
 	}
 	requestURL := (&url.URL{Scheme: "https", Host: "127.0.0.1:8443", Path: targets[1].cachePath}).String()
 	parsed, err := url.Parse(requestURL)
@@ -119,8 +119,8 @@ func TestSoftwareCacheTargetsRejectInvalidBindingsAndStatus(t *testing.T) {
 		t.Run(test.name, func(t *testing.T) {
 			desired, current, locks, selected := softwareCacheFixture()
 			test.mutate(desired, current, &locks, &selected)
-			if got, err := softwareCacheTargets(desired, current, locks, selected); err == nil || got != nil {
-				t.Fatalf("softwareCacheTargets() = %#v, %v; want rejection", got, err)
+			if got, err := softwareCacheTargets(testRules(t), desired, current, locks, selected); err == nil || got != nil {
+				t.Fatalf("softwareCacheTargets(testRules(t), ) = %#v, %v; want rejection", got, err)
 			}
 		})
 	}
@@ -139,8 +139,8 @@ func TestSoftwareCacheTargetsRejectQueryAndUnsafeURLPaths(t *testing.T) {
 			locks.OSISO.URL = rawURL
 			_ = unstructured.SetNestedField(desired.Object, rawURL, "spec", "osIso")
 			_ = unstructured.SetNestedField(current.Object, rawURL, "spec", "osIso")
-			if got, err := softwareCacheTargets(desired, current, locks, selected); err == nil || got != nil {
-				t.Fatalf("softwareCacheTargets() accepted unsafe or query-bearing URL: %#v, %v", got, err)
+			if got, err := softwareCacheTargets(testRules(t), desired, current, locks, selected); err == nil || got != nil {
+				t.Fatalf("softwareCacheTargets(testRules(t), ) accepted unsafe or query-bearing URL: %#v, %v", got, err)
 			}
 		})
 	}
@@ -198,4 +198,11 @@ func cloneSoftwareForTest(input config.Software) config.Software {
 		copy.PLDM[psid] = artifact
 	}
 	return copy
+}
+
+func TestSoftwareReadinessRejectsIncompleteControllerConditions(t *testing.T) {
+	object := dpfObject("BlueFieldSoftware", map[string]any{"phase": "Ready", "observedGeneration": int64(2), "conditions": []any{conditionMap("Downloaded", "True", "Success", 2)}})
+	if softwareReadiness(testRules(t), object) == nil {
+		t.Fatal("missing Ready controller condition accepted")
+	}
 }

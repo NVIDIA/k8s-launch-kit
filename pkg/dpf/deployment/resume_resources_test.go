@@ -56,13 +56,13 @@ func TestOwnedResumeResourceProofRetainsCompleteActivationOwnership(t *testing.T
 			f := newActivationIntegrationFixtureFromExecution(t, execution, false)
 			op, _ := checkpointFixture(t, f)
 			f.prepared.operation = op
-			sources, err := tenantOperationSources(f.ctx, f.controlPlane.tenant.Client)
+			sources, err := f.controlPlane.tenant.Client.operationSources(f.ctx)
 			if err != nil {
 				t.Fatal(err)
 			}
 			op.state.TenantSources = sources
 			if test.parent {
-				desired, err := retainedDeploymentObject(execution)
+				desired, err := retainedDeploymentObject(execution.verificationInputs())
 				if err != nil {
 					t.Fatal(err)
 				}
@@ -87,12 +87,12 @@ func TestOwnedResumeResourceProofRetainsCompleteActivationOwnership(t *testing.T
 			}
 			raw := []inventory.Check{
 				{ID: "dpf.hbn.management.enrollments", Subject: "selected DPUs", Vantage: "executor", RequiredPhase: "deploy", State: "failed", ReasonCode: "DPU_ALREADY_ENROLLED", Message: "Initial deployment requires unclaimed devices."},
-				{ID: "dpf.hbn.management.tenant-network", Subject: "tenant " + f.controlPlane.tenant.Client.expected.Name + " network selection", Vantage: "management-cluster", RequiredPhase: "deploy", State: "unknown", ReasonCode: "TENANT_EXISTING_NETWORK_UNVERIFIED", Message: "Initial endpoint vacancy is unmeasured."},
+				{ID: "dpf.hbn.management.tenant-network", Subject: "tenant " + testTenant(f.controlPlane.tenant.Client).expected.Name + " network selection", Vantage: "management-cluster", RequiredPhase: "deploy", State: "unknown", ReasonCode: "TENANT_EXISTING_NETWORK_UNVERIFIED", Message: "Initial endpoint vacancy is unmeasured."},
 				{ID: "dpf.hbn.management.operator", Subject: execution.operatorNamespace, Vantage: "executor", RequiredPhase: "deploy", State: "failed", ReasonCode: "DPF_OPERATOR_NOT_READY", Message: "Current operator is not ready."},
 				{ID: "dpf.hbn.management.storage-health", Subject: execution.operatorNamespace, Vantage: "executor", RequiredPhase: "deploy", State: "unknown", ReasonCode: "STORAGE_HEALTH_UNMEASURED", Message: "Current storage is unmeasured."},
 			}
 			before, _ := json.Marshal(raw)
-			got := proof.assessInitialChecks(raw, f.controlPlane.tenant.Client.expected.Name)
+			got := proof.assessInitialChecks(raw, testTenant(f.controlPlane.tenant.Client).expected.Name)
 			if test.pass {
 				if got[0].ReasonCode != "OWNED_RESUME_ENROLLMENT_VERIFIED" || got[1].ReasonCode != "OWNED_RESUME_TENANT_NETWORK_VERIFIED" || got[0].State != "passed" || got[1].State != "passed" {
 					t.Fatalf("real raw blocked predicate shape was not assessed from owned proof: %+v", got)
@@ -111,7 +111,7 @@ func TestOwnedResumeResourceProofRetainsCompleteActivationOwnership(t *testing.T
 				for _, edit := range []func(*inventory.Check){func(c *inventory.Check) { c.Subject = "foreign" }, func(c *inventory.Check) { c.Vantage = "foreign" }, func(c *inventory.Check) { c.RequiredPhase = "generate" }, func(c *inventory.Check) { c.ReasonCode = "DPU_ENROLLMENT_IDENTITY_CONFLICT" }} {
 					changed := raw[0]
 					edit(&changed)
-					checked := proof.assessInitialChecks([]inventory.Check{changed}, f.controlPlane.tenant.Client.expected.Name)
+					checked := proof.assessInitialChecks([]inventory.Check{changed}, testTenant(f.controlPlane.tenant.Client).expected.Name)
 					if !reflect.DeepEqual(checked[0], changed) {
 						t.Fatal("wrong scope or identity conflict was waived")
 					}

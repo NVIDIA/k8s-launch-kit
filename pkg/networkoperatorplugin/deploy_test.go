@@ -21,6 +21,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/nvidia/k8s-launch-kit/pkg/hostplatform"
 	"github.com/nvidia/k8s-launch-kit/pkg/networkoperatorplugin/crstate"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -67,7 +68,7 @@ func TestOpenShiftPolicyReadinessPreservesObservationGate(t *testing.T) {
 					return c.Get(ctx, key, obj, opts...)
 				},
 			}).Build()
-			err := pollUntilTerminalWithRetryableErrorTimeout(ctx, c, crstate.NewOpenShift(), live.DeepCopy(), "policy", "1", 0, time.Millisecond)
+			err := pollUntilTerminalWithRetryableErrorTimeout(ctx, c, crstate.NewOpenShift(), live.DeepCopy(), "policy", "1", 0, time.Millisecond, nil, hostplatform.OpenShift)
 			if observed {
 				require.NoError(t, err)
 				require.GreaterOrEqual(t, reads, 3)
@@ -112,10 +113,7 @@ func TestPollUntilTerminal_InterfaceNameMismatchTimesOut(t *testing.T) {
 		}, nil
 	})
 
-	err := pollUntilTerminalWithRetryableErrorTimeout(
-		context.Background(), nil, registry, obj,
-		"NicInterfaceNameTemplate/nic-rename", "", 10*time.Millisecond, time.Millisecond,
-	)
+	err := pollUntilTerminalWithRetryableErrorTimeout(context.Background(), nil, registry, obj, "NicInterfaceNameTemplate/nic-rename", "", 10*time.Millisecond, time.Millisecond, nil, hostplatform.Kubernetes)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "timed out after 10ms")
 	assert.Contains(t, err.Error(), "interface name mismatch")
@@ -141,10 +139,7 @@ func TestPollUntilTerminal_InterfaceNameInitializationDoesNotUseMismatchTimeout(
 
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Millisecond)
 	defer cancel()
-	err := pollUntilTerminalWithRetryableErrorTimeout(
-		ctx, nil, registry, obj,
-		"NicInterfaceNameTemplate/nic-rename", "", 10*time.Millisecond, time.Millisecond,
-	)
+	err := pollUntilTerminalWithRetryableErrorTimeout(ctx, nil, registry, obj, "NicInterfaceNameTemplate/nic-rename", "", 10*time.Millisecond, time.Millisecond, nil, hostplatform.Kubernetes)
 	require.Error(t, err)
 	assert.ErrorIs(t, err, context.DeadlineExceeded)
 }
@@ -178,10 +173,7 @@ func TestPollUntilTerminal_ClearedInterfaceNameMismatchStopsMismatchTimeout(t *t
 
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Millisecond)
 	defer cancel()
-	err := pollUntilTerminalWithRetryableErrorTimeout(
-		ctx, nil, registry, obj,
-		"NicInterfaceNameTemplate/nic-rename", "", 10*time.Millisecond, time.Millisecond,
-	)
+	err := pollUntilTerminalWithRetryableErrorTimeout(ctx, nil, registry, obj, "NicInterfaceNameTemplate/nic-rename", "", 10*time.Millisecond, time.Millisecond, nil, hostplatform.Kubernetes)
 	require.Error(t, err)
 	assert.ErrorIs(t, err, context.DeadlineExceeded)
 	assert.Greater(t, validationCalls, 1)

@@ -5,20 +5,19 @@ package deployment
 
 import (
 	"context"
-	"fmt"
 	"time"
 
-	apierrors "k8s.io/apimachinery/pkg/api/errors"
-	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
-	"k8s.io/apimachinery/pkg/types"
+	"github.com/nvidia/k8s-launch-kit/pkg/dpf/deployment/internal/controllercontract"
 
 	"github.com/nvidia/k8s-launch-kit/pkg/dpf/generation"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	"k8s.io/apimachinery/pkg/types"
 )
 
-func waitWorkloadResource(ctx context.Context, client workloadStageClient, reconciler nativeObjectReconciler, tenant *tenantClient,
+func waitWorkloadResource(rules *controllercontract.Rules, ctx context.Context, client identityResourceReader, reconciler nativeObjectReconciler, tenant tenantVerificationReader,
 	spec workloadResourceSpec, uid types.UID, journal *executionJournal, interval time.Duration,
 ) (types.UID, error) {
-	if ctx == nil || client == nil || reconciler == nil || tenant == nil || spec.object == nil || uid == "" || journal == nil || interval <= 0 {
+	if rules.Validate() != nil || ctx == nil || client == nil || reconciler == nil || tenant == nil || spec.object == nil || uid == "" || journal == nil || interval <= 0 {
 		return "", workloadStageFailure(journal, "WORKLOAD_WAIT_INPUT_INVALID", "A bounded workload readiness wait is incomplete.", nil)
 	}
 	last := result("WORKLOAD_STATUS_UNOBSERVED", "The DPF controller has not reported current workload reconciliation.")
@@ -39,12 +38,12 @@ func waitWorkloadResource(ctx context.Context, client workloadStageClient, recon
 		} else if err := reconciler.Verify(spec.object, current); err != nil {
 			return childUID, workloadStageFailure(journal, "WORKLOAD_RESOURCE_DRIFTED", "A retained workload prerequisite no longer matches this bundle.", nil)
 		} else {
-			last = workloadResourceReadiness(current, spec.mode)
-			if terminalWorkloadReadiness(last) {
+			last = rules.WorkloadReadiness(current, spec.mode)
+			if controllercontract.TerminalWorkloadReadiness(last) {
 				return childUID, workloadStageFailure(journal, last.ReasonCode, "A DPF workload prerequisite reported an invalid or terminal state.", nil)
 			}
-			if last.Ready && spec.mode != workloadTemplateReadiness {
-				child, readErr := client.getTenantWorkloadChild(ctx, tenant, spec.object)
+			if last.Ready && spec.mode != controllercontract.WorkloadTemplate {
+				child, readErr := tenant.getWorkloadChild(ctx, spec.object)
 				if readErr != nil {
 					if apierrors.IsNotFound(readErr) || retryableRead(readErr) {
 						last = result("WORKLOAD_TENANT_CHILD_PENDING", "The controller-reported tenant child has not appeared yet.")
@@ -53,7 +52,7 @@ func waitWorkloadResource(ctx context.Context, client workloadStageClient, recon
 					}
 				} else if child == nil {
 					return childUID, workloadStageFailure(journal, "WORKLOAD_TENANT_CHILD_INVALID", "The selected tenant child observation is empty.", nil)
-				} else if err := verifyWorkloadChild(current, child, tenant.expected); err != nil {
+				} else if err := verifyWorkloadChild(current, child, tenant.expectation()); err != nil {
 					return childUID, workloadStageFailure(journal, "WORKLOAD_TENANT_CHILD_MISMATCH", workloadChildVerificationMessage("The controller-created tenant child does not match the retained parent resource.", err), nil)
 				} else if childUID != "" && childUID != child.GetUID() {
 					return childUID, workloadStageFailure(journal, "WORKLOAD_TENANT_CHILD_REPLACED", "The selected tenant child was replaced while waiting.", nil)
@@ -69,12 +68,12 @@ func waitWorkloadResource(ctx context.Context, client workloadStageClient, recon
 				if final == nil || final.GetUID() != uid || reconciler.Verify(spec.object, final) != nil {
 					return childUID, workloadStageFailure(journal, "WORKLOAD_RESOURCE_CHANGED", "The workload prerequisite changed before readiness was confirmed.", nil)
 				}
-				last = workloadResourceReadiness(final, spec.mode)
-				if last.Ready && spec.mode != workloadTemplateReadiness {
-					finalChild, finalChildErr := client.getTenantWorkloadChild(ctx, tenant, spec.object)
+				last = rules.WorkloadReadiness(final, spec.mode)
+				if last.Ready && spec.mode != controllercontract.WorkloadTemplate {
+					finalChild, finalChildErr := tenant.getWorkloadChild(ctx, spec.object)
 					var verificationErr error
 					if finalChildErr == nil && finalChild != nil && finalChild.GetUID() == childUID {
-						verificationErr = verifyWorkloadChild(final, finalChild, tenant.expected)
+						verificationErr = verifyWorkloadChild(final, finalChild, tenant.expectation())
 					}
 					if finalChildErr != nil || finalChild == nil || finalChild.GetUID() != childUID || verificationErr != nil {
 						return childUID, workloadStageFailure(journal, "WORKLOAD_TENANT_CHILD_CHANGED", workloadChildVerificationMessage("The selected tenant child changed before readiness was confirmed.", verificationErr), safeAPIError("recheck tenant workload child", finalChildErr))
@@ -85,7 +84,7 @@ func waitWorkloadResource(ctx context.Context, client workloadStageClient, recon
 						diagnostic := managementIdentityDiagnostic(ctx, err)
 						return childUID, workloadStageFailure(journal, diagnostic.ReasonCode, diagnostic.Message+" No workload-readiness receipt was issued.", diagnostic)
 					}
-					if spec.mode != workloadTemplateReadiness {
+					if spec.mode != controllercontract.WorkloadTemplate {
 						if err := tenant.VerifyIdentity(ctx); err != nil {
 							diagnostic := tenantIdentityDiagnostic(ctx, err)
 							return childUID, workloadStageFailure(journal, diagnostic.ReasonCode, diagnostic.Message+" No workload-readiness receipt was issued.", diagnostic)
@@ -112,59 +111,5 @@ func waitWorkloadResource(ctx context.Context, client workloadStageClient, recon
 		if err := waitInterval(ctx, interval); err != nil {
 			return childUID, workloadStageFailure(journal, "WORKLOAD_READINESS_TIMEOUT", "Retained workload prerequisites did not converge before the deadline.", err)
 		}
-	}
-}
-
-func workloadResourceReadiness(object *unstructured.Unstructured, mode workloadCheckMode) Readiness {
-	if object == nil || object.GetDeletionTimestamp() != nil {
-		return result("WORKLOAD_RESOURCE_DELETING", "The retained workload prerequisite is unavailable or deleting.")
-	}
-	generation, ok := metadataGeneration(object)
-	if !ok {
-		return result("WORKLOAD_GENERATION_INVALID", "The workload resource generation is missing or invalid.")
-	}
-	observed, found, err := unstructured.NestedInt64(object.Object, "status", "observedGeneration")
-	if err != nil || !found || observed < generation || observed == 0 {
-		return result("WORKLOAD_STATUS_STALE", "The DPF controller has not observed the current workload generation.")
-	}
-	if observed > generation {
-		return result("WORKLOAD_STATUS_INVALID", "The DPF controller observed a future workload generation.")
-	}
-	var conditions []string
-	switch mode {
-	case workloadTemplateReadiness:
-		conditions = []string{"Ready", "DPUServiceTemplateReconciled"}
-	case workloadIPAMReadiness:
-		conditions = []string{"DPUIPAMObjectReconciled"}
-	case workloadInterfaceReadiness:
-		conditions = []string{"ServiceInterfaceSetReconciled"}
-	default:
-		return result("WORKLOAD_STATUS_UNSUPPORTED", "No readiness condition is defined for this workload resource.")
-	}
-	for _, conditionType := range conditions {
-		state := conditionReadiness(object, conditionType, "WORKLOAD_CONDITION_STALE", true)
-		if !state.Ready {
-			if state.ReasonCode == "RESOURCE_NOT_READY" {
-				condition, conditionState := findCondition(object, conditionType)
-				if !conditionState.Ready || condition == nil {
-					return conditionState
-				}
-				if condition.reason != "Pending" {
-					return withControllerReason(result("RESOURCE_TERMINAL_FAILURE", fmt.Sprintf("The %s condition failed reconciliation.", conditionType)), condition.reason)
-				}
-				state.ReasonCode = "WORKLOAD_RECONCILIATION_PENDING"
-			}
-			return state
-		}
-	}
-	return ready("The DPF controller reported the required current-generation workload reconciliation condition.")
-}
-
-func terminalWorkloadReadiness(state Readiness) bool {
-	switch state.ReasonCode {
-	case "RESOURCE_TERMINAL_FAILURE", "RESOURCE_DELETING", "RESOURCE_STATUS_INVALID", "RESOURCE_STATUS_AMBIGUOUS", "WORKLOAD_GENERATION_INVALID", "WORKLOAD_STATUS_INVALID", "WORKLOAD_STATUS_UNSUPPORTED":
-		return true
-	default:
-		return false
 	}
 }

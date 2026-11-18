@@ -9,12 +9,12 @@ import (
 	"io"
 	"reflect"
 
+	sharedbundle "github.com/nvidia/k8s-launch-kit/pkg/bundle"
 	"github.com/nvidia/k8s-launch-kit/pkg/dpf/bootstrap"
 	"github.com/nvidia/k8s-launch-kit/pkg/dpf/bundle"
 	"github.com/nvidia/k8s-launch-kit/pkg/dpf/config"
 	"github.com/nvidia/k8s-launch-kit/pkg/dpf/hbn"
 	"github.com/nvidia/k8s-launch-kit/pkg/dpf/hbnrender"
-	"github.com/nvidia/k8s-launch-kit/pkg/networkoperatorplugin/helmclient"
 	"gopkg.in/yaml.v3"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 )
@@ -70,7 +70,7 @@ func LoadPlan(retained *bundle.Bundle) (*Plan, error) {
 	if err != nil {
 		return nil, fmt.Errorf("retained HBN chart: %w", err)
 	}
-	values, err := helmclient.UnmarshalValues(operatorValues.Data)
+	values, err := sharedbundle.ParseValues(operatorValues.Data)
 	if err != nil {
 		return nil, fmt.Errorf("decode retained operator values: %w", err)
 	}

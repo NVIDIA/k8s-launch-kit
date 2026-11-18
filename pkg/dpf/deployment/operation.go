@@ -11,6 +11,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"maps"
 	"reflect"
 	"sort"
 	"strings"
@@ -225,7 +226,7 @@ func (o *deploymentOperation) save(ctx context.Context) error {
 	return nil
 }
 
-func tenantOperationSources(ctx context.Context, tenant *tenantClient) (map[string]types.UID, error) {
+func (tenant *tenantClient) operationSources(ctx context.Context) (map[string]types.UID, error) {
 	sources, err := tenant.source.observeTenantSources(ctx, tenant.expected)
 	if err != nil {
 		return nil, err
@@ -247,7 +248,7 @@ func tenantOperationSources(ctx context.Context, tenant *tenantClient) (map[stri
 }
 
 func reserveDeploymentOperation(ctx context.Context, client *APIClient, prepared *preparedControlPlaneRun, workload workloadPreparationReceipt) (*deploymentOperation, error) {
-	deployment, err := retainedDeploymentObject(prepared.execution)
+	deployment, err := retainedDeploymentObject(prepared.execution.verificationInputs())
 	if err != nil {
 		return nil, operationReservationFailure(ctx, "OPERATION_PLAN_INVALID", err)
 	}
@@ -262,7 +263,7 @@ func reserveDeploymentOperation(ctx context.Context, client *APIClient, prepared
 	if !apierrors.IsNotFound(err) {
 		return nil, operationReservationFailure(ctx, "OPERATION_PARENT_UNMEASURED", err)
 	}
-	sources, err := tenantOperationSources(ctx, workload.ControlPlane.tenant.Client)
+	sources, err := workload.ControlPlane.tenant.Client.operationSources(ctx)
 	if err != nil {
 		return nil, operationReservationFailure(ctx, "OPERATION_TENANT_SOURCES_UNMEASURED", err)
 	}
@@ -270,11 +271,14 @@ func reserveDeploymentOperation(ctx context.Context, client *APIClient, prepared
 	state := operationState{
 		Binding: operationBinding{Version: 1, ID: rand.Text(), BundleDigest: prepared.execution.plan.Digest(), Management: prepared.execution.plan.Intent().Management,
 			NamespaceUID: workload.ControlPlane.management.NamespaceUIDs[namespace], DeploymentName: deployment.GetName(), CohortDigest: inventory.Digest("dpf-operation-cohort-v1", prepared.execution.plan.Intent().Devices)},
-		Management: workload.ControlPlane.management, TenantUID: workload.ControlPlane.tenant.ClusterUID, TenantSystemUID: workload.ControlPlane.tenant.Client.systemUID,
+		Management: workload.ControlPlane.management, TenantUID: workload.ControlPlane.tenant.ClusterUID, TenantSystemUID: workload.ControlPlane.tenant.Client.systemIdentity(),
 		TenantSources: sources, Enrollment: workload.ControlPlane.enrollment, Software: workload.Software, Workload: workload.Resources,
 		Children: map[string]activationObjectReceipt{}, HoldIntents: map[string]operationProgress{}, Progress: map[string]operationProgress{}, Resets: map[string]operationReset{}, Hosts: map[string]operationHost{},
 	}
-	data, err := encodeOperation(state)
+	// Detach the complete setup before encoding; this same owned snapshot is
+	// retained only after the create response matches those exact bytes.
+	operation := newDeploymentOperation(client, nil, state)
+	data, err := encodeOperation(operation.state)
 	if err != nil {
 		return nil, operationReservationFailure(ctx, "OPERATION_CHECKPOINT_INVALID", err)
 	}
@@ -296,11 +300,12 @@ func reserveDeploymentOperation(ctx context.Context, client *APIClient, prepared
 	if _, err := decodeOperation(data); err != nil {
 		return nil, operationReservationFailure(ctx, "OPERATION_CHECKPOINT_INVALID", err)
 	}
-	return &deploymentOperation{store: client, object: created.DeepCopy(), state: state}, nil
+	operation.object = created.DeepCopy()
+	return operation, nil
 }
 
 func loadDeploymentOperation(ctx context.Context, client *APIClient, execution *managementExecution, ref *OperationRef) (*deploymentOperation, error) {
-	deployment, err := retainedDeploymentObject(execution)
+	deployment, err := retainedDeploymentObject(execution.verificationInputs())
 	if err != nil {
 		return nil, reconcileError("OPERATION_RESUME_PLAN_INVALID", operationResumeMessage("OPERATION_RESUME_PLAN_INVALID"), err)
 	}
@@ -326,33 +331,33 @@ func loadDeploymentOperation(ctx context.Context, client *APIClient, execution *
 	if ns == nil || string(ns.UID) != state.Binding.NamespaceUID || ns.DeletionTimestamp != nil {
 		return nil, reconcileError("OPERATION_RESUME_NAMESPACE_CHANGED", operationResumeMessage("OPERATION_RESUME_NAMESPACE_CHANGED"), err)
 	}
-	return &deploymentOperation{store: client, object: object.DeepCopy(), state: state}, nil
+	return newDeploymentOperation(client, object, state), nil
 }
 
-func restoreOperationReceipts(ctx context.Context, client *APIClient, prepared *preparedControlPlaneRun, journal *executionJournal, interval, timeout time.Duration) (controlPlaneReceipts, workloadPreparationReceipt, error) {
-	state := prepared.operation.state
+func restoreOperationReceipts(ctx context.Context, client receiptRestorationReader, prepared *preparedControlPlaneRun, journal *executionJournal, interval, timeout time.Duration) (controlPlaneReceipts, workloadPreparationReceipt, error) {
+	state := prepared.operation.preparationReceipts()
 	control := controlPlaneReceipts{management: state.Management, enrollment: state.Enrollment}
-	if err := waitManagementBootstrap(ctx, client, prepared.execution, state.Management, journal, interval); err != nil {
+	if err := waitManagementBootstrap(ctx, client, prepared.execution.verificationInputs(), state.Management, journal, interval); err != nil {
 		return control, workloadPreparationReceipt{}, reconcileError("OPERATION_RESUME_BOOTSTRAP_UNVERIFIED", operationResumeMessage("OPERATION_RESUME_BOOTSTRAP_UNVERIFIED"), err)
 	}
-	tenant, err := connectRetainedTenant(ctx, client, prepared.execution.plan, state.TenantUID, prepared.execution.reconciler, journal, interval, timeout)
+	tenant, err := client.connectTenant(ctx, prepared.execution.plan, state.TenantUID, prepared.execution.reconciler, journal, interval, timeout)
 	if err != nil {
 		return control, workloadPreparationReceipt{}, reconcileError("OPERATION_RESUME_TENANT_UNVERIFIED", operationResumeMessage("OPERATION_RESUME_TENANT_UNVERIFIED"), err)
 	}
-	sources, err := tenantOperationSources(ctx, tenant)
-	if err != nil || tenant.systemUID != state.TenantSystemUID || !reflect.DeepEqual(sources, state.TenantSources) {
+	sources, err := tenant.operationSources(ctx)
+	if err != nil || tenant.systemIdentity() != state.TenantSystemUID || !reflect.DeepEqual(sources, state.TenantSources) {
 		return control, workloadPreparationReceipt{}, reconcileError("OPERATION_RESUME_TENANT_UNVERIFIED", operationResumeMessage("OPERATION_RESUME_TENANT_UNVERIFIED"), err)
 	}
 	control.tenant = tenantStageReceipt{ClusterUID: state.TenantUID, Client: tenant}
-	workload := workloadPreparationReceipt{BundleDigest: state.Binding.BundleDigest, ControlPlane: control, Software: state.Software, Resources: state.Workload}
-	objects, err := retainedWorkloadObjects(prepared.execution)
+	workload := workloadPreparationReceipt{BundleDigest: state.BundleDigest, ControlPlane: control, Software: state.Software, Resources: state.Workload}
+	objects, err := retainedWorkloadObjects(prepared.execution.verificationInputs())
 	if err != nil {
 		return control, workload, reconcileError("OPERATION_RESUME_PLAN_INVALID", operationResumeMessage("OPERATION_RESUME_PLAN_INVALID"), err)
 	}
-	if err := verifyActivationSoftware(ctx, client, prepared.execution, workload.Software); err != nil {
+	if err := verifyActivationSoftware(ctx, client, prepared.execution.verificationInputs(), workload.Software); err != nil {
 		return control, workload, reconcileError("OPERATION_RESUME_SOFTWARE_UNVERIFIED", operationResumeMessage("OPERATION_RESUME_SOFTWARE_UNVERIFIED"), err)
 	}
-	if err := verifyWorkloadReceiptSet(ctx, client, prepared.execution, tenant, objects, workload.Resources); err != nil {
+	if err := verifyWorkloadReceiptSet(ctx, client, prepared.execution.verificationInputs(), tenant, objects, workload.Resources); err != nil {
 		return control, workload, reconcileError("OPERATION_RESUME_WORKLOAD_UNVERIFIED", operationResumeMessage("OPERATION_RESUME_WORKLOAD_UNVERIFIED"), err)
 	}
 	return control, workload, nil
@@ -362,20 +367,10 @@ func (o *deploymentOperation) restoreProgress() map[string]activationNodeProgres
 	result := map[string]activationNodeProgress{}
 	if o != nil {
 		for key, p := range o.state.Progress {
-			result[key] = activationNodeProgress{nodeName: p.NodeName, maintenanceUID: p.MaintenanceUID, releasedVersion: p.ReleasedVersion, resetAcknowledged: p.ResetAcknowledged, sets: p.Sets, dpus: p.DPUs, versions: p.Versions}
+			result[key] = activationNodeProgress{nodeName: p.NodeName, maintenanceUID: p.MaintenanceUID, releasedVersion: p.ReleasedVersion, resetAcknowledged: p.ResetAcknowledged, sets: maps.Clone(p.Sets), dpus: maps.Clone(p.DPUs), versions: maps.Clone(p.Versions)}
 		}
 	}
 	return result
-}
-
-func (o *deploymentOperation) saveProgress(ctx context.Context, progress map[string]activationNodeProgress) error {
-	if o == nil {
-		return nil
-	}
-	for key, p := range progress {
-		o.state.Progress[key] = operationProgress{NodeName: p.nodeName, MaintenanceUID: p.maintenanceUID, ReleasedVersion: p.releasedVersion, ResetAcknowledged: p.resetAcknowledged, Sets: p.sets, DPUs: p.dpus, Versions: p.versions}
-	}
-	return o.save(ctx)
 }
 
 func (c *APIClient) getOperation(ctx context.Context, namespace, name string) (*corev1.ConfigMap, error) {
@@ -397,7 +392,7 @@ func (c *APIClient) updateOperation(ctx context.Context, object *corev1.ConfigMa
 	return c.access.Client.CoreV1().ConfigMaps(object.Namespace).Update(ctx, object.DeepCopy(), metav1.UpdateOptions{})
 }
 
-func (c *APIClient) checkOperationPermissions(ctx context.Context, execution *managementExecution) error {
+func (c *APIClient) checkOperationPermissions(ctx context.Context, execution *managementVerificationInputs) error {
 	deployment, err := retainedDeploymentObject(execution)
 	if err != nil {
 		return err
@@ -434,7 +429,7 @@ func prepareResume(execution *managementExecution, request config.Request, opera
 	if err != nil {
 		return nil, reconcileError("OPERATION_RESUME_ENROLLMENT_UNVERIFIED", operationResumeMessage("OPERATION_RESUME_ENROLLMENT_UNVERIFIED"), err)
 	}
-	if !softwareEnrollmentReceiptMatches(operation.state.Enrollment.Devices, selected) {
+	if !softwareEnrollmentReceiptMatches(operation.enrolledDevices(), selected) {
 		return nil, reconcileError("OPERATION_RESUME_ENROLLMENT_CHANGED", operationResumeMessage("OPERATION_RESUME_ENROLLMENT_CHANGED"), nil)
 	}
 	return &preparedControlPlaneRun{execution: execution, selected: selected, password: password, operation: operation}, nil
@@ -444,7 +439,13 @@ func (o *deploymentOperation) bindChildren(ctx context.Context, observed activat
 	if o == nil {
 		return nil
 	}
-	changed := false
+	if err := o.writable(); err != nil {
+		return err
+	}
+	if o.state.DeploymentUID == "" {
+		return fmt.Errorf("OPERATION_PARENT_UNBOUND: children require a bound deployment")
+	}
+	children := maps.Clone(o.state.Children)
 	for _, group := range []struct {
 		kind    string
 		objects map[string]*unstructured.Unstructured
@@ -455,21 +456,21 @@ func (o *deploymentOperation) bindChildren(ctx context.Context, observed activat
 			}
 			current := group.objects[prior.Name]
 			if current == nil || current.GetUID() != prior.UID || current.GetGeneration() != prior.Generation {
-				return fmt.Errorf("OPERATION_CHILD_CHANGED: selected child missing/replaced/changed")
+				return o.bindingConflict("OPERATION_CHILD_CHANGED: selected child missing/replaced/changed")
 			}
 		}
 		for name, current := range group.objects {
-			key := group.kind + "/" + name
-			if _, known := o.state.Children[key]; !known {
-				o.state.Children[key] = activationObjectReceipt{Name: name, UID: current.GetUID(), Generation: current.GetGeneration()}
-				changed = true
+			if current == nil || name == "" || current.GetName() != name || current.GetUID() == "" || current.GetGeneration() < 1 {
+				return fmt.Errorf("OPERATION_CHILD_CHANGED: selected child identity incomplete")
 			}
+			children[group.kind+"/"+name] = activationObjectReceipt{Name: name, UID: current.GetUID(), Generation: current.GetGeneration()}
 		}
 	}
-	if changed {
-		return o.save(ctx)
+	if reflect.DeepEqual(children, o.state.Children) {
+		return nil
 	}
-	return nil
+	o.state.Children = children
+	return o.save(ctx)
 }
 
 func (o *deploymentOperation) verifyHoldHistory(observed activationObservation) error {
@@ -513,7 +514,7 @@ func (o *deploymentOperation) rebootHistory() []activationRebootReceipt {
 // verifyFirstDeploymentSources refreshes old checkpoint byte observations only
 // before a genuinely absent, unbound parent can trigger a first reimage. It has
 // read-only dependencies and never reruns software/resource creation stages.
-func verifyFirstDeploymentSources(ctx context.Context, client softwareVerificationClient, execution *managementExecution, receipt softwareVerificationReceipt, chart workloadChartSourceVerifier, journal *executionJournal, maxBytes int64) error {
+func verifyFirstDeploymentSources(ctx context.Context, client softwareVerificationClient, execution *managementVerificationInputs, receipt softwareVerificationReceipt, chart workloadChartSourceVerifier, journal *executionJournal, maxBytes int64) error {
 	if err := checkWorkloadChartSource(ctx, execution.plan, chart, journal, "chart-source-before-first-resumed-deployment"); err != nil {
 		return err
 	}
@@ -529,7 +530,7 @@ func verifyFirstDeploymentSources(ctx context.Context, client softwareVerificati
 	if err != nil {
 		return err
 	}
-	fresh, err := verifyStagedSoftware(ctx, client, execution.reconciler, desired, current, execution.plan.Intent().Software, selectedSoftwarePSIDs(execution.plan.Intent()), execution.operatorNamespace, release.Operator.Image, maxBytes)
+	fresh, err := verifyStagedSoftware(execution.rules, ctx, client, execution.reconciler, desired, current, execution.plan.Intent().Software, selectedSoftwarePSIDs(execution.plan.Intent()), execution.operatorNamespace, release.Operator.Image, maxBytes)
 	if err != nil || !reflect.DeepEqual(fresh.Components, receipt.Components) {
 		return fmt.Errorf("RESUME_SOFTWARE_BYTES_UNVERIFIED: current cached bytes do not match the retained locks and receipt")
 	}

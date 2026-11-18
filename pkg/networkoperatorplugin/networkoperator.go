@@ -185,8 +185,10 @@ func (p *NetworkOperatorPlugin) SelectProfile(config *config.LaunchKitConfig) (*
 // forwarded as discovery.Options so library callers can invoke the same
 // flow via discovery.Discover without constructing a NetworkOperatorPlugin.
 func (p *NetworkOperatorPlugin) DiscoverClusterConfig(ctx context.Context, c client.Client, cfg *config.LaunchKitConfig) error {
-	if err := CheckOCPOperators(ctx, c, cfg, false); err != nil {
-		return err
+	if cfg != nil && cfg.Flavor == config.FlavorOCP {
+		if err := CheckOCPOperators(ctx, c, cfg, false); err != nil {
+			return err
+		}
 	}
 	return discovery.DiscoverClusterConfig(ctx, c, p.RESTConfig, cfg, discovery.Options{
 		WorkerNodes:      p.DiscoveryWorkers,

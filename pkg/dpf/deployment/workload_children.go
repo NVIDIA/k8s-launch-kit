@@ -12,14 +12,15 @@ import (
 	"reflect"
 	"sort"
 
+	"github.com/nvidia/k8s-launch-kit/pkg/dpf/deployment/internal/controllercontract"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/util/validation"
 	"k8s.io/client-go/discovery"
 )
 
-func (c *APIClient) getTenantWorkloadChild(ctx context.Context, tenant *tenantClient, parent *unstructured.Unstructured) (*unstructured.Unstructured, error) {
-	if c == nil || tenant == nil || parent == nil || ctx == nil {
+func (tenant *tenantClient) getWorkloadChild(ctx context.Context, parent *unstructured.Unstructured) (*unstructured.Unstructured, error) {
+	if tenant == nil || parent == nil || ctx == nil {
 		return nil, fmt.Errorf("bound management and tenant clients and workload parent are required")
 	}
 	if tenant.api == nil {
@@ -96,7 +97,7 @@ func workloadChildIdentity(parent *unstructured.Unstructured) (group, version, r
 	}
 }
 
-func verifyWorkloadChild(parent, child *unstructured.Unstructured, tenant TenantReadinessExpected) error {
+func verifyWorkloadChild(parent, child *unstructured.Unstructured, tenant controllercontract.TenantReadinessExpected) error {
 	if parent == nil || child == nil || parent.GetName() == "" || parent.GetNamespace() == "" ||
 		child.GetName() != parent.GetName() || child.GetNamespace() != parent.GetNamespace() || child.GetUID() == "" || child.GetResourceVersion() == "" || child.GetDeletionTimestamp() != nil {
 		return fmt.Errorf("tenant child identity or server metadata does not match its retained parent")
@@ -337,7 +338,7 @@ func canonicalWorkloadAddressRanges(value any) ([]string, error) {
 	return result, nil
 }
 
-func verifySelectedIPAMAllocation(parent *unstructured.Unstructured, tenant TenantReadinessExpected) error {
+func verifySelectedIPAMAllocation(parent *unstructured.Unstructured, tenant controllercontract.TenantReadinessExpected) error {
 	if tenant.Name == "" || tenant.Namespace == "" {
 		return fmt.Errorf("selected DPUCluster identity is unavailable")
 	}

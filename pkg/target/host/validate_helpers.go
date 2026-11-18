@@ -36,6 +36,7 @@ import (
 
 	"github.com/nvidia/k8s-launch-kit/pkg/bundle"
 	"github.com/nvidia/k8s-launch-kit/pkg/config"
+	"github.com/nvidia/k8s-launch-kit/pkg/hostplatform"
 	"github.com/nvidia/k8s-launch-kit/pkg/networkoperatorplugin"
 	"github.com/nvidia/k8s-launch-kit/pkg/networkoperatorplugin/connectivity"
 	"github.com/nvidia/k8s-launch-kit/pkg/networkoperatorplugin/crstate"
@@ -915,20 +916,16 @@ func nodeRoles(labels map[string]string) string {
 	return strings.Join(roles, ",")
 }
 
-// waitForReconcile re-runs ValidateManifests at 10s cadence until no
+// waitForReconcile re-runs ValidateBundle at 10s cadence until no
 // manifest is in-progress, an error appears, or the deadline elapses.
 // Returns the most recent results regardless of which terminal
 // condition fired. Emits a one-line update only when the in-progress
 // count changes so we don't flood logs on long waits.
-func waitForReconcile(ctx context.Context, c ctrlclient.Client, artifacts *bundle.Bundle, initial []networkoperatorplugin.ValidationResult, budget time.Duration, flavor string, cfg ...*config.LaunchKitConfig) []networkoperatorplugin.ValidationResult {
-	return waitForReconcileWithInterval(ctx, c, artifacts, initial, budget, flavor, 10*time.Second, cfg...)
+func waitForReconcile(ctx context.Context, c ctrlclient.Client, artifacts *bundle.Bundle, initial []networkoperatorplugin.ValidationResult, budget time.Duration, platform hostplatform.Selection, cfg *config.LaunchKitConfig) []networkoperatorplugin.ValidationResult {
+	return waitForReconcileWithInterval(ctx, c, artifacts, initial, budget, platform, 10*time.Second, cfg)
 }
 
-func waitForReconcileWithInterval(ctx context.Context, c ctrlclient.Client, artifacts *bundle.Bundle, initial []networkoperatorplugin.ValidationResult, budget time.Duration, flavor string, pollInterval time.Duration, cfg ...*config.LaunchKitConfig) []networkoperatorplugin.ValidationResult {
-	var effective *config.LaunchKitConfig
-	if len(cfg) > 0 {
-		effective = cfg[0]
-	}
+func waitForReconcileWithInterval(ctx context.Context, c ctrlclient.Client, artifacts *bundle.Bundle, initial []networkoperatorplugin.ValidationResult, budget time.Duration, platform hostplatform.Selection, pollInterval time.Duration, cfg *config.LaunchKitConfig) []networkoperatorplugin.ValidationResult {
 	deadline := time.Now().Add(budget)
 	results := initial
 	lastInProgress := -1
@@ -958,7 +955,7 @@ func waitForReconcileWithInterval(ctx context.Context, c ctrlclient.Client, arti
 		case <-time.After(pollInterval):
 		}
 
-		fresh, err := networkoperatorplugin.ValidateBundleWithConfig(ctx, c, artifacts, effective, flavor)
+		fresh, err := networkoperatorplugin.ValidateBundle(ctx, c, artifacts, cfg, platform)
 		if err != nil {
 			// Transient — keep the previous snapshot and try again
 			// on the next tick.

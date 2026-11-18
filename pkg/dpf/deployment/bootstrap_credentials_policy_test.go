@@ -60,7 +60,7 @@ func TestBootstrapCredentialsRecheckSharedPolicyAfterReads(t *testing.T) {
 				}
 				secret.SetUID(types.UID("123e4567-e89b-12d3-a456-426614174099"))
 			}}
-			f.controlPlane.tenant.Client.source = client
+			testTenant(f.controlPlane.tenant.Client).source = client
 			base := &recoveryRebooter{fixture: &f}
 			var reboot ExternalRebooter = base
 			run := func() error {

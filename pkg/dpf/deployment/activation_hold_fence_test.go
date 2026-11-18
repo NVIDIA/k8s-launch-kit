@@ -51,8 +51,8 @@ func (c *activationHoldFenceClient) patchActivationAnnotation(ctx context.Contex
 }
 
 func bindHoldFenceClient(f *activationIntegrationFixture, c *activationHoldFenceClient) {
-	f.controlPlane.tenant.Client.source = c
-	f.workload.ControlPlane.tenant.Client.source = c
+	testTenant(f.controlPlane.tenant.Client).source = c
+	testTenant(f.workload.ControlPlane.tenant.Client).source = c
 	f.client.tenant.source = c
 	f.client.base.tenant.source = c
 }

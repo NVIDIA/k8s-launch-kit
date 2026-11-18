@@ -15,7 +15,7 @@ import (
 // readiness state after retained configuration checks. It preserves exact
 // UID/spec/version during the wait, then verifies the complete bootstrap before
 // dependent work. There are no effects inside this wait.
-func waitManagementBootstrap(ctx context.Context, management tenantStageManagementClient, execution *managementExecution,
+func waitManagementBootstrap(ctx context.Context, management identityResourceReader, execution *managementVerificationInputs,
 	receipt managementBootstrapReceipt, journal *executionJournal, interval time.Duration,
 ) error {
 	err := verifyManagementBootstrap(ctx, management, execution, receipt)

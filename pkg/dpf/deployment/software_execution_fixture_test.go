@@ -7,7 +7,6 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"sort"
 	"sync"
 	"testing"
 
@@ -24,20 +23,11 @@ func fixtureExecutionSnapshot(t *testing.T, execution *managementExecution) stri
 	for _, crd := range execution.crds {
 		crds = append(crds, map[string]any{"name": crd.name, "spec": crd.spec, "versions": crd.versions, "normalized": crd.normalizedSpecJSON})
 	}
-	metadata := map[string][]string{}
-	for identity, tokens := range execution.reconciler.controllerMetadata {
-		key := identity.namespace + "/" + identity.name
-		for token := range tokens {
-			metadata[key] = append(metadata[key], token)
-		}
-		sort.Strings(metadata[key])
-	}
 	encoded, err := json.Marshal(map[string]any{
 		"intent": execution.plan.Intent(), "bundle": execution.retained.Files(), "chart": chart,
 		"manager": execution.manager, "config": execution.configObject, "namespaces": execution.namespaces,
 		"crds": crds, "operatorManifest": execution.operator.renderedManifest, "operatorValues": execution.operator.valuesYAML,
 		"preflightProjection": execution.preflight.projection, "preflightIntent": execution.preflight.intent,
-		"controllerMetadata": metadata,
 	})
 	if err != nil {
 		t.Fatal(err)

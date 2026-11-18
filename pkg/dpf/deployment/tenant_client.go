@@ -14,28 +14,32 @@ import (
 	"strings"
 	"time"
 
+	"github.com/nvidia/k8s-launch-kit/pkg/dpf/deployment/internal/controllercontract"
+
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/client-go/kubernetes"
+	"k8s.io/client-go/util/flowcontrol"
 )
 
 // Tenant credentials are read from the bound management cluster, never from a
 // second caller-supplied kubeconfig. This interface also keeps source replacement
 // tests independent of a live API server.
 type tenantSourceReader interface {
-	observeTenantSources(context.Context, TenantReadinessExpected) (tenantSources, error)
+	observeTenantSources(context.Context, controllercontract.TenantReadinessExpected) (tenantSources, error)
 }
 
 type tenantSources struct {
-	observed TenantReadinessObserved
+	observed controllercontract.TenantReadinessObserved
 	secret   *corev1.Secret
 }
 
 type tenantClient struct {
+	rules         *controllercontract.Rules
 	source        tenantSourceReader
-	expected      TenantReadinessExpected
+	expected      controllercontract.TenantReadinessExpected
 	dpuClusterUID string
 	sourceDigest  [32]byte
 	systemUID     string
@@ -43,8 +47,10 @@ type tenantClient struct {
 	hbnExec       *tenantPodExec
 }
 
-func newTenantClient(ctx context.Context, source tenantSourceReader, expected TenantReadinessExpected, dpuClusterUID string, timeout time.Duration) (*tenantClient, error) {
-	if ctx == nil || source == nil || dpuClusterUID == "" || timeout <= 0 {
+type tenantDialContext func(context.Context, string, string) (net.Conn, error)
+
+func newTenantClient(ctx context.Context, rules *controllercontract.Rules, source tenantSourceReader, expected controllercontract.TenantReadinessExpected, dpuClusterUID string, timeout time.Duration, dial tenantDialContext, limiter flowcontrol.RateLimiter) (*tenantClient, error) {
+	if rules.Validate() != nil || ctx == nil || source == nil || dpuClusterUID == "" || timeout <= 0 {
 		return nil, fmt.Errorf("tenant access requires a bound source, DPUCluster UID and positive timeout")
 	}
 	// Freeze caller-owned maps. The retained intent must not change after source
@@ -55,13 +61,20 @@ func newTenantClient(ctx context.Context, source tenantSourceReader, expected Te
 	if err != nil {
 		return nil, err
 	}
-	digest, endpoint, data, err := validateTenantSources(expected, dpuClusterUID, sources)
+	digest, endpoint, data, err := validateTenantSources(rules, expected, dpuClusterUID, sources)
 	if err != nil {
 		return nil, err
 	}
 	config, err := tenantRESTConfig(data, endpoint, timeout)
 	if err != nil {
 		return nil, err
+	}
+	// Only dialing is replaceable, after source credential/origin/TLS validation.
+	// Host, embedded trust, credentials, request timeout and redirect/proxy policy
+	// still come from the validated controller-owned source.
+	config.Dial = dial
+	if limiter != nil {
+		config.RateLimiter = limiter
 	}
 	transport, err := tenantHTTPClient(config)
 	if err != nil {
@@ -75,7 +88,7 @@ func newTenantClient(ctx context.Context, source tenantSourceReader, expected Te
 	if err != nil {
 		return nil, err
 	}
-	client := &tenantClient{source: source, expected: expected, dpuClusterUID: dpuClusterUID, sourceDigest: digest, api: api, hbnExec: hbnExec}
+	client := &tenantClient{rules: rules, source: source, expected: expected, dpuClusterUID: dpuClusterUID, sourceDigest: digest, api: api, hbnExec: hbnExec}
 	uid, err := client.observeIdentity(ctx)
 	if err != nil {
 		return nil, err
@@ -89,9 +102,9 @@ func newTenantClient(ctx context.Context, source tenantSourceReader, expected Te
 	return client, nil
 }
 
-func validateTenantSources(expected TenantReadinessExpected, dcUID string, sources tenantSources) ([32]byte, string, []byte, error) {
+func validateTenantSources(rules *controllercontract.Rules, expected controllercontract.TenantReadinessExpected, dcUID string, sources tenantSources) ([32]byte, string, []byte, error) {
 	var empty [32]byte
-	result := EvaluateTenantReadiness(expected, sources.observed)
+	result := rules.TenantReadiness(expected, sources.observed)
 	if !result.Ready {
 		return empty, "", nil, fmt.Errorf("tenant source resources are not ready: %s", result.ReasonCode)
 	}
@@ -155,7 +168,7 @@ func (c *tenantClient) verifySources(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	digest, _, _, err := validateTenantSources(c.expected, c.dpuClusterUID, sources)
+	digest, _, _, err := validateTenantSources(c.rules, c.expected, c.dpuClusterUID, sources)
 	if err != nil {
 		return err
 	}
@@ -212,11 +225,11 @@ func (c *tenantClient) VerifyIdentity(ctx context.Context) error {
 // observeTenantSources reads only the fixed management resources created by the
 // pinned DPF/Kamaji tenant controller. It does not expand the bundle's allowed
 // render kinds or offer mutations of controller-owned companion resources.
-func (c *APIClient) observeTenantSources(ctx context.Context, expected TenantReadinessExpected) (tenantSources, error) {
+func (c *APIClient) observeTenantSources(ctx context.Context, expected controllercontract.TenantReadinessExpected) (tenantSources, error) {
 	if err := c.VerifyIdentity(ctx); err != nil {
 		return tenantSources{}, err
 	}
-	if err := validateTenantExpectation(expected); err != nil {
+	if err := controllercontract.ValidateTenantExpectation(expected); err != nil {
 		return tenantSources{}, err
 	}
 	var sources tenantSources

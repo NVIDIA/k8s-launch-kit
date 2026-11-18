@@ -29,7 +29,7 @@ func pendingResetStageFixture(t *testing.T, execution *managementExecution) (act
 	f.inventory.HBN = &inventory.HBNInventory{Switches: []inventory.FabricSwitch{{Name: "leaf", Ports: []inventory.SwitchPort{{Name: "swp1", DPUSerial: "SERIAL-A"}, {Name: "swp2", DPUSerial: "SERIAL-A"}}}}}
 	op, store := checkpointFixture(t, f)
 	f.prepared.operation = op
-	sources, err := tenantOperationSources(f.ctx, f.controlPlane.tenant.Client)
+	sources, err := f.controlPlane.tenant.Client.operationSources(f.ctx)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -80,7 +80,7 @@ func pendingResetStageFixture(t *testing.T, execution *managementExecution) (act
 	add("host-network-backend", "SERIAL-A @ worker-a", "HOST_NETWORK_IDENTITY_UNAVAILABLE")
 	add("cabling", "leaf/swp1", "HOST_LLDP_PORT_MAPPING_UNAVAILABLE")
 	add("cabling", "leaf/swp2", "HOST_LLDP_PORT_MAPPING_UNAVAILABLE")
-	checks = append(checks, inventory.Check{ID: "dpf.hbn.management.enrollments", Subject: "selected DPUs", Vantage: "executor", RequiredPhase: "deploy", State: "failed", ReasonCode: "DPU_ALREADY_ENROLLED", Message: "initial vacancy"}, inventory.Check{ID: "dpf.hbn.management.tenant-network", Subject: "tenant " + f.controlPlane.tenant.Client.expected.Name + " network selection", Vantage: "management-cluster", RequiredPhase: "deploy", State: "unknown", ReasonCode: "TENANT_EXISTING_NETWORK_UNVERIFIED", Message: "initial endpoint vacancy"})
+	checks = append(checks, inventory.Check{ID: "dpf.hbn.management.enrollments", Subject: "selected DPUs", Vantage: "executor", RequiredPhase: "deploy", State: "failed", ReasonCode: "DPU_ALREADY_ENROLLED", Message: "initial vacancy"}, inventory.Check{ID: "dpf.hbn.management.tenant-network", Subject: "tenant " + testTenant(f.controlPlane.tenant.Client).expected.Name + " network selection", Vantage: "management-cluster", RequiredPhase: "deploy", State: "unknown", ReasonCode: "TENANT_EXISTING_NETWORK_UNVERIFIED", Message: "initial endpoint vacancy"})
 	checks = append(checks, discovery.HostManagementPhysicalCheck(f.inventory, "SERIAL-A"))
 	return f, &original, proof, checks
 }
@@ -134,7 +134,7 @@ func TestPendingResetAssessmentIsOwnedExactAndBeforeActivationOnly(t *testing.T)
 			f, original, proof, raw := pendingResetStageFixture(t, execution)
 			test.edit(&f, &proof, raw)
 			before, _ := json.Marshal(raw)
-			checks := proof.assessInitialChecks(raw, f.controlPlane.tenant.Client.expected.Name)
+			checks := proof.assessInitialChecks(raw, testTenant(f.controlPlane.tenant.Client).expected.Name)
 			patches, claims := len(f.client.patches), f.client.guardCalls
 			got, err := assessPendingResetHosts(f.ctx, f.client, f.prepared, proof, original, f.inventory, checks, test.phase)
 			all := err == nil
