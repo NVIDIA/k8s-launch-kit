@@ -379,6 +379,11 @@ removal check. OpenShift requires external OLM operators and configures them onl
 after preflight, with the sysctl allowlist checked before other operator writes.
 Both use the same apply, fresh observation, target-scope and reapply loops.
 
+Optional OpenShift operator-install manifests remain a separate artifact bucket.
+The shared coordinator skips them, and static validation excludes them before
+live resource reads. The OpenShift prerequisite policy retains the instruction
+to apply these manifests manually when the required operators are not ready.
+
 The separate two-method `resourceReadPolicy` has concrete Kubernetes/OpenShift
 implementations. It supplies the existing `crstate` readiness registry to deploy
 and performs standalone resource checks, including OpenShift's generated NAD

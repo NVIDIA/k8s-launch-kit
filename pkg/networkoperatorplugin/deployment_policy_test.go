@@ -11,6 +11,7 @@ import (
 
 	"github.com/nvidia/k8s-launch-kit/pkg/bundle"
 	"github.com/nvidia/k8s-launch-kit/pkg/config"
+	pkgerrors "github.com/nvidia/k8s-launch-kit/pkg/errors"
 	"github.com/nvidia/k8s-launch-kit/pkg/hostplatform"
 	"github.com/onsi/ginkgo/v2"
 	"github.com/onsi/gomega"
@@ -90,17 +91,28 @@ func policyTestBundle(platform hostplatform.Selection, withValues bool, extra ..
 
 var _ = ginkgo.Describe("concrete Host policies through the deployment coordinator", func() {
 	for _, mode := range []struct {
-		name     string
-		platform hostplatform.Selection
-		external bool
+		name             string
+		platform         hostplatform.Selection
+		external         bool
+		installArtifacts bool
 	}{
-		{"Kubernetes managed Helm", hostplatform.Kubernetes, false},
-		{"Kubernetes external Helm", hostplatform.Kubernetes, true},
-		{"OpenShift OLM", hostplatform.OpenShift, false},
+		{"Kubernetes managed Helm", hostplatform.Kubernetes, false, false},
+		{"Kubernetes external Helm", hostplatform.Kubernetes, true, false},
+		{"OpenShift OLM", hostplatform.OpenShift, false, false},
+		{"OpenShift OLM with manual install artifacts", hostplatform.OpenShift, false, true},
 	} {
 		ginkgo.It("preserves bootstrap, preflight, configuration and fresh observation order for "+mode.name, func() {
 			cfg := policyTestConfig()
-			artifacts := policyTestBundle(mode.platform, mode.platform == hostplatform.Kubernetes)
+			var installFiles []bundle.File
+			if mode.installArtifacts {
+				cfg.OCPOperatorInstall = &config.OCPOperatorInstallConfig{Manage: true}
+				installFiles = []bundle.File{
+					{Name: "00-operator-namespaces.yaml", Content: testOperatorNamespaceDoc},
+					{Name: "00-operatorgroups.yaml", Content: testOperatorGroupDoc},
+					{Name: "00-subscriptions.yaml", Content: testSubscriptionDoc},
+				}
+			}
+			artifacts := policyTestBundle(mode.platform, mode.platform == hostplatform.Kubernetes, installFiles...)
 			before := artifacts.Documents()[0].ObjectCopy()
 			applied := map[string]bool{}
 			observed := map[string]bool{}
@@ -151,6 +163,7 @@ var _ = ginkgo.Describe("concrete Host policies through the deployment coordinat
 				Apply: func(_ context.Context, _ client.WithWatch, ac runtime.ApplyConfiguration, _ ...client.ApplyOption) error {
 					obj := ac.(client.Object)
 					kind := obj.GetObjectKind().GroupVersionKind().Kind
+					gomega.Expect(kind).NotTo(gomega.BeElementOf("Namespace", "OperatorGroup", "Subscription"))
 					gomega.Expect(preflightScanned).To(gomega.BeTrue())
 					if mode.platform == hostplatform.OpenShift {
 						gomega.Expect(configured).To(gomega.BeTrue())
@@ -216,26 +229,46 @@ var _ = ginkgo.Describe("concrete Host policies through the deployment coordinat
 		gomega.Expect(errors.Is(err, failed)).To(gomega.BeTrue())
 	})
 
-	ginkgo.It("refuses missing OLM prerequisites before configuration or apply", func() {
-		writes := 0
-		c := fake.NewClientBuilder().WithInterceptorFuncs(interceptor.Funcs{
-			Create: func(context.Context, client.WithWatch, client.Object, ...client.CreateOption) error {
-				writes++
-				return nil
-			},
-			Update: func(context.Context, client.WithWatch, client.Object, ...client.UpdateOption) error {
-				writes++
-				return nil
-			},
-			Apply: func(context.Context, client.WithWatch, runtime.ApplyConfiguration, ...client.ApplyOption) error {
-				writes++
-				return nil
-			},
-		}).Build()
-		err := ApplyBundle(context.Background(), c, policyTestBundle(hostplatform.OpenShift, false), DeployOptions{Platform: hostplatform.OpenShift, Config: policyTestConfig()})
-		gomega.Expect(err).To(gomega.MatchError(gomega.ContainSubstring("not installed")))
-		gomega.Expect(writes).To(gomega.BeZero())
-	})
+	for _, mode := range []struct {
+		name   string
+		manage bool
+	}{
+		{"without install artifacts", false},
+		{"with install artifacts", true},
+	} {
+		ginkgo.It("refuses missing OLM prerequisites before configuration or apply "+mode.name, func() {
+			writes := 0
+			c := fake.NewClientBuilder().WithInterceptorFuncs(interceptor.Funcs{
+				Create: func(context.Context, client.WithWatch, client.Object, ...client.CreateOption) error {
+					writes++
+					return nil
+				},
+				Update: func(context.Context, client.WithWatch, client.Object, ...client.UpdateOption) error {
+					writes++
+					return nil
+				},
+				Patch: func(context.Context, client.WithWatch, client.Object, client.Patch, ...client.PatchOption) error {
+					writes++
+					return nil
+				},
+				Apply: func(context.Context, client.WithWatch, runtime.ApplyConfiguration, ...client.ApplyOption) error {
+					writes++
+					return nil
+				},
+			}).Build()
+			cfg := policyTestConfig()
+			cfg.OCPOperatorInstall = &config.OCPOperatorInstallConfig{Manage: mode.manage}
+			err := ApplyBundle(context.Background(), c, policyTestBundle(hostplatform.OpenShift, false), DeployOptions{Platform: hostplatform.OpenShift, Config: cfg})
+			gomega.Expect(err).To(gomega.MatchError(gomega.ContainSubstring("not installed")))
+			var structured *pkgerrors.StructuredError
+			gomega.Expect(errors.As(err, &structured)).To(gomega.Equal(mode.manage))
+			if mode.manage {
+				gomega.Expect(structured.Suggestion).To(gomega.ContainSubstring("Apply the generated operator-install artifacts"))
+				gomega.Expect(errors.Unwrap(err)).To(gomega.MatchError(gomega.ContainSubstring("not installed")))
+			}
+			gomega.Expect(writes).To(gomega.BeZero())
+		})
+	}
 
 	ginkgo.It("checks the allowlist before every other operator or policy write", func() {
 		writes := 0
