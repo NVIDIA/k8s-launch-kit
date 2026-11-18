@@ -13,6 +13,36 @@ import (
 )
 
 var _ = Describe("persisted software BOM", func() {
+	It("retains a catalog-owned hardware flavor profile reference", func() {
+		release, err := Resolve("26.8.0")
+		Expect(err).NotTo(HaveOccurred())
+		release.Hardware[0].HBNFlavorProfile = "hbn-bf3-v26-8"
+		data, err := yaml.Marshal(Summarize(release))
+		Expect(err).NotTo(HaveOccurred())
+		var saved Summary
+		Expect(yaml.Unmarshal(data, &saved)).To(Succeed())
+		restored, err := saved.Release()
+		Expect(err).NotTo(HaveOccurred())
+		Expect(restored.Hardware[0].HBNFlavorProfile).To(Equal("hbn-bf3-v26-8"))
+	})
+
+	It("round-trips exact BF4 software, profile and known hardware minima", func() {
+		release, err := Resolve("26.8.0")
+		Expect(err).NotTo(HaveOccurred())
+		release.Hardware[1].Requirements = []Requirement{{Component: "nic", Scope: "dpu", State: "known", Minimum: "32.38.1002"}}
+		data, err := yaml.Marshal(Summarize(release))
+		Expect(err).NotTo(HaveOccurred())
+		var saved Summary
+		Expect(yaml.Unmarshal(data, &saved)).To(Succeed())
+		restored, err := saved.Release()
+		Expect(err).NotTo(HaveOccurred())
+		Expect(restored.Hardware[1].Models).To(Equal([]string{"B4240"}))
+		Expect(restored.Hardware[1].HBNFlavorProfile).To(Equal("hbn-bf4-b4240-v26-8"))
+		Expect(restored.Hardware[1].Requirements).To(ContainElement(Requirement{Component: "nic", Scope: "dpu", State: "known", Minimum: "32.38.1002"}))
+		Expect(restored.Hardware[1].BlueFieldSoftware.OSISO.Digest).To(Equal(release.Hardware[1].BlueFieldSoftware.OSISO.Digest))
+		Expect(restored.Hardware[1].BlueFieldSoftware.PLDMFwBundle["MT_0000001774"].Digest).To(Equal(release.Hardware[1].BlueFieldSoftware.PLDMFwBundle["MT_0000001774"].Digest))
+	})
+
 	It("publishes artifact coordinates and named known minima without catalog research metadata", func() {
 		s := summaryFixture()
 		Expect(s.Hardware[0].MinimumNICFirmware).To(Equal("32.38.1002"))
@@ -54,10 +84,12 @@ var _ = Describe("persisted software BOM", func() {
 		Expect(summary.TenantKubernetesVersion).To(Equal("v1.35.6"))
 		bf4 := summary.Hardware[1]
 		Expect(bf4.Family).To(Equal("BlueField-4"))
-		Expect(bf4.Models).To(BeEmpty())
+		Expect(bf4.Models).To(Equal([]string{"B4240"}))
 		Expect(bf4.BFB).To(BeNil())
+		Expect(bf4.HBNFlavorProfile).To(Equal("hbn-bf4-b4240-v26-8"))
 		Expect(bf4.BlueFieldSoftware).NotTo(BeNil())
-		Expect(bf4.BlueFieldSoftware.PLDMFwBundle).To(BeEmpty())
+		Expect(bf4.BlueFieldSoftware.OSISO.Digest).To(Equal(original.Hardware[1].BlueFieldSoftware.OSISO.Digest))
+		Expect(bf4.BlueFieldSoftware.PLDMFwBundle).To(HaveKey("MT_0000001774"))
 		encoded, err := yaml.Marshal(summary)
 		Expect(err).NotTo(HaveOccurred())
 		for _, removed := range []string{"sourceRef", "sources", "revision", "resetSafety", "cpuFirmware", "bf4-reset-safety-v1"} {
@@ -75,11 +107,12 @@ var _ = Describe("persisted software BOM", func() {
 		Expect(restored.SupportedKubernetes).To(Equal(original.SupportedKubernetes))
 		Expect(restored.TenantKubernetesVersion).To(Equal(original.TenantKubernetesVersion))
 		Expect(restored.Hardware[1].Family).To(Equal("BlueField-4"))
-		Expect(restored.Hardware[1].Models).To(BeEmpty())
+		Expect(restored.Hardware[1].Models).To(Equal([]string{"B4240"}))
 		Expect(restored.Hardware[1].BFB).To(BeNil())
-		Expect(restored.Hardware[1].BlueFieldSoftware.OSISO.ReasonCode).To(Equal("BF4_ARTIFACT_NOT_PUBLIC"))
-		Expect(restored.Hardware[1].BlueFieldSoftware.PLDMFwBundle).To(BeEmpty())
-		for _, model := range []string{"B4240", "BlueField-4", "MT_0000001774"} {
+		Expect(restored.Hardware[1].HBNFlavorProfile).To(Equal("hbn-bf4-b4240-v26-8"))
+		Expect(restored.Hardware[1].BlueFieldSoftware.OSISO.Digest).To(Equal(original.Hardware[1].BlueFieldSoftware.OSISO.Digest))
+		Expect(restored.Hardware[1].BlueFieldSoftware.PLDMFwBundle["MT_0000001774"].Digest).To(Equal(original.Hardware[1].BlueFieldSoftware.PLDMFwBundle["MT_0000001774"].Digest))
+		for _, model := range []string{"B4241", "BlueField-4", "MT_0000001774"} {
 			_, found := restored.RequirementsFor(model)
 			Expect(found).To(BeFalse())
 		}
@@ -207,7 +240,7 @@ var _ = Describe("persisted software BOM", func() {
 		bf4Release, err := Resolve("26.8.0")
 		Expect(err).NotTo(HaveOccurred())
 		bf4Summary := Summarize(bf4Release)
-		bf4Summary.Hardware[1].BlueFieldSoftware.OSISO.ReasonCode = ""
+		bf4Summary.Hardware[1].BlueFieldSoftware.OSISO.Digest = ""
 		_, err = bf4Summary.Release()
 		Expect(err).To(HaveOccurred())
 	})

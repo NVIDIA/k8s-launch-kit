@@ -148,7 +148,7 @@ var _ = Describe("Bootstrap resolution", func() {
 			options := &BootstrapOptions{BMCFactoryResetPolicy: &policy}
 			_, _, err := ResolveBootstrap(options, "dpf-system", "https://management.example:6443", selected, "10.96.0.0/16")
 			Expect(err).To(HaveOccurred())
-			Expect(err.Error()).To(ContainSubstring("/provisioning/bootstrap/bmcFactoryResetPolicy"))
+			Expect(err.Error()).To(ContainSubstring("BMC factory reset policy"))
 		}
 	})
 })

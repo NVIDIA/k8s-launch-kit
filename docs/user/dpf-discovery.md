@@ -42,8 +42,9 @@ and delete the temporary Pods and ConfigMap there. Namespace admission policy
 must allow host-network Pods. Launch Kit does not change admission policy.
 
 All nodes reported by the management cluster must be Ready, schedulable Linux/amd64 nodes and
-able to pull the published, digest-pinned `nicolaka/netshoot` image. An optional
-`discovery.probes.imageRepository` mirror must contain the same pinned manifests.
+able to pull the published, digest-pinned `nicolaka/netshoot` image. The probe
+image is maintained by Launch Kit; this input format does not accept image
+repository or pull-secret overrides.
 Unsupported node scope is rejected before probe resources are created. Node count
 alone does not establish control-plane HA or qualify a production topology.
 
@@ -90,6 +91,17 @@ subsequent commands. Older builds can reject newly added fields.
 
 ## Inputs and invocation
 
+Use `--inventory inventory.yaml` for environment access and allocations. Add
+`--user-config overrides.yaml` only to change supported defaults. The release
+SBOM supplies component software and the maintained use case supplies device
+configuration. Neither raw firmware tuples nor DPUFlavor belong in your files.
+See the [input ownership reference](../reference/configuration.md#dpf-discovery-configuration).
+
+Start with your selected endpoints, credentials references and management access.
+Discovery writes `dpf-discovered.yaml`; pass that file to generation and deployment.
+It retains the settings used by discovery, so you do not need to repeat the
+optional overrides file.
+
 For HBN-BGP, also see [Check HBN-BGP prerequisites](#check-hbn-bgp-prerequisites).
 
 Supply explicit host endpoints and DPU BMC endpoints for a complete inventory.
@@ -121,7 +133,7 @@ discovery:
 ```
 
 ```bash
-l8k discover --target dpf --user-config dpf-site.yaml \
+l8k discover --target dpf --inventory inventory.yaml \
   --save-cluster-config dpf-discovered.yaml --output json
 ```
 
@@ -133,7 +145,7 @@ remote access. Lists and credentials stay in YAML; no password CLI flag exists.
 | Source | Values |
 | --- | --- |
 | Required site inputs | Nonempty host list and explicit DPU BMC endpoints with administrator credentials for completion; each selected endpoint and credential alias; username and password reference or SSH private-key reference |
-| Defaultable | `dpf.release: 26.4.0`; context from a supplied kubeconfig; system certificate trust; SSH port `22`; SSH sudo `false`; collection timeout `10m`; request timeout `15s`; up to four endpoints queried at once (`maxConcurrentBMCs`) |
+| Defaultable | release catalog default; context from a supplied kubeconfig; system certificate trust; SSH port `22`; SSH sudo `false`; collection timeout `10m`; request timeout `15s`; up to four endpoints queried at once (`maxConcurrentBMCs`) |
 | Conditional | Kubeconfig for optional management observations; SSH known-hosts file; approved noninteractive sudo for protected reads; private Redfish CA; `systemURI` when a BMC exposes multiple systems |
 | Observed | Physical-card/system identities, linked host adapters, named DPU firmware versions, administrator verification, runtime hardware/network facts and management nodes/version |
 | Release defaults | Software bill of materials (BOM), artifact coordinates and documented minima for supported models; omitted minima remain unknown and do not establish deployment readiness |
@@ -327,7 +339,7 @@ Controller mTLS enrollment and provisioning readiness remain separate later-phas
 
 ## Software BOM and optional address lookup
 
-`dpf.release` selects the release's software BOM independently of live measurements.
+`release` in optional `--user-config` selects the release's software BOM independently of live measurements.
 Omitted/null selects `26.4.0` for general inventory or the release catalog's
 HBN-BGP default, `26.8.0` today, when that use case is selected. Explicit empty or unknown
 releases are rejected. The resolved BOM is saved under `inventory.software`, with operator
@@ -336,11 +348,15 @@ digest when known. Documented minima use named fields such as
 `minimumNICFirmware` and `minimumHostMFT`. Omitted minima remain unknown in
 software checks; they are not inherited from a newer catalog. Catalog source
 references, revision lists and generic requirement objects are not saved.
-The current catalog has exact BlueField-3 models `B3210`, `B3220` and `B3240`; generic family names and BlueField-4 do not
-establish applicability. Desired BFB/component coordinates are not measured
+The catalog has exact BlueField-3 models `B3210`, `B3220` and `B3240`. For DPF
+`26.8.0` beta it also has one exact BlueField-4 provisioning row: model `B4240`
+with PSID `MT_0000001774`. Its OS ISO and PLDM coordinates use restricted
+internal distribution endpoints, which the CLI machine must reach over HTTPS
+for artifact checks. A family-only entry does not establish applicability for
+another BF4 model or PSID. Desired BFB/component coordinates are not measured
 versions. Only documented minimum versions are compatibility checks; unsupported
-firmware requirements remain unknown. Model applicability and software checks do
-not qualify hardware or enable DPF deployment profiles.
+firmware requirements remain unknown. Catalog applicability and software checks
+do not qualify hardware or enable a general BF4 deployment profile.
 
 On the supported BF4/B4240 Redfish reader, `inventory.dpus[].psid`
 records a successfully verified PSID from the selected System's `AssetTag`.
@@ -416,14 +432,14 @@ request/response bodies or raw remote command output. Debug/trace logs go to
 stderr unless `--log-file` selects a file; normal live progress remains on stderr.
 
 ```bash
-l8k discover --target dpf --user-config dpf-site.yaml \
+l8k discover --target dpf --inventory dpf-discovered.yaml \
   --save-cluster-config dpf-discovered.yaml --log-level debug
 ```
 
 To watch progress while saving a machine-readable result, redirect only stdout:
 
 ```bash
-l8k discover --target dpf --user-config dpf-site.yaml \
+l8k discover --target dpf --inventory dpf-discovered.yaml \
   --save-cluster-config dpf-discovered.yaml --output json \
   --log-level debug > discover.json
 ```
@@ -547,10 +563,6 @@ file. Use the DPU serial numbers from physical inventory. A port binding is
 intent; an LLDP hostname alone does not verify it.
 
 ```yaml
-dpf:
-  useCase: hbn-bgp
-  hbn:
-    fabricVRF: default
 credentials:
   fabric-reader:
     username: fabric-reader
@@ -580,16 +592,16 @@ noninteractive sudo authorization.
 
 ```bash
 l8k discover --target dpf --use-case hbn-bgp \
-  --user-config dpf-site.yaml --save-cluster-config dpf-discovered.yaml
+  --inventory inventory.yaml --save-cluster-config dpf-discovered.yaml
 ```
 
-The explicit CLI selection overrides `dpf.useCase` and is saved with the result.
+The explicit CLI selection overrides `useCase` in optional overrides and is saved with the result.
 HBN-BGP defaults to inventory mode and the release catalog's HBN-BGP release
 `26.8.0`; the same catalog row supplies default HBN chart and image
-coordinates. Other `dpf.release` values are rejected unless the catalog
+coordinates. Other `release` values in optional overrides are rejected unless the catalog
 explicitly supports HBN-BGP for them. The profile supplies operator namespace
 `dpf-operator-system` and networking/policy defaults.
-Override the operator namespace with `dpf.namespace`; it is independent of the
+Override the operator namespace with `namespace` in optional overrides; it is independent of the
 namespace used for optional management-network probes. Defaults are included in
 the binary.
 
@@ -642,9 +654,11 @@ uniquely associated selected hosts. Missing associations or several selected car
 one host block the native path. A discovery pass does not reserve execution time;
 deployment checks its actual remaining deadline.
 
-Once the provisioning inputs and current device identities are complete, the
-CLI downloads the selected operator and HBN charts over HTTPS and verifies
-their digests and generated resource schemas. It uses that plan to ask the
+Once the release catalog covers the exact selected hardware and current device
+identities are complete, discovery checks the selected OS ISO and PLDM artifact
+bytes from the CLI machine over HTTPS. Generation downloads the selected
+operator and HBN charts over HTTPS and verifies their digests and generated
+resource schemas. It uses that plan to ask the
 management API whether the configured Kubernetes identity has the scoped
 permissions needed for management-side provisioning. These checks include
 operator installation, selected DPF resources, backing-resource inspection and
@@ -666,15 +680,13 @@ For the tenant control plane, add the reserved VIP and the interface on the
 management control-plane nodes that will carry it. For example:
 
 ```yaml
-provisioning:
-  bootstrap:
-    tenant:
-      vip: 192.0.2.20
-      interface: eth0
-      allocation:
-        vipReserved: true
-        vipExcludedFromDHCP: true
-        routerIDUniqueOnSelectedNodes: true
+tenant:
+  vip: 192.0.2.20
+  interface: eth0
+  allocation:
+    vipReserved: true
+    vipExcludedFromDHCP: true
+    routerIDUniqueOnSelectedNodes: true
 ```
 
 Replace the example address and interface with your site's allocation. Set the
@@ -697,7 +709,7 @@ capacity, pod CIDR and VRRP ID from the profile; verify that the address ranges
 and VRRP ID do not conflict with existing use. Changing the VIP, VRRP ID or selected
 nodes requires reviewing the declarations again. If discovery observes a literal
 management API IP and port, it can reuse them for the operator configuration.
-Otherwise, supply `provisioning.bootstrap.managementAPIIP` and
+Otherwise, supply `tenant.managementAPIIP` and
 `managementAPIPort`. Missing values block use-case readiness without discarding
 the hardware inventory. See the [configuration reference](../reference/configuration.md#dpf-discovery-configuration)
 for defaults and overrides.
@@ -835,7 +847,7 @@ view retains selected peers and interfaces plus prefixes relevant to both pools.
 It does not contain the switch's complete routing table. Site and cluster
 IPAM allocation and effective BGP route policy are separate checks.
 
-Omit `dpf.hbn` to use the flat IPv4 BGP
+Omit `hbn.networking` in optional overrides to use the flat IPv4 BGP
 profile defaults, or override individual fields:
 
 | Field | Default | Purpose |
@@ -853,10 +865,8 @@ Customize only the values your environment needs; omitted values keep their
 profile defaults. For example:
 
 ```yaml
-dpf:
-  release: "26.8.0"
-  useCase: hbn-bgp
-  hbn:
+hbn:
+  networking:
     fabricVRF: tenant-fabric
     fabricASN: 65010
     uplinkMTU: 9000

@@ -167,3 +167,11 @@ Structural validation does not prove CRD schema/admission or readiness. Sidecar 
 - Implementation: [bundle](../../../pkg/bundle), [effective config](../../../pkg/config/effective.go), [Host paths](../../../pkg/target/host/paths.go).
 - Existing suites: [bundle](../../../pkg/bundle/bundle_test.go), [application bundle](../../../pkg/app/bundle_test.go), [Host bundle](../../../pkg/target/host/bundle_test.go), [effective config](../../../pkg/config/effective_test.go), [paths](../../../pkg/target/host/paths_test.go).
 - Architecture: [artifact bundle](../../../engineering/architecture/artifact-bundle.md).
+
+### Requirement: DPF inventory and override handoff
+
+DPF discovery SHALL save environment references, observed inventory and normalized supported desired settings. It SHALL NOT serialize resolved secrets, raw flavor or user-editable software composition. Generation SHALL retain the effective discovery configuration with its bundle. Deployment SHALL use retained desired settings when a fresh access inventory omits configuration; supplied settings SHALL reproduce the retained plan or fail before deployment changes. Resume SHALL retain existing operation and bundle identity checks.
+
+- GIVEN an optional override file WHEN publishing inventory THEN protect that file from output aliasing and reject concurrent edits to either input.
+- GIVEN identical effective settings with different YAML ordering WHEN comparing plans THEN preserve semantic equality; raw YAML byte ordering is not a readiness authorization.
+- GIVEN generation WHEN resolving artifact inputs THEN do not open access credentials or kubeconfig files.

@@ -38,7 +38,7 @@ Read [DPF deployment](../../docs/user/dpf-deployment.md) and its
 Run the explicitly selected DPF target with a reviewed generated bundle:
 
 ```sh
-l8k deploy --target dpf --user-config dpf-discovered.yaml \
+l8k deploy --target dpf --inventory dpf-discovered.yaml \
   --deployment-files ./hbn-bgp --deploy-timeout 2h --output json
 ```
 
@@ -67,7 +67,7 @@ one-host `provisioned` is not cross-host validation. JSON is one final stdout
 document, including a safe `error` on failure; progress is on stderr. Preserve
 the report and partial effects for inspection rather than blindly repeating a
 reset. Preserve the reported `namespace/name/UID` operation reference and use
-`deploy --target dpf --user-config SITE --deployment-files BUNDLE --resume REF`
+`deploy --target dpf --inventory INVENTORY --deployment-files BUNDLE --resume REF`
 for the same initial deployment. Resume loads the exact UID/bundle/management/
 namespace/cohort-bound operation before assessing fresh prerequisites. If its
 unchanged operator configuration is temporarily not Ready, restoration waits

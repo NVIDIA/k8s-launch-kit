@@ -29,7 +29,7 @@ func generatedUseCaseSite(input config.Input) (config.Input, *bundle.Bundle) {
 	Expect(err).NotTo(HaveOccurred())
 	Expect(os.WriteFile(source, data, 0600)).To(Succeed())
 	var stdout, stderr bytes.Buffer
-	driver := generateDriver{request: GenerateRequest{UserConfig: source, UseCase: stringPtr("hbn-bgp"), OutputPath: filepath.Join(root, "bundle"), Stdout: &stdout, Stderr: &stderr}, fetchChart: func(_ context.Context, address string) ([]byte, error) {
+	driver := generateDriver{request: GenerateRequest{Inventory: source, UseCase: stringPtr("hbn-bgp"), OutputPath: filepath.Join(root, "bundle"), Stdout: &stdout, Stderr: &stderr}, prepare: prepareFixtureGeneration, fetchChart: func(_ context.Context, address string) ([]byte, error) {
 		if strings.HasSuffix(address, "dpf-operator-v26.8.0.tgz") {
 			return os.ReadFile("../../dpf/bootstrap/testdata/operator/dpf-operator-v26.8.0.tgz")
 		}
@@ -96,11 +96,11 @@ var _ = Describe("retained DPF deployment use case", func() {
 			loaded, _ := generatedUseCaseSite(input)
 			for _, changed := range []string{"", "another-selection"} {
 				loaded.Site.DPF.UseCase = &changed
-				data, err := yaml.Marshal(loaded.Site)
-				Expect(err).NotTo(HaveOccurred())
+				data := publicFixtureBytes(loaded)
+				var err error
 				Expect(os.WriteFile(loaded.Path, data, 0600)).To(Succeed())
 				var stdout, stderr bytes.Buffer
-				op, err := NewDeployAdapter(DeployRequest{UserConfig: loaded.Path, DeploymentFiles: filepath.Join(filepath.Dir(loaded.Path), "bundle"), Stdout: &stdout, Stderr: &stderr}).Bind(target.Invocation{Target: target.DPF, Phase: target.Deploy, Output: target.OutputOptions{Format: "json", Quiet: true}})
+				op, err := NewDeployAdapter(DeployRequest{Inventory: loaded.Path, DeploymentFiles: filepath.Join(filepath.Dir(loaded.Path), "bundle"), Stdout: &stdout, Stderr: &stderr}).Bind(target.Invocation{Target: target.DPF, Phase: target.Deploy, Output: target.OutputOptions{Format: "json", Quiet: true}})
 				Expect(err).NotTo(HaveOccurred())
 				Expect(op.Run(context.Background())).To(MatchError(ContainSubstring("selection conflicts")))
 				Expect(stdout.Len()).To(BeZero())
@@ -173,8 +173,9 @@ var _ = Describe("retained DPF deployment use case", func() {
 				"bmc":  {Username: "reader", PasswordRef: config.PasswordRef{Env: &passwordEnv}},
 			}
 			loaded, _ := generatedUseCaseSite(input)
+			Expect(os.WriteFile(loaded.Path, publicFixtureBytes(loaded), 0600)).To(Succeed())
 			var stdout, stderr bytes.Buffer
-			op, err := NewDeployAdapter(DeployRequest{UserConfig: loaded.Path, DeploymentFiles: filepath.Join(filepath.Dir(loaded.Path), "bundle"), Stdout: &stdout, Stderr: &stderr}).Bind(target.Invocation{Target: target.DPF, Phase: target.Deploy, Output: target.OutputOptions{Format: "json", Quiet: true}})
+			op, err := NewDeployAdapter(DeployRequest{Inventory: loaded.Path, DeploymentFiles: filepath.Join(filepath.Dir(loaded.Path), "bundle"), Stdout: &stdout, Stderr: &stderr}).Bind(target.Invocation{Target: target.DPF, Phase: target.Deploy, Output: target.OutputOptions{Format: "json", Quiet: true}})
 			Expect(err).NotTo(HaveOccurred())
 			ctx, cancel := context.WithCancel(context.Background())
 			cancel()

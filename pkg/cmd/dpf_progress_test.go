@@ -61,7 +61,7 @@ func TestDPFCLIProgressWhileRemoteRequestIsPending(t *testing.T) {
 			require.NoError(t, os.WriteFile(seed, []byte(source), 0600))
 			ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 			defer cancel()
-			args := []string{"-test.run=^TestTargetCLIHelperProcess$", "--", "discover", "--target", "dpf", "--user-config", seed, "--save-cluster-config", filepath.Join(dir, "inventory.yaml"), "--output", "json"}
+			args := []string{"-test.run=^TestTargetCLIHelperProcess$", "--", "discover", "--target", "dpf", "--inventory", seed, "--save-cluster-config", filepath.Join(dir, "discovered.yaml"), "--output", "json"}
 			if quiet {
 				args = append(args, "--quiet")
 			}

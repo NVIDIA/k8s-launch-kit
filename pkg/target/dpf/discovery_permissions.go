@@ -8,8 +8,10 @@ import (
 	"errors"
 	"strings"
 
+	"github.com/nvidia/k8s-launch-kit/pkg/dpf/bundle"
 	"github.com/nvidia/k8s-launch-kit/pkg/dpf/config"
 	"github.com/nvidia/k8s-launch-kit/pkg/dpf/deployment"
+	"github.com/nvidia/k8s-launch-kit/pkg/dpf/discovery"
 	"github.com/nvidia/k8s-launch-kit/pkg/dpf/generation"
 	"github.com/nvidia/k8s-launch-kit/pkg/dpf/inventory"
 	"github.com/nvidia/k8s-launch-kit/pkg/ui"
@@ -38,8 +40,7 @@ func newHBNPermissionObserver() hbnPermissionObserver {
 
 func (o hbnPermissionObserver) observe(ctx context.Context, request config.Request, current *inventory.Inventory) []inventory.Check {
 	unknown := func(code, message string) []inventory.Check {
-		return []inventory.Check{{ID: "dpf.hbn.management.caller-rbac.observation", Subject: request.DPFNamespace,
-			Vantage: "executor", RequiredPhase: "deploy", State: "unknown", ReasonCode: code, Message: message}}
+		return callerRBACUnknown(request, code, message)
 	}
 	if ctx == nil || current == nil || current.Management == nil || o.fetchChart == nil || o.newClient == nil {
 		return unknown("CALLER_RBAC_INPUT_UNAVAILABLE", "Caller authorization requires current management discovery and the deployment-plan checker.")
@@ -53,7 +54,7 @@ func (o hbnPermissionObserver) observe(ctx context.Context, request config.Reque
 	input.Site.Inventory = current
 	plan, err := generationInputs(input)
 	if err != nil {
-		return unknown("CALLER_RBAC_PLAN_UNAVAILABLE", "Complete the provisioning inputs and current selected-device identities before deployment permissions can be derived.")
+		return unknown("CALLER_RBAC_PLAN_UNAVAILABLE", "Deployment permissions cannot be checked until the selected release has a supported provisioning recipe, site allocations are complete and device identities are verified.")
 	}
 	progress := ui.FromContext(ctx)
 	progress.Info("[RUNNING] HBN-BGP caller permissions: retrieving and validating the selected deployment charts")
@@ -81,11 +82,44 @@ func (o hbnPermissionObserver) observe(ctx context.Context, request config.Reque
 	if ctx.Err() != nil {
 		return unknown("CALLER_RBAC_CANCELLED", "Caller authorization was cancelled while validating the deployment plan.")
 	}
-	client, err := o.newClient(ctx, request, plan.Management, plan.Operator.KubernetesVersion)
+	return o.checkPermissions(ctx, request, plan.Management, plan.Operator.KubernetesVersion, retained)
+}
+
+// observeRetained checks current caller authorization against the exact bundle
+// being deployed, after binding current observations and supported desired
+// settings. It never regenerates a new recipe from the current release catalog.
+func (o hbnPermissionObserver) observeRetained(retained *bundle.Bundle, plan *generation.Plan) discovery.HBNPermissionObserver {
+	return func(ctx context.Context, request config.Request, current *inventory.Inventory) []inventory.Check {
+		if ctx == nil || current == nil || current.Management == nil || plan == nil || retained == nil || o.newClient == nil {
+			return callerRBACUnknown(request, "CALLER_RBAC_INPUT_UNAVAILABLE", "Caller authorization requires a validated retained plan and current management discovery.")
+		}
+		if ctx.Err() != nil {
+			return callerRBACUnknown(request, "CALLER_RBAC_CANCELLED", "Caller authorization was cancelled before the retained plan could be inspected.")
+		}
+		input := request.Input
+		input.Site.Inventory = current
+		if err := verifyDeploymentPlan(input, retained, plan); err != nil {
+			return callerRBACUnknown(request, "CALLER_RBAC_PLAN_UNAVAILABLE", "Current selected identities or supported settings do not match the retained deployment plan; caller permissions remain unverified.")
+		}
+		intent := plan.Intent()
+		return o.checkPermissions(ctx, request, intent.Management, intent.KubernetesVersion, retained)
+	}
+}
+
+func callerRBACUnknown(request config.Request, code, message string) []inventory.Check {
+	return []inventory.Check{{ID: "dpf.hbn.management.caller-rbac.observation", Subject: request.DPFNamespace,
+		Vantage: "executor", RequiredPhase: "deploy", State: "unknown", ReasonCode: code, Message: message}}
+}
+
+func (o hbnPermissionObserver) checkPermissions(ctx context.Context, request config.Request, identity generation.ManagementIdentity, kubernetesVersion string, retained *bundle.Bundle) []inventory.Check {
+	unknown := func(code, message string) []inventory.Check {
+		return callerRBACUnknown(request, code, message)
+	}
+	client, err := o.newClient(ctx, request, identity, kubernetesVersion)
 	if err != nil || client == nil {
 		return unknown("CALLER_RBAC_MANAGEMENT_UNAVAILABLE", "The configured management credentials could not be bound to this discovery's cluster identity and TLS trust.")
 	}
-	progress.Info("[RUNNING] HBN-BGP caller permissions: checking scoped management API authorizations")
+	ui.FromContext(ctx).Info("[RUNNING] HBN-BGP caller permissions: checking scoped management API authorizations")
 	result := client.CheckCallerPermissions(ctx, deployment.ManagementPreflightRequest{Bundle: retained})
 	if ctx.Err() != nil {
 		return unknown("CALLER_RBAC_CANCELLED", "Caller authorization was cancelled; repeat discovery to obtain a complete observation.")

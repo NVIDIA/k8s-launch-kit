@@ -72,7 +72,12 @@ SSH/Redfish sources, optional Linux/amd64 management-network probes, HBN-BGP
 prerequisite checks, artifact generation, and deployment. The current BF4/HBN-BGP
 cohort remains beta; command availability does not qualify every hardware and
 release combination.
-Generation needs explicit `--user-config` and `--save-deployment-files`; review
+DPF environment/access inputs are supplied with `--inventory`; `--user-config`
+is optional and contains only supported release/profile overrides. The discovery
+output retains effective settings for later phases. Never ask users to author
+raw firmware tuples, DPUFlavor, boot scripts or lifecycle policy. Missing maintained
+release/hardware coverage is a catalog support blocker, not a site input request.
+Generation needs explicit `--inventory` and `--save-deployment-files`; review
 its bundle before running the separate deploy command. Standalone DPF deploy
 applies that retained HBN-BGP bundle and checks provisioning, BGP, routes and
 cross-host traffic. It requires explicit site and bundle paths; use the deploy

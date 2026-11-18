@@ -46,15 +46,15 @@ var generateCmd = &cobra.Command{
 from a cluster configuration file.
 
 Supports SR-IOV, host-device, RDMA-shared, IPoIB, MacVLAN, and Spectrum-X profiles.
-With --target dpf, generates HBN-BGP artifacts from a DPF site file and saved inventory.
-DPF requires explicit --user-config and --save-deployment-files. Generate and
+With --target dpf, generates HBN-BGP artifacts from discovered inventory and retained settings.
+DPF requires --inventory and --save-deployment-files. --user-config optionally supplies supported policy overrides. Generate and
 review the bundle, then use 'l8k deploy --target dpf' as a separate command.
 DPF does not support --deploy or --dry-run during generation.
 File-backed configs remain unchanged; the resolved config is saved with the deployment bundle.
 For the Host target, optionally deploy the generated manifests with --deploy.`,
 	Example: `  # Independent DPF HBN-BGP bundle
   l8k generate --target dpf --use-case hbn-bgp \
-    --user-config dpf-site.yaml --save-deployment-files ./hbn-bgp
+    --inventory dpf-discovered.yaml --save-deployment-files ./hbn-bgp
 
   # SR-IOV Ethernet (most common for GPU clusters)
   l8k generate --user-config cluster-config.yaml \
@@ -95,13 +95,13 @@ For the Host target, optionally deploy the generated manifests with --deploy.`,
 	Run: func(cmd *cobra.Command, args []string) {
 		if targetName == string(target.DPF) {
 			if len(args) > 0 {
-				exitWithError(apperrors.NewValidationError("generate takes no positional arguments", nil, "Use --user-config"), outputFormat)
+				exitWithError(apperrors.NewValidationError("generate takes no positional arguments", nil, "Use --inventory inventory.yaml (and optionally --user-config overrides.yaml)"), outputFormat)
 			}
 			var useCase *string
 			if cmd.Flags().Changed("use-case") {
 				useCase = &generateUseCase
 			}
-			runTargetCommand(cmd, target.Generate, dpftarget.NewGenerateAdapter(dpftarget.GenerateRequest{UserConfig: userConfig, UseCase: useCase, OutputPath: saveDeploymentFiles, Deploy: deploy}))
+			runTargetCommand(cmd, target.Generate, dpftarget.NewGenerateAdapter(dpftarget.GenerateRequest{Inventory: dpfInventoryPath, UserConfig: userConfig, UseCase: useCase, OutputPath: saveDeploymentFiles, Deploy: deploy}))
 			return
 		}
 		opts := mustCollectConfigFlags(cmd, generateConfigOptions)
@@ -132,11 +132,13 @@ For the Host target, optionally deploy the generated manifests with --deploy.`,
 func init() {
 	rootCmd.AddCommand(generateCmd)
 	addTargetFlag(generateCmd)
-	generateCmd.Flags().StringVar(&generateUseCase, "use-case", "", "DPF use case: hbn-bgp (overrides dpf.useCase)")
+	generateCmd.Flags().StringVar(&generateUseCase, "use-case", "", "DPF use case: hbn-bgp (overrides the useCase setting)")
 	setFlagGroup(generateCmd, "use-case", GroupProfile)
 
 	// Config
-	generateCmd.Flags().StringVar(&userConfig, "user-config", "", "Cluster config file (otherwise auto-detected from ./cluster-config.yaml; --for can use embedded defaults)")
+	generateCmd.Flags().StringVar(&userConfig, "user-config", "", "Host: cluster config file (auto-detected if omitted); DPF: optional supported policy overrides")
+	generateCmd.Flags().StringVar(&dpfInventoryPath, "inventory", "", "DPF inventory YAML input (required for --target dpf)")
+	setFlagGroup(generateCmd, "inventory", GroupCommon)
 	mustBindConfigFlags(generateCmd, &generateConfigOptions, configflags.ScopeGenerate)
 
 	// Profile selection

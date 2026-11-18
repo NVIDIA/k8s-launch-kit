@@ -49,11 +49,12 @@ flag groups and `l8k schema` for each flag's `targets` list.
 
 | Flag | Applies to | Target scope | Description |
 | --- | --- | --- | --- |
+| `--inventory` | discover, generate, deploy | dpf | Required environment/access inventory. Pass discovery output to later phases. |
 | `--resume` | deploy | dpf | Resume the reported `namespace/name/UID` initial-deployment operation with the same explicit site and retained bundle; uncertain effects are observed, never blindly replayed. |
-| `--use-case` | discover, generate | dpf | Select `hbn-bgp` readiness checks; overrides `dpf.useCase` in the input file. |
+| `--use-case` | discover, generate | dpf | Select `hbn-bgp` readiness checks; overrides `useCase` in optional DPF overrides or retained discovery settings. |
 | `--target` | discover, generate, deploy, validate, root pipeline | target-agnostic | Target name. Defaults to `host`. |
 | `--kubeconfig` | root, discover, generate with deploy, deploy, clean, validate, sosreport | host | Path to kubeconfig. Falls back to `$KUBECONFIG` and then `~/.kube/config`. It represents the host workload cluster, not a universal multi-context input. |
-| `--user-config` | root, discover, generate, deploy, clean, validate | host | Config file to merge, render, validate against, or use for cleanup namespace and Helm-ownership resolution. |
+| `--user-config` | root, discover, generate, deploy, clean, validate | host; DPF standalone discover/generate/deploy | Host configuration, or optional supported DPF overrides alongside required `--inventory`. |
 | `--config-dir` | all | host | Directory containing optional `l8k-config.yaml` and `presets/` overrides. |
 | `--network-operator-release` | root, discover, generate | host | Catalogued release line such as `26.1`, `26.4`, `26.7`, or `26.10`. |
 | `--network-operator-namespace` | root, discover, generate, deploy, clean, validate | host | Override the Network Operator namespace. It is a no-op for discovery. |

@@ -22,6 +22,7 @@ import (
 	"github.com/nvidia/k8s-launch-kit/pkg/dpf/deployment"
 	"github.com/nvidia/k8s-launch-kit/pkg/dpf/discovery"
 	"github.com/nvidia/k8s-launch-kit/pkg/dpf/generation"
+	"github.com/nvidia/k8s-launch-kit/pkg/dpf/hbn"
 	"github.com/nvidia/k8s-launch-kit/pkg/dpf/inventory"
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
@@ -84,6 +85,11 @@ var _ = Describe("native deployment prerequisite provider", func() {
 		input.Path = filepath.Join(root, "site.yaml")
 		input.Site.Inventory = nil
 		input.Site.Management.KubeconfigRef.File = kubeconfig
+		artifactPVC := "retained-artifacts"
+		gatewayIndex, hostIndex := 3, 4
+		input.Site.Provisioning.Resources = map[string]string{"memory": "6Gi", "nvidia.com/bf_sf": "8"}
+		input.Site.Provisioning.Bootstrap.ArtifactPVC = &artifactPVC
+		input.Site.Provisioning.HBN = &hbn.GenerationOptions{WorkloadGatewayIndex: &gatewayIndex, HostAddressIndex: &hostIndex}
 		intent, err := config.ResolveIntent(input.Site)
 		Expect(err).NotTo(HaveOccurred())
 		physical := prerequisitePhysicalCollector{devices: map[string]inventory.Device{
@@ -170,5 +176,64 @@ var _ = Describe("native deployment prerequisite provider", func() {
 		unchanged, err := os.ReadFile(input.Path)
 		Expect(err).NotTo(HaveOccurred())
 		Expect(unchanged).To(Equal(data))
+
+		// The new public access file contains neither fixed recipe nor software.
+		// Exercise the real collection/publication/retained-plan comparison path
+		// with it, rather than passing a manufactured "fresh" inventory to verify.
+		public := publicFixtureBytes(request.Input)
+		Expect(os.WriteFile(input.Path, public, 0600)).To(Succeed())
+		request.Input, err = config.LoadInputs(input.Path, "")
+		Expect(err).NotTo(HaveOccurred())
+		Expect(request.Input.External).To(BeTrue())
+		Expect(request.Input.Site.Provisioning.Flavor).To(BeNil())
+		Expect(request.Input.Site.Provisioning.Software.OSISO.URL).To(BeEmpty())
+		for _, phase := range []deployment.PrerequisitePhase{deployment.BeforeActivation, deployment.AfterActivation} {
+			for _, resume := range []bool{false, true} {
+				runDir := filepath.Join(root, fmt.Sprintf("external-%t", resume))
+				verify := deploymentPrerequisitesWithCollectors(retained, runDir, resume, collectors)
+				previousReads := originReads
+				observed, err := verify(ctx, request, plan, phase)
+				if resume || phase == deployment.AfterActivation {
+					Expect(err).NotTo(HaveOccurred(), "validated retained BF4 recipe must not fall back to the incomplete catalog")
+				} else {
+					Expect(err).To(MatchError(ContainSubstring("prerequisites are blocked")), "fresh initial-state checks still apply")
+				}
+				Expect(observed.Inventory).NotTo(BeNil())
+				Expect(observed.Inventory.Collection.RunID).NotTo(Equal(before.Inventory.Collection.RunID))
+				for _, check := range observed.Checks {
+					Expect(check.ID).NotTo(Equal("dpf.hbn.catalog"))
+				}
+				if phase == deployment.BeforeActivation {
+					Expect(originReads).To(Equal(previousReads+1), "retained artifact source bytes still require fresh verification")
+				} else {
+					Expect(originReads).To(Equal(previousReads))
+				}
+				published, err := os.ReadFile(filepath.Join(runDir, string(phase)+"-discovered.yaml"))
+				Expect(err).NotTo(HaveOccurred())
+				var document map[string]any
+				Expect(yaml.Unmarshal(published, &document)).To(Succeed())
+				Expect(document).NotTo(HaveKey("provisioning"))
+				Expect(document).NotTo(HaveKey("flavor"))
+				Expect(document).NotTo(HaveKey("software"))
+				Expect(document).To(HaveKey("configuration"))
+			}
+		}
+		settings := config.Configuration(request.Input)
+		if settings.HBN == nil {
+			settings.HBN = &config.HBNOverrides{}
+		}
+		memory := "8Gi"
+		settings.HBN.Memory = &memory
+		changed := request
+		changed.Input, err = config.WithConfiguration(request.Input, settings)
+		Expect(err).NotTo(HaveOccurred())
+		verify := deploymentPrerequisitesWithCollectors(retained, filepath.Join(root, "external-changed-memory"), true, collectors)
+		previousReads := originReads
+		_, err = verify(ctx, changed, plan, deployment.BeforeActivation)
+		Expect(err).To(MatchError(ContainSubstring("change the generated plan")), "retained recipe must not overwrite current supported memory")
+		Expect(originReads).To(Equal(previousReads+1), "changed intent is rejected after actual fresh collection")
+		unchanged, err = os.ReadFile(input.Path)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(unchanged).To(Equal(public))
 	})
 })

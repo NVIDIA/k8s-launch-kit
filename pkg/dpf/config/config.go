@@ -1,7 +1,8 @@
 // Copyright 2026 NVIDIA CORPORATION & AFFILIATES
 // SPDX-License-Identifier: Apache-2.0
 
-// Package config loads ordinary DPF site YAML without Host defaults or ambient access.
+// Package config loads DPF inventory and supported overrides without Host
+// defaults or ambient access, and decodes retained legacy internal sources.
 package config
 
 import (
@@ -81,27 +82,22 @@ type Site struct {
 		UseCase   *string      `yaml:"useCase,omitempty"`
 		HBN       *hbn.Options `yaml:"hbn,omitempty"`
 	} `yaml:"dpf,omitempty"`
-	Management struct {
-		KubeconfigRef FileRef `yaml:"kubeconfigRef"`
-		Context       *string `yaml:"context,omitempty"`
-	} `yaml:"management"`
+	Management  ManagementInput       `yaml:"management"`
 	Credentials map[string]Credential `yaml:"credentials"`
-	Discovery   struct {
-		AddressLookup *addresslookup.Config `yaml:"addressLookup,omitempty"`
-		DPUs          []Endpoint            `yaml:"dpus"`
-		Hosts         []Endpoint            `yaml:"hosts"`
-		Switches      []Switch              `yaml:"switches,omitempty"`
-		TLS           *TLS                  `yaml:"tls,omitempty"`
-		Probes        Probes                `yaml:"probes,omitempty"`
-		Limits        Limits                `yaml:"limits,omitempty"`
-	} `yaml:"discovery"`
-	Inventory *inventory.Inventory `yaml:"inventory,omitempty"`
+	Discovery   DiscoveryInput        `yaml:"discovery"`
+	Inventory   *inventory.Inventory  `yaml:"inventory,omitempty"`
 }
 type Input struct {
 	Site     Site
 	Source   []byte
 	Path     string
 	Document *yaml.Node
+	// External preserves the two-file public boundary independently of the
+	// internal effective document used by existing lifecycle services.
+	External          bool
+	InventoryDocument *yaml.Node
+	OverridesPath     string
+	OverridesSource   []byte
 }
 
 // Access is private runtime state. It deliberately cannot be serialized or logged.
@@ -241,6 +237,9 @@ func Decode(b []byte, p string) (Input, error) {
 	expanded, err := yamlinput.Expand(&doc)
 	if err != nil {
 		return Input{}, err
+	}
+	if externalDocument(expanded) {
+		return decodeExternalInventory(b, p, expanded)
 	}
 	// Scalar types belong to their effective paths after merge/alias expansion.
 	// Expand preserves YAML tags, so validation still rejects string coercion.
@@ -555,8 +554,12 @@ func ResourceURI(s string) error {
 	return nil
 }
 
-// Saved patches only generated inventory and file references whose base changed.
+// Saved preserves source fields and rebases file references whose base changed.
+// External inputs also retain only their supported effective configuration.
 func Saved(in Input, inv *inventory.Inventory, destination string) ([]byte, error) {
+	if in.External {
+		return savedExternal(in, inv, destination)
+	}
 	doc, err := yamlinput.Expand(in.Document)
 	if err != nil {
 		return nil, err

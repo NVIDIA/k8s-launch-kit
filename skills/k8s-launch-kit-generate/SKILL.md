@@ -39,7 +39,7 @@ a completion guarantee. Fresh and resume deployment recheck the actual remaining
 deadline before image metadata or discovery probes, and before first deployment
 creation after preparation. See [the budget rule](../../docs/user/dpf-deployment.md#run-deployment).
 
-Use `l8k generate --target dpf --use-case hbn-bgp --user-config <DPF_SITE>
+Use `l8k generate --target dpf --use-case hbn-bgp --inventory <DPF_INVENTORY>
 --save-deployment-files <NEW_DIRECTORY>` after DPF discovery. Read
 [the DPF generation procedure](../../docs/user/dpf-generation.md) for the required
 bootstrap allocation, hardware flavor and exact software artifact inputs.

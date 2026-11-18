@@ -75,8 +75,8 @@ If <deployment-files>/network-operator/ exists (the layout 'l8k generate'
 produces), that subdirectory is used. Otherwise <deployment-files> itself
 is used as the manifest directory.
 
-With --target dpf, deploy a reviewed HBN-BGP bundle using explicit
---user-config and --deployment-files. DPF runs fresh prerequisite checks,
+With --target dpf, deploy a reviewed HBN-BGP bundle using --inventory and
+--deployment-files. --user-config optionally supplies supported policy overrides. DPF runs fresh prerequisite checks,
 installs DPF, provisions the selected DPUs, configures host workload networking,
 and verifies BGP and installed routes. With two or more selected hosts, it also
 checks the full ordinary/DF traffic matrix for every directed host pair. A
@@ -95,11 +95,11 @@ uncertain reset claims permit observation only.`,
   l8k deploy --dry-run
 
   # Independent DPU cluster; can reboot the explicitly selected hosts
-  l8k deploy --target dpf --user-config dpf-discovered.yaml --deployment-files ./hbn-bgp`,
+  l8k deploy --target dpf --inventory dpf-discovered.yaml --deployment-files ./hbn-bgp`,
 	Run: func(cmd *cobra.Command, args []string) {
 		if targetName == string(target.DPF) {
 			request := dpftarget.DeployRequest{
-				UserConfig: userConfig, DeploymentFiles: deploymentFiles, Resume: deployResume, ResumeSet: cmd.Flags().Changed("resume"),
+				Inventory: dpfInventoryPath, UserConfig: userConfig, DeploymentFiles: deploymentFiles, Resume: deployResume, ResumeSet: cmd.Flags().Changed("resume"),
 				Stdout: cmd.OutOrStdout(), Stderr: cmd.ErrOrStderr(),
 			}
 			if !cmd.Flags().Changed("deployment-files") {
@@ -142,7 +142,9 @@ func init() {
 	// the Host deploy service. It drives the Phase 0 Helm target, Phase 0.5
 	// preflight scope, and downstream options that read the namespace.
 	deployCmd.Flags().StringVar(&networkOperatorNamespace, "network-operator-namespace", "", "Override the network operator namespace from cluster-config.yaml")
-	deployCmd.Flags().StringVar(&userConfig, "user-config", "", "DPF requires its explicit site file. Host: config override; otherwise prefer deployment .l8k/resolved-config.yaml, then adjacent/CWD cluster-config.yaml and defaults.")
+	deployCmd.Flags().StringVar(&userConfig, "user-config", "", "DPF: optional supported policy overrides. Host: config override; otherwise prefer deployment .l8k/resolved-config.yaml, then adjacent/CWD cluster-config.yaml and defaults.")
+	deployCmd.Flags().StringVar(&dpfInventoryPath, "inventory", "", "DPF inventory YAML input (required for --target dpf)")
+	setFlagGroup(deployCmd, "inventory", GroupCommon)
 	deployCmd.Flags().StringVar(&flavor, "flavor", "", "Cluster flavor: k8s or ocp (overrides config)")
 	deployCmd.Flags().BoolVar(&dryRunFlag, "dry-run", false, "Preview the deployment via server-side dry-run without persisting changes")
 	deployCmd.Flags().DurationVar(&deployTimeout, "deploy-timeout", 0, "Maximum end-to-end deploy budget (e.g. 45m, 2h). Host: 0 means no deadline. DPF: 0 defaults to two hours; maximum two hours.")

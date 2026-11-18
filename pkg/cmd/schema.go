@@ -19,9 +19,11 @@ package cmd
 import (
 	"encoding/json"
 	"fmt"
+	"slices"
 	"strings"
 
 	"github.com/spf13/cobra"
+	"github.com/spf13/pflag"
 
 	"github.com/nvidia/k8s-launch-kit/pkg/config"
 	"github.com/nvidia/k8s-launch-kit/pkg/configflags"
@@ -142,7 +144,7 @@ var schemaCmd = &cobra.Command{
 				},
 				"--user-config": {
 					Type:        "string",
-					Description: "Use provided cluster configuration file (as base config for discovery or as full config without discovery)",
+					Description: "Host: cluster configuration file (base for discovery or full config without discovery). DPF: optional supported overrides alongside required --inventory.",
 				},
 				"--flavor": {
 					Type: "string", Default: "k8s", Description: "Cluster flavor: k8s or ocp. OpenShift uses certified operator installations and OpenShift profiles.",
@@ -319,10 +321,18 @@ func annotateSchemaFlagTargets(s *schema) {
 	if s == nil {
 		return
 	}
-	// DPF's coordinated site inputs use its typed resolver rather than Host
-	// options. Read CLI metadata from the registered flag itself.
-	if flag := discoverCmd.Flags().Lookup("use-case"); flag != nil {
-		s.Flags["--"+flag.Name] = flagSchema{Type: flag.Value.Type(), Default: flag.DefValue, Description: flag.Usage}
+	// DPF-specific inputs use typed request fields rather than Host config
+	// options. Discover their schema from registered flags and target metadata.
+	for _, command := range []*cobra.Command{discoverCmd, generateCmd, deployCmd} {
+		command.LocalNonPersistentFlags().VisitAll(func(flag *pflag.Flag) {
+			if _, exists := s.Flags["--"+flag.Name]; exists {
+				return
+			}
+			if !slices.Contains(flag.Annotations[flagTargetsAnnotation], string(target.DPF)) {
+				return
+			}
+			s.Flags["--"+flag.Name] = flagSchema{Type: flag.Value.Type(), Default: flag.DefValue, Description: flag.Usage}
+		})
 	}
 	for _, definition := range configflags.Definitions() {
 		name := "--" + definition.FlagName
@@ -343,6 +353,7 @@ func annotateSchemaFlagTargets(s *schema) {
 
 func schemaFlagTargets(schemaName string) []string {
 	flagName := strings.TrimPrefix(schemaName, "--")
+	var targets []string
 	for _, command := range []*cobra.Command{rootCmd, discoverCmd, generateCmd, deployCmd, validateCmd} {
 		flag := command.Flags().Lookup(flagName)
 		if flag == nil {
@@ -351,7 +362,16 @@ func schemaFlagTargets(schemaName string) []string {
 		if flag == nil || len(flag.Annotations[flagTargetsAnnotation]) == 0 {
 			continue
 		}
-		return append([]string(nil), flag.Annotations[flagTargetsAnnotation]...)
+		// The schema groups flags by name across commands. Include every
+		// registered target, even when the root command is Host-only.
+		for _, name := range flag.Annotations[flagTargetsAnnotation] {
+			if !slices.Contains(targets, name) {
+				targets = append(targets, name)
+			}
+		}
+	}
+	if len(targets) > 0 {
+		return targets
 	}
 	// Commands outside the target-aware lifecycle, such as clean, retain
 	// their existing host semantics until they are explicitly migrated.

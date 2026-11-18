@@ -17,6 +17,7 @@
 package cmd
 
 import (
+	"encoding/json"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -24,6 +25,20 @@ import (
 
 	"github.com/nvidia/k8s-launch-kit/pkg/target"
 )
+
+func TestSchemaDescribesUserConfigForBothTargets(t *testing.T) {
+	output, exitCode := runCLIHelper(t, "schema")
+	require.Zero(t, exitCode, output)
+	var s schema
+	require.NoError(t, json.Unmarshal([]byte(output), &s))
+
+	userConfig := s.Flags["--user-config"]
+	assert.Equal(t, []string{"host", "dpf"}, userConfig.Targets)
+	assert.Contains(t, userConfig.Description, "Host: cluster configuration")
+	assert.Contains(t, userConfig.Description, "DPF: optional supported overrides")
+	assert.Contains(t, userConfig.Description, "required --inventory")
+	assert.Equal(t, []string{"dpf"}, s.Flags["--inventory"].Targets)
+}
 
 func TestSchemaDescribesTargetsAdditively(t *testing.T) {
 	targets := targetCapabilitiesSchema()
@@ -53,6 +68,10 @@ func TestSchemaFlagsDeclareTargetOwnership(t *testing.T) {
 		"--fabric":                     {},
 		"--kubeconfig":                 {},
 		"--skip-network-operator-helm": {},
+		"--inventory":                  {},
+		"--save-cluster-config":        {},
+		"--save-deployment-files":      {},
+		"--deployment-files":           {},
 	}}
 	annotateSchemaFlagTargets(&s)
 	for name, spec := range s.Flags {
@@ -65,6 +84,10 @@ func TestSchemaFlagsDeclareTargetOwnership(t *testing.T) {
 	assert.Equal(t, []string{"host", "dpf"}, s.Flags["--dry-run"].Targets)
 	assert.Equal(t, []string{"host"}, s.Flags["--fabric"].Targets)
 	assert.Equal(t, []string{"host"}, s.Flags["--kubeconfig"].Targets)
+	assert.Equal(t, []string{"dpf"}, s.Flags["--inventory"].Targets)
+	for _, name := range []string{"--save-cluster-config", "--save-deployment-files", "--deployment-files"} {
+		assert.Equal(t, []string{"host", "dpf"}, s.Flags[name].Targets, name)
+	}
 	assert.Equal(t, []string{"networkOperator.skipHelmChart"},
 		s.Flags["--skip-network-operator-helm"].ConfigPaths)
 	assert.Empty(t, s.Flags["--kubeconfig"].ConfigPaths)

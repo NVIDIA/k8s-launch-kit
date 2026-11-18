@@ -29,12 +29,32 @@ type generationPlan struct {
 // generationInputs resolves desired artifacts from saved observations, without
 // opening any access references. Deployment must refresh identity and readiness.
 func generationInputs(input config.Input) (generationPlan, error) {
+	return generationInputsForPlan(input, nil)
+}
+
+// generationInputsForPlan uses the retained fixed recipe during deployment,
+// while fresh generation resolves the maintained catalog. Current supported
+// knobs and allocations always remain inputs to the exact-plan comparison.
+func generationInputsForPlan(input config.Input, retained *generation.Plan) (generationPlan, error) {
+	if input.External && retained != nil {
+		var err error
+		input, err = withRetainedProvisioning(input, retained)
+		if err != nil {
+			return generationPlan{}, err
+		}
+	}
 	intent, err := config.ResolveIntent(input.Site)
 	if err != nil {
 		return generationPlan{}, err
 	}
 	if intent.UseCase != "hbn-bgp" || intent.Networking == nil || intent.Generation == nil {
-		return generationPlan{}, fmt.Errorf("DPF generation requires dpf.useCase: hbn-bgp")
+		return generationPlan{}, fmt.Errorf("DPF generation requires --use-case hbn-bgp or a saved HBN-BGP selection")
+	}
+	if input.External && retained != nil {
+		previous := retained.Intent()
+		if previous.Release != intent.Release.Version {
+			return generationPlan{}, fmt.Errorf("current release differs from the retained plan; regenerate and review the bundle")
+		}
 	}
 	inv := input.Site.Inventory
 	if inv == nil || inv.FormatVersion != inventory.FormatVersion || inv.Management == nil || inv.HBN == nil || len(inv.DPUs) == 0 {
@@ -46,12 +66,30 @@ func generationInputs(input config.Input) (generationPlan, error) {
 	if inv.Management.SystemNamespaceUID == "" || inv.Management.TrustDigest == "" {
 		return generationPlan{}, fmt.Errorf("management identity or trust are missing; rerun discovery")
 	}
+	if input.External && retained == nil {
+		selected := make([]config.ProvisioningDevice, 0, len(inv.DPUs))
+		for _, device := range inv.DPUs {
+			psid, err := discovery.ObservedDevicePSID(inv, device)
+			if err != nil {
+				return generationPlan{}, fmt.Errorf("DPU %q: %w", device.SerialNumber, err)
+			}
+			selected = append(selected, config.ProvisioningDevice{Model: device.Model, PSID: psid})
+		}
+		provisioning, issues, err := config.ResolveProvisioningDefaults(input.Site, selected)
+		if err != nil {
+			return generationPlan{}, err
+		}
+		if len(issues) > 0 {
+			return generationPlan{}, fmt.Errorf("release catalog cannot provision the selected hardware: %s (%s): %s", issues[0].Field, issues[0].ReasonCode, issues[0].Message)
+		}
+		input.Site.Provisioning = provisioning
+	}
 	if input.Site.Provisioning == nil {
 		return generationPlan{}, fmt.Errorf("provisioning inputs are required")
 	}
 	provisioning := input.Site.Provisioning
 	if len(provisioning.Flavor) == 0 {
-		return generationPlan{}, fmt.Errorf("provisioning.flavor requires the DPUFlavor spec for the selected hardware")
+		return generationPlan{}, fmt.Errorf("maintained provisioning recipe lacks the required DPU flavor for the selected hardware")
 	}
 	resources, err := generationResources(provisioning.Resources)
 	if err != nil {
@@ -83,13 +121,20 @@ func generationInputs(input config.Input) (generationPlan, error) {
 	if len(issues) > 0 {
 		return generationPlan{}, fmt.Errorf("required bootstrap input missing: %s", issues[0].Field)
 	}
+	source := slices.Clone(input.Source)
+	if input.External {
+		source, err = config.Saved(input, inv, input.Path)
+		if err != nil {
+			return generationPlan{}, fmt.Errorf("retain effective discovery inputs: %w", err)
+		}
+	}
 	return generationPlan{Inputs: generation.Inputs{
 		Operator: bootstrap.OperatorRenderInputs{ReleaseVersion: intent.Release.Version, ReleaseName: intent.Release.Operator.Chart,
 			KubernetesVersion: inv.Management.KubernetesVersion, Bootstrap: bootstrapInputs},
 		Workload: hbnrender.Inputs{Namespace: intent.Namespace, Generation: *intent.Generation, Profile: *intent.Networking,
 			Software: software, Devices: devices, DPUClusterSelector: maps.Clone(bootstrapInputs.Tenant.Labels), FlavorSpec: provisioning.Flavor, HBNResources: resources},
 		Management:   generation.ManagementIdentity{APIEndpoint: inv.Management.APIEndpoint, SystemNamespaceUID: inv.Management.SystemNamespaceUID, TrustDigest: inv.Management.TrustDigest},
-		SourceConfig: slices.Clone(input.Source),
+		SourceConfig: source,
 	}, OperatorChartURL: strings.TrimSuffix(intent.Release.Operator.ChartRepository, "/") + "/charts/" + intent.Release.Operator.Chart + "-" + intent.Release.Operator.Version + ".tgz"}, nil
 }
 

@@ -100,7 +100,7 @@ var _ = Describe("release BOM resolution", func() {
 		_, ok := missing.RequirementsFor("B3240")
 		Expect(ok).To(BeFalse())
 	})
-	It("describes the v26.8 BF4 beta artifact mechanism without claiming exact-model support", func() {
+	It("catalogs only the sourced v26.8 B4240 BF4 HBN provisioning cohort", func() {
 		r, err := Resolve("26.8.0")
 		Expect(err).NotTo(HaveOccurred())
 		Expect(r.TenantKubernetesVersion).To(Equal("v1.35.6"))
@@ -126,20 +126,26 @@ var _ = Describe("release BOM resolution", func() {
 			}
 		}
 		Expect(bf4).NotTo(BeNil())
-		Expect(bf4.Models).To(BeEmpty())
+		Expect(bf4.Models).To(Equal([]string{"B4240"}))
 		Expect(bf4.SupportLevel).To(Equal("beta"))
 		Expect(bf4.BFB).To(BeNil())
+		Expect(bf4.HBNFlavorProfile).To(Equal("hbn-bf4-b4240-v26-8"))
 		Expect(bf4.BlueFieldSoftware).NotTo(BeNil())
-		Expect(bf4.BlueFieldSoftware.OSISO.URL).To(BeEmpty())
-		Expect(bf4.BlueFieldSoftware.OSISO.Version).To(BeEmpty())
-		Expect(bf4.BlueFieldSoftware.OSISO.ReasonCode).To(Equal("BF4_ARTIFACT_NOT_PUBLIC"))
-		Expect(bf4.BlueFieldSoftware.PLDMFwBundle).To(BeEmpty())
+		Expect(bf4.BlueFieldSoftware.OSISO.URL).To(HavePrefix("https://nbu-nfs.gtm.nvidia.com/"))
+		Expect(bf4.BlueFieldSoftware.OSISO.Version).To(Equal("3.3.0-602_26.01"))
+		Expect(bf4.BlueFieldSoftware.OSISO.Digest).To(Equal("sha256:bc69d99904300e09483f9fb9cb5187562fa770308acb4f6f139717b2105b3272"))
+		Expect(bf4.BlueFieldSoftware.PLDMFwBundle).To(HaveKey("MT_0000001774"))
+		Expect(bf4.BlueFieldSoftware.PLDMFwBundle["MT_0000001774"].URL).To(HavePrefix("https://urm.nvidia.com/"))
+		Expect(bf4.BlueFieldSoftware.PLDMFwBundle["MT_0000001774"].Digest).To(Equal("sha256:ac3be7fc6e84ad678325834e42fdc34392e7ab7dcccea2346fd58fe851c9122a"))
 		Expect(bf4.Requirements).To(BeEmpty())
+		if supported, found := r.RequirementsFor("B4240"); !found || supported.HBNFlavorProfile != bf4.HBNFlavorProfile {
+			Fail("exact cataloged B4240 row was not selected")
+		}
 		Expect(r.Components).To(ContainElement(And(HaveField("Name", "openbao"), HaveField("Version", "v2.5.5"), HaveField("Applicability", "optional"))))
 		Expect(r.Components).To(ContainElement(And(HaveField("Name", "external-secrets"), HaveField("Version", "v2.7.0"), HaveField("Applicability", "optional"))))
-		for _, model := range []string{"B4240", "BlueField-4", "MT_0000001774", "unknown"} {
+		for _, model := range []string{"B4241", "BlueField-4", "MT_0000001774", "unknown"} {
 			_, found := r.RequirementsFor(model)
-			Expect(found).To(BeFalse(), "family-only beta entry must not match %q", model)
+			Expect(found).To(BeFalse(), "unlisted model must not match %q", model)
 		}
 	})
 	It("keeps tenant control-plane versions separate from management Kubernetes support", func() {
@@ -214,7 +220,7 @@ var _ = Describe("release BOM resolution", func() {
 			strings.Replace(string(catalogYAML), "models: [B3210, B3220, B3240]", "models: [B3210, B3210]", 1),
 			strings.Replace(string(catalogYAML), "version: \"26.4.0\"", "version: \"26.8.0\"", 1),
 			strings.Replace(string(catalogYAML), "chart: dpf-operator", "unknown: true", 1),
-			strings.Replace(string(catalogYAML), "message: Requires an authorized release-compatible BF4 ISO override; public v26.8 release material does not publish its version or URL.", "message: ''", 1),
+			strings.Replace(string(catalogYAML), "version: 3.3.0-602_26.01", "version: ''", 1),
 			strings.Replace(string(catalogYAML), "maximum: \"1.36\"", "maximum: \"1.32\"", 1),
 			strings.Replace(string(catalogYAML), "tenantKubernetesVersion: v1.35.6", "tenantKubernetesVersion: v1.35", 1),
 			strings.Replace(string(catalogYAML), "useCases: [hbn-bgp]", "useCases: []", 1),

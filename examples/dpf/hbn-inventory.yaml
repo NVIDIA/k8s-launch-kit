@@ -1,0 +1,43 @@
+# Copyright 2026 NVIDIA CORPORATION & AFFILIATES
+# SPDX-License-Identifier: Apache-2.0
+# Replace endpoints, users, serials and access references for your environment.
+management:
+  kubeconfigRef: {file: ./credentials/management.kubeconfig}
+credentials:
+  host:
+    username: operator
+    privateKeyRef: {file: ./credentials/host-key}
+  dpu:
+    username: admin
+    passwordRef: {file: ./credentials/dpu-password}
+  switch:
+    username: operator
+    privateKeyRef: {file: ./credentials/switch-key}
+discovery:
+  hosts:
+    - credentialRef: host
+      ssh:
+        address: 192.0.2.21
+        knownHostsFile: ./credentials/known_hosts
+        sudo: true
+  dpus:
+    - bmcEndpoint: https://192.0.2.11
+      credentialRef: dpu
+  switches:
+    - name: leaf-a
+      credentialRef: switch
+      ssh:
+        address: 192.0.2.31
+        knownHostsFile: ./credentials/known_hosts
+        sudo: true
+      ports:
+        - {name: swp1, dpuSerial: DPU-SERIAL-A, dpuInterface: p0}
+        - {name: swp2, dpuSerial: DPU-SERIAL-A, dpuInterface: p1}
+tenant:
+  vip: 192.0.2.40
+  interface: eth0
+  # Set each declaration true only after the responsible owner confirms it.
+  allocation:
+    vipReserved: null
+    vipExcludedFromDHCP: null
+    routerIDUniqueOnSelectedNodes: null

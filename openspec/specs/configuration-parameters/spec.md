@@ -94,13 +94,22 @@ Host target execution SHALL reject DPF-only use-case flags.
 - **THEN** the prior inventory cannot silently authorize that new scope; the operator uses a fresh seed and output.
 - **AND** credential alias renaming or secret rotation alone does not constitute new physical scope; every switch is freshly inspected under the supplied access.
 
-#### Scenario: BF4 artifact inputs are incomplete
+#### Scenario: Release provisioning data is incomplete
 
-- **WHEN** HBN discovery lacks a selected OS ISO or a PLDM artifact for an observed PSID
-- **THEN** physical inventory collection may continue while readiness records the missing artifact input.
-- **AND** supplied artifact URLs SHALL exclude embedded credentials, queries and fragments; SHA-256 values SHALL be lowercase 64-character hexadecimal digests.
-- **AND** a complete selected PSID set SHALL resolve to exactly matching PLDM entries, rejecting case-insensitive duplicates and unrelated entries.
-- **AND** input validation SHALL NOT claim artifact reachability, consumed-byte verification or release compatibility.
+- **WHEN** the selected release lacks a maintained flavor or immutable artifact for an observed model/PSID
+- **THEN** physical inventory collection may continue, while readiness reports an actionable catalog-support blocker.
+- **AND** generation SHALL stop; users SHALL NOT be asked to provide raw flavor, scripts or software tuples.
+- **AND** artifact selection does not establish reachability, consumed bytes or runtime readiness.
+
+### Requirement: Two DPF user inputs
+
+DPF standalone discovery, generation and deployment SHALL require `--inventory` for environment access, selected systems and allocations. `--user-config` SHALL be optional and accept only typed supported release/profile overrides. Host input semantics SHALL remain unchanged and Host commands SHALL reject `--inventory`.
+
+- GIVEN a minimal valid inventory WHEN no overrides file is supplied THEN select release/use-case defaults without requiring user-authored implementation.
+- GIVEN raw software coordinates, DPUFlavor, lifecycle policy, unsupported resource keys or access fields in overrides WHEN loading THEN reject before credential reads or remote effects with the field location and remedy.
+- GIVEN an explicit overrides file WHEN loading a prior handoff THEN replace retained override intent rather than deep-merging arbitrary Site maps; preserve presence and validate effective values.
+- GIVEN discovery output WHEN passing it to generation THEN restore effective allowed settings without requiring the original overrides file, and reject settings that differ from the discovery configuration until rediscovery.
+- GIVEN an overridden file reference WHEN saving elsewhere THEN preserve its inventory-relative referent; override files do not define access references.
 
 ## Baseline and limits
 
@@ -114,20 +123,15 @@ Tag-driven wiring covers root/generate/discover; standalone deploy/validate also
 
 ### DPF bootstrap and HBN generation inputs
 
-DPF HBN configuration keeps networking intent (`dpf.hbn`), profile policy and release-owned artifact defaults (with user overrides under `provisioning.hbn`), site bootstrap allocations (`provisioning.bootstrap`) and observed inventory separate. Omitted/null fields select their owning catalog/profile defaults; explicit empty/zero/false values are preserved and validated. The resolver performs no credential reads or network access to fill bootstrap inputs. Only a literal observed management API IP/port may supply its endpoint defaults. Tenant VIP/interface remain required site allocations. Bootstrap-input completeness does not establish live address reservation, storage health, controller readiness or deployment permission.
+DPF HBN inventory owns environment allocations under `tenant`; optional overrides own supported choices under `hbn` and `cluster`. Software coordinates are release-owned. Device flavor, boot/NIC/OVS settings, reset policy, node-effect policy and service wiring are fixed maintained implementation. The resolver performs no credential reads or network calls to fill desired settings. Only a literal observed management API endpoint may supply its endpoint defaults.
 
-- GIVEN HBN discovery without tenant VIP/interface WHEN bootstrap inputs are evaluated THEN retain the inventory and report each missing allocation as a required unknown with a reason.
-- GIVEN a management API hostname WHEN deriving an operator endpoint THEN do not invent its resolved IP; require an explicit reachable API IP/port.
-- GIVEN selected BMC endpoints WHEN rendering enrollment resources THEN use one singleton DPUDiscovery scan per endpoint; never scan the range between targets or create synthetic DPUDevices/DPUNodes.
-- GIVEN custom operator configuration name/namespace WHEN installing the DPF operator THEN the Helm-rendered operator arguments must select that exact configuration; schema-valid ignored resources are not acceptable.
-- GIVEN nodeEffect hold WHEN deploying THEN release only the identity-verified selected maintenance requests and wait for provisioning; rendering or applying a held deployment is not completion.
-- GIVEN an explicit current HBN nodeEffect other than `hold` or chartName other than `doca-hbn` WHEN resolving inputs THEN reject the unsupported native-workflow policy before credential access or artifact retrieval; never coerce it to a default.
-- GIVEN an unsupported native-workflow policy in a retained generation WHEN loading its deployment plan THEN reject it before Kubernetes API access or deployment effects; resolving credentials from current supported site inputs may already have occurred.
-- GIVEN supported HBN chart repository/version/digest overrides WHEN resolving inputs THEN preserve them while retaining the fixed `doca-hbn` service identity and validating the selected artifact bytes; coordinate overrides do not prove compatibility.
-
-- GIVEN omitted HBN BMC reset policy WHEN resolving bootstrap THEN select the profile default `Never` and emit it explicitly in the DPF operator configuration; do not inherit an upstream factory-reset default.
-- GIVEN an explicit `OnInitialization` policy WHEN rendering THEN preserve it, while leaving stable DHCP address recovery and BMC reauthentication as required live enrollment checks; generation does not establish those conditions.
-- GIVEN an empty or unknown reset policy WHEN resolving THEN reject it with a field-specific error before artifact publication.
+- GIVEN HBN discovery without tenant VIP/interface WHEN evaluating prerequisites THEN retain inventory and report each missing allocation with a reason.
+- GIVEN a management API hostname WHEN deriving an operator endpoint THEN require an explicit reachable IP/port rather than guessing.
+- GIVEN selected BMC endpoints WHEN rendering THEN use singleton discovery targets; never broaden to a subnet scan.
+- GIVEN custom operator configuration name/namespace WHEN installing THEN render operator arguments selecting that exact resource.
+- GIVEN the maintained hold policy WHEN deploying THEN release only identity-verified selected maintenance requests and wait for provisioning.
+- GIVEN a retained unsupported native policy WHEN loading THEN reject before Kubernetes effects.
+- GIVEN HBN-BGP provisioning WHEN resolving THEN select the maintained `Never` BMC reset policy; no public input may change it.
 
 #### Scenario: Release-owned fixed tenant service range
 

@@ -92,14 +92,15 @@ type HardwareBOM struct {
 	Family            string             `json:"family" yaml:"family"`
 	Models            []string           `json:"models" yaml:"models"`
 	SupportLevel      string             `json:"supportLevel,omitempty" yaml:"supportLevel,omitempty"`
+	HBNFlavorProfile  string             `json:"hbnFlavorProfile,omitempty" yaml:"hbnFlavorProfile,omitempty"`
 	BFB               *Artifact          `json:"bfb,omitempty" yaml:"bfb,omitempty"`
 	BlueFieldSoftware *BlueFieldSoftware `json:"blueFieldSoftware,omitempty" yaml:"blueFieldSoftware,omitempty"`
 	Requirements      []Requirement      `json:"requirements" yaml:"requirements"`
 }
 
-// HBNWorkload records release-owned artifact coordinates used by the native
-// HBN-BGP renderer. It is a default tuple; an explicit site configuration may
-// select a custom tuple, which is recorded and verified independently.
+// HBNWorkload records release-owned artifact coordinates used by typed
+// internal HBN-BGP resolution and retained legacy configurations. The public
+// external-input workflow selects these coordinates from the release catalog.
 type HBNWorkload struct {
 	ChartRepository string               `json:"chartRepository" yaml:"chartRepository"`
 	Chart           string               `json:"chart" yaml:"chart"`
@@ -346,11 +347,11 @@ func validate(key string, r Release) error {
 	}
 	models := map[string]bool{}
 	for _, h := range r.Hardware {
-		bf4FamilyOnly := h.Family == "BlueField-4" && len(h.Models) == 0 && h.SupportLevel == "beta" && h.BlueFieldSoftware != nil && h.BFB == nil
-		if h.Family == "" || (len(h.Models) == 0 && !bf4FamilyOnly) || h.SupportLevel != "" && h.SupportLevel != "ga" && h.SupportLevel != "beta" {
+		bf4SoftwareRow := h.Family == "BlueField-4" && h.SupportLevel == "beta" && h.BlueFieldSoftware != nil && h.BFB == nil
+		if h.Family == "" || (len(h.Models) == 0 && !bf4SoftwareRow) || h.SupportLevel != "" && h.SupportLevel != "ga" && h.SupportLevel != "beta" || h.HBNFlavorProfile != "" && (!summaryToken(h.HBNFlavorProfile) || len(h.Models) == 0) {
 			return fmt.Errorf("invalid hardware applicability or artifact provenance")
 		}
-		if bf4FamilyOnly {
+		if bf4SoftwareRow {
 			if err := validateBlueFieldSoftware(*h.BlueFieldSoftware, sources); err != nil {
 				return err
 			}

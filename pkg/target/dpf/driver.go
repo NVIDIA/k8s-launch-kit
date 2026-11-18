@@ -42,6 +42,7 @@ func Descriptor() target.Descriptor {
 }
 
 type Request struct {
+	Inventory      string
 	UserConfig     string
 	UseCase        *string
 	OutputPath     string
@@ -84,8 +85,11 @@ func (d driver) Bind(inv target.Invocation) (target.Operation, error) {
 			report.Errors = append(report.Errors, inventory.Problem{Code: "INVALID_CONFIGURATION", Message: message, ExitCode: code})
 			progress.Info("[FAIL] Discovery preparation: %s", displayText(message))
 		}
-		progress.Info("[RUNNING] Configuration: validating site inputs and access settings")
-		input, err := config.Load(r.UserConfig)
+		progress.Info("[RUNNING] Configuration: validating inventory, optional overrides and access settings")
+		input, err := config.LoadInputs(r.Inventory, r.UserConfig)
+		if r.Inventory == "" {
+			err = fmt.Errorf("DPF discovery requires --inventory inventory.yaml; run l8k discover --target dpf --use-case hbn-bgp --inventory inventory.yaml --save-cluster-config dpf-discovered.yaml; --user-config overrides.yaml is optional")
+		}
 		if err == nil {
 			input, err = config.WithUseCase(input, r.UseCase)
 		}

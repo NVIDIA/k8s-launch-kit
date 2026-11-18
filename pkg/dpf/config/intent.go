@@ -26,11 +26,11 @@ func ResolveIntent(site Site) (Intent, error) {
 	useCase := ""
 	if site.DPF.UseCase == nil {
 		if site.DPF.HBN != nil || len(site.Discovery.Switches) > 0 || site.Provisioning != nil && (site.Provisioning.HBN != nil || site.Provisioning.Bootstrap != nil || site.Provisioning.Flavor != nil || site.Provisioning.Resources != nil) {
-			return Intent{}, fmt.Errorf("HBN options and discovery.switches require dpf.useCase: hbn-bgp")
+			return Intent{}, fmt.Errorf("HBN settings and discovery.switches require --use-case hbn-bgp")
 		}
 	} else {
 		if *site.DPF.UseCase != "hbn-bgp" {
-			return Intent{}, fmt.Errorf("/dpf/useCase must be hbn-bgp")
+			return Intent{}, fmt.Errorf("useCase must be hbn-bgp")
 		}
 		useCase = *site.DPF.UseCase
 	}
@@ -38,7 +38,7 @@ func ResolveIntent(site Site) (Intent, error) {
 	releaseVersion := ""
 	if site.DPF.Release != nil {
 		if *site.DPF.Release == "" {
-			return Intent{}, fmt.Errorf("/dpf/release must not be empty")
+			return Intent{}, fmt.Errorf("release must not be empty")
 		}
 		releaseVersion = *site.DPF.Release
 	} else if useCase != "" {
@@ -53,10 +53,17 @@ func ResolveIntent(site Site) (Intent, error) {
 		return Intent{}, err
 	}
 	if useCase != "" && !resolved.SupportsUseCase(useCase) {
-		return Intent{}, fmt.Errorf("/dpf/release %q is unsupported for %s; supported releases: %s", resolved.Version, useCase, strings.Join(releases.SupportedUseCaseReleases(useCase), ", "))
+		return Intent{}, fmt.Errorf("release %q is unsupported for %s; supported releases: %s", resolved.Version, useCase, strings.Join(releases.SupportedUseCaseReleases(useCase), ", "))
 	}
 	result.UseCase, result.Release = useCase, resolved
 	if useCase != "" {
+		// Validate supported quantities before access resolution or discovery
+		// publication. Generation and collection share this intent boundary.
+		if site.Provisioning != nil && site.Provisioning.Resources != nil {
+			if _, err := ResolveHBNResources(site.Provisioning.Resources); err != nil {
+				return Intent{}, fmt.Errorf("HBN resource settings: %w", err)
+			}
+		}
 		definition, err := hbn.LoadDefinition()
 		if err != nil {
 			return Intent{}, err
@@ -68,7 +75,7 @@ func ResolveIntent(site Site) (Intent, error) {
 		}
 		profile, err := hbn.Resolve(options)
 		if err != nil {
-			return Intent{}, fmt.Errorf("/dpf/hbn: %w", err)
+			return Intent{}, fmt.Errorf("HBN networking settings: %w", err)
 		}
 		generationOptions := hbn.GenerationOptions{}
 		if site.Provisioning != nil && site.Provisioning.HBN != nil {
@@ -85,17 +92,17 @@ func ResolveIntent(site Site) (Intent, error) {
 		}
 		generation, err := hbn.ResolveGenerationFrom(definition.Defaults.Generation, coordinates, generationOptions)
 		if err != nil {
-			return Intent{}, fmt.Errorf("/provisioning/hbn: %w", err)
+			return Intent{}, fmt.Errorf("HBN generation settings: %w", err)
 		}
 		if err := hbn.ValidateGeneration(profile, generation); err != nil {
-			return Intent{}, fmt.Errorf("/provisioning/hbn: %w", err)
+			return Intent{}, fmt.Errorf("HBN generation settings: %w", err)
 		}
 		result.Networking, result.Generation = &profile, &generation
 	}
 	if site.DPF.Namespace != nil {
 		result.Namespace = *site.DPF.Namespace
 		if result.Namespace == "" || len(result.Namespace) > 63 || !dnsLabel(result.Namespace) {
-			return Intent{}, fmt.Errorf("/dpf/namespace must be a DNS label of at most 63 characters")
+			return Intent{}, fmt.Errorf("namespace must be a DNS label of at most 63 characters")
 		}
 	}
 	return result, nil

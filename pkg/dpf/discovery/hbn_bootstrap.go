@@ -45,14 +45,14 @@ func hbnBootstrapChecks(input *config.Provisioning, namespace string, inv *inven
 	}
 	resolved, issues, err := config.ResolveBootstrap(options, namespace, endpoint, selected, controllerServiceCIDR)
 	if err != nil {
-		add("provisioning.bootstrap", "failed", "BOOTSTRAP_INPUT_INVALID", err.Error())
+		add("tenant and cluster settings", "failed", "BOOTSTRAP_INPUT_INVALID", err.Error())
 		return append(checks, tenantClusterCheck(snapshot, nil)), []inventory.HBNManagementCluster{}
 	}
 	for _, issue := range issues {
 		add(issue.Field, "unknown", issue.ReasonCode, "Supply the site allocation. Tenant VIP and management interface cannot be invented; a literal observed management API endpoint can be reused, otherwise supply its IP and port.")
 	}
 	if len(checks) == 0 {
-		add("provisioning.bootstrap", "passed", "BOOTSTRAP_INPUTS_COMPLETE", "Bootstrap inputs and exact BMC scan targets are specified; VIP/VRID reservation, interface reachability, storage health and installed controllers require separate checks.")
+		add("tenant and cluster settings", "passed", "BOOTSTRAP_INPUTS_COMPLETE", "Tenant and cluster settings and exact BMC scan targets are specified; VIP/VRID reservation, interface reachability, storage health and installed controllers require separate checks.")
 	}
 	checks = append(checks, managementnetwork.CheckTenantAllocation(resolved.Tenant)...)
 	if resolved.BMCFactoryResetPolicy == bootstrap.BMCFactoryResetPolicyOnInitialization {
