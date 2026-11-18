@@ -275,6 +275,21 @@ func TestDiscoverOCPOperatorInstallErrsWithoutReleaseChannel(t *testing.T) {
 	assert.Contains(t, err.Error(), "matches selected release")
 }
 
+// TestDiscoverOCPOperatorInstallPrefersReleaseSpecificChannel verifies the
+// release-named channel wins over a moving channel that currently sits on the same
+// release, even when the moving channel is listed first.
+func TestDiscoverOCPOperatorInstallPrefersReleaseSpecificChannel(t *testing.T) {
+	cfg := ocpInstallTestConfig(t) // selectedRelease 26.7
+	manifest := networkOperatorManifest("nvidia-network-operator", "certified-operators", []interface{}{
+		map[string]interface{}{"name": "stable", "currentCSVDesc": map[string]interface{}{"version": "26.7.1"}},
+		map[string]interface{}{"name": "v26.7", "currentCSVDesc": map[string]interface{}{"version": "26.7.1"}},
+	})
+	c := fake.NewClientBuilder().WithObjects(manifest).Build()
+
+	require.NoError(t, DiscoverOCPOperatorInstall(context.Background(), c, cfg, nil))
+	assert.Equal(t, "v26.7", operatorSub(t, cfg, "nvidia-network-operator").Channel)
+}
+
 // TestDiscoverOCPOperatorInstallPrefersExpectedCatalog verifies that, when a
 // package is in several catalogs, discovery picks the expected source rather than
 // whichever the API lists first.

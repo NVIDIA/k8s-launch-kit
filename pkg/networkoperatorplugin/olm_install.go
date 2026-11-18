@@ -292,10 +292,13 @@ func selectPackageManifest(manifests []*unstructured.Unstructured, pkg, wantSour
 		pkg, sources, wantSource)
 }
 
-// networkOperatorReleaseChannel returns the channel whose current CSV is on the
-// selected release line; an unmatched release is a hard error, since the catalog
-// default could install a newer release that deploy then rejects.
+// networkOperatorReleaseChannel returns the release-specific channel named for the
+// selected release (e.g. "v26.7"), so Automatic upgrades stay on that line. A
+// moving channel like "stable" can currently sit on the release yet later advance
+// across lines, so matching by current CSV version is not enough: a missing
+// release channel is a hard error.
 func networkOperatorReleaseChannel(manifest *unstructured.Unstructured, release string) (string, error) {
+	wanted := map[string]bool{"v" + release: true, release: true}
 	channels, _, _ := unstructured.NestedSlice(manifest.Object, "status", "channels")
 	available := make([]string, 0, len(channels))
 	for _, entry := range channels {
@@ -310,12 +313,12 @@ func networkOperatorReleaseChannel(manifest *unstructured.Unstructured, release 
 			version = csvVersion(csv)
 		}
 		available = append(available, fmt.Sprintf("%s (%s)", name, version))
-		if name != "" && strings.HasPrefix(strings.TrimPrefix(version, "v"), release+".") {
+		if wanted[name] {
 			return name, nil
 		}
 	}
-	return "", fmt.Errorf("no OLM channel for %s matches selected release %q; available channels: %s",
-		olmNetworkOperatorPkg, release, strings.Join(available, ", "))
+	return "", fmt.Errorf("no release-specific OLM channel (e.g. %q) for %s matches selected release %q; available channels: %s; a moving channel such as \"stable\" cannot pin the release line",
+		"v"+release, olmNetworkOperatorPkg, release, strings.Join(available, ", "))
 }
 
 // csvVersion extracts the version from an OLM CSV name ("<package>.v<version>").
