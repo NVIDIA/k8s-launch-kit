@@ -313,7 +313,7 @@ func observeCurrentHBNBindings(ctx context.Context, management validationManagem
 		UID  types.UID
 		Spec any
 	}{app.GetUID(), app.Object["spec"]})
-	serviceHealthy := desired.rules.ValidationWorkloadReadiness(service) == nil
+	serviceErr := validationRuntimeReadiness(desired.rules.ValidationWorkloadReadiness(service), "Selected HBN service has not reconciled its current generation.")
 	for _, object := range graph.interfaces {
 		if object.GetLabels()[activationParentLabel] != graph.deployment.GetNamespace()+"_"+graph.deployment.GetName() {
 			continue
@@ -329,7 +329,7 @@ func observeCurrentHBNBindings(ctx context.Context, management validationManagem
 		expected := intent
 		expected.TenantNodeName = lease.TenantNodeName
 		anchor, err := validateHBNPodBinding(expected, service, app, daemonSets, pods, time.Now().UTC())
-		if err != nil || !serviceHealthy {
+		if err != nil {
 			result.unavailable[lease.Serial] = validation.ReasonDependency
 			continue
 		}
@@ -348,9 +348,29 @@ func observeCurrentHBNBindings(ctx context.Context, management validationManagem
 		if err != nil || !sameHBNPodBinding(anchor, named) {
 			return empty, fmt.Errorf("current HBN pod changed: %w", errValidationResourceChanged)
 		}
-		result.anchors[lease.Serial] = anchor
+		// This adds actual Pod-versus-bound-controller function verification.
+		// The existing DS qualification does not project its whole PodSpec
+		// independently; it proves the retained App source/values and images.
+		for i := range daemonSets {
+			ds := &daemonSets[i]
+			if string(ds.UID) == anchor.DaemonSetUID && ds.Name == anchor.DaemonSetName && ds.Namespace == anchor.DaemonSetNamespace {
+				// The retained supported Kamaji recipe enables AlwaysPullImages.
+				if err := validationPodMatchesTemplate(pod, &ds.Spec.Template.Spec, "DaemonSet", true); err != nil {
+					return empty, err
+				}
+			}
+		}
+		if serviceErr == nil {
+			result.anchors[lease.Serial] = anchor
+		}
 	}
-	return result, tenant.VerifyIdentity(ctx)
+	if err := tenant.VerifyIdentity(ctx); err != nil {
+		return empty, err
+	}
+	if len(result.unavailable) == 0 && serviceErr != nil {
+		return result, serviceErr
+	}
+	return result, nil
 }
 
 // verifyHBNRuntimeMembership qualifies the complete participating workload
@@ -377,7 +397,7 @@ func verifyHBNRuntimeMembership(intent hbnPodBindingIntent, daemonSets []appsv1.
 	if selected == nil {
 		return nil
 	} // Per-node bindings retain missing readiness.
-	if selected.Generation < 1 || selected.Status.ObservedGeneration > selected.Generation {
+	if selected.Generation < 1 || selected.Status.ObservedGeneration < 0 || selected.Status.ObservedGeneration > selected.Generation {
 		return validationFailure(validation.Failed, validation.ReasonHealth, "Selected HBN DaemonSet has invalid generation evidence.")
 	}
 	if selected.Status.ObservedGeneration < selected.Generation {

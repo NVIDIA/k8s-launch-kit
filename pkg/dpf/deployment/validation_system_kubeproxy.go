@@ -91,46 +91,41 @@ func (o *validationObserver) observeValidationKubeProxy(ctx context.Context, man
 		if !validationSystemWorkloadMatches(expectedSet, current) {
 			return validationFailure(validation.Failed, validation.ReasonHealth, "Kube-proxy image, command or functional Pod configuration differs from the selected addon recipe.")
 		}
-		var set appsv1.DaemonSet
-		if err := runtime.DefaultUnstructuredConverter.FromUnstructured(current.Object, &set); err != nil {
+		set, err := validationDaemonSetFromObject(current)
+		if err != nil {
 			return err
 		}
 		nodes, err := o.validationSelectedTenantNodes(ctx, management, tenant)
 		if err != nil {
 			return err
 		}
-		if err := validationDaemonSetReady(&set, len(nodes)); err != nil {
+		if err := validationDaemonSetReady(set, len(nodes)); err != nil {
 			return err
 		}
-		_, pods, err := tenant.listRuntimeObjects(ctx, metav1.NamespaceSystem, "k8s-app=kube-proxy")
+		owned, err := validationKubeProxyOwnedPods(ctx, tenant, set, nodes)
 		if err != nil {
 			return err
 		}
-		coverage := true
-		for serial, node := range nodes {
+		var coverageErr error
+		for serial := range nodes {
 			err := r.run(validation.CheckID("tenant/kube-proxy/device/"+serial), func() error {
-				count := 0
-				for i := range pods {
-					pod := &pods[i]
-					if pod.Spec.NodeName != node.Name || !validationControllerOwner(pod.OwnerReferences, "DaemonSet", set.Name, set.UID) {
-						continue
-					}
-					count++
-					if err := validationPodReady(pod, &set.Spec.Template.Spec); err != nil {
-						return err
-					}
+				pod := owned[serial]
+				if pod == nil {
+					return validationFailure(validation.Failed, validation.ReasonMissing, "Selected tenant Node requires exactly one current owned Ready kube-proxy Pod.")
 				}
-				if count != 1 {
-					return validationFailure(validation.Failed, validation.ReasonIncomplete, "Selected tenant Node requires exactly one current owned Ready kube-proxy Pod.")
+				if err := validationPodNetworkRequestsMatch(pod, &set.Spec.Template); err != nil {
+					return err
 				}
-				return nil
+				// The selected Kamaji TCP explicitly enables AlwaysPullImages.
+				if err := validationPodMatchesTemplate(pod, &set.Spec.Template.Spec, "DaemonSet", true); err != nil {
+					return err
+				}
+				return validationPodReady(pod, &set.Spec.Template.Spec)
 			})
-			if err != nil {
-				coverage = false
-			}
+			coverageErr = validationPodCoverageError(coverageErr, err)
 		}
-		if !coverage {
-			return validationFailure(validation.Failed, validation.ReasonIncomplete, "Selected kube-proxy Pod coverage is incomplete.")
+		if coverageErr != nil {
+			return coverageErr
 		}
 
 		after, err := reader.Get(ctx, validationObject("apps/v1", "DaemonSet", metav1.NamespaceSystem, "kube-proxy"))
@@ -203,6 +198,9 @@ func validationKubeProxyConfiguration(config *corev1.ConfigMap, podCIDR, endpoin
 				return validationFailure(validation.Failed, validation.ReasonHealth, "Kube-proxy IPv4 bind address differs.")
 			}
 		case "clusterCIDR":
+			if value == "" {
+				return validationFailure(validation.Failed, validation.ReasonHealth, "Kube-proxy clusterCIDR is empty; CIDR-based source NAT classification for off-cluster Service traffic is disabled. Use a supported Kamaji release/backport fixing upstream #1291, then verify reconciled configuration and running Pods.")
+			}
 			if value != podCIDR {
 				return validationFailure(validation.Failed, validation.ReasonHealth, "Kube-proxy cluster CIDR differs from retained tenant networking.")
 			}
@@ -313,4 +311,13 @@ func validationProxyConfigShape(settings map[string]any, scope string) bool {
 		}
 	}
 	return true
+}
+
+func validationKubeProxyOwnedPods(ctx context.Context, tenant *tenantClient, set *appsv1.DaemonSet, nodes map[string]corev1.Node) (map[string]*corev1.Pod, error) {
+	// A selector-filtered API read would hide contradictory exact-owner Pods.
+	_, pods, err := tenant.listRuntimeObjects(ctx, metav1.NamespaceSystem, "")
+	if err != nil {
+		return nil, err
+	}
+	return validationDaemonSetPodMembership(set, pods, nodes)
 }

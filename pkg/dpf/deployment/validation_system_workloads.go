@@ -7,6 +7,7 @@ import (
 	"context"
 	"fmt"
 	"maps"
+	"math"
 	"net/url"
 	"reflect"
 
@@ -122,43 +123,36 @@ func (o *validationObserver) observeValidationSystemWorkload(ctx context.Context
 	if nodes == nil {
 		return validationFailure(validation.Unverified, validation.ReasonDependency, "Current selected tenant Node identities could not be bound.")
 	}
-	var set appsv1.DaemonSet
-	if err := runtime.DefaultUnstructuredConverter.FromUnstructured(current.Object, &set); err != nil {
+	set, err := validationDaemonSetFromObject(current)
+	if err != nil {
 		return err
 	}
-	if err := validationDaemonSetReady(&set, len(nodes)); err != nil {
+	if err := validationDaemonSetReady(set, len(nodes)); err != nil {
 		return err
 	}
-	for serial, node := range nodes {
-		r.run(validation.CheckID(systemRoleID(role)+"/device/"+url.PathEscape(serial)), func() error {
-			var selectedPod *corev1.Pod
-			for i := range pods {
-				pod := &pods[i]
-				if pod.Spec.NodeName != node.Name || !validationControllerOwner(pod.OwnerReferences, "DaemonSet", set.Name, set.UID) {
-					continue
-				}
-				if selectedPod != nil {
-					return validationFailure(validation.Failed, validation.ReasonIncomplete, "More than one selected system Pod is active on a tenant Node.")
-				}
-				selectedPod = pod
-			}
+	owned, err := validationDaemonSetPodMembership(set, pods, nodes)
+	if err != nil {
+		return err
+	}
+	var coverageErr error
+	for serial := range nodes {
+		err := r.run(validation.CheckID(systemRoleID(role)+"/device/"+url.PathEscape(serial)), func() error {
+			selectedPod := owned[serial]
 			if selectedPod == nil {
 				return validationFailure(validation.Failed, validation.ReasonMissing, "A selected tenant Node has no current system Pod owned by the selected DaemonSet.")
 			}
+			if err := validationPodNetworkRequestsMatch(selectedPod, &set.Spec.Template); err != nil {
+				return err
+			}
+			// The selected Kamaji TCP explicitly enables AlwaysPullImages.
+			if err := validationPodMatchesTemplate(selectedPod, &set.Spec.Template.Spec, "DaemonSet", true); err != nil {
+				return err
+			}
 			return validationPodReady(selectedPod, &set.Spec.Template.Spec)
 		})
+		coverageErr = validationPodCoverageError(coverageErr, err)
 	}
-	// Extra participating nodes and orphan Pods cannot satisfy selected coverage.
-	nodeNames := map[string]bool{}
-	for _, node := range nodes {
-		nodeNames[node.Name] = true
-	}
-	for i := range pods {
-		pod := &pods[i]
-		if validationControllerOwner(pod.OwnerReferences, "DaemonSet", set.Name, set.UID) && !nodeNames[pod.Spec.NodeName] {
-			return validationFailure(validation.Failed, validation.ReasonIncomplete, "Selected system DaemonSet has a Pod outside the selected Node cohort.")
-		}
-	}
+
 	if err := tenant.VerifyIdentity(ctx); err != nil {
 		return err
 	}
@@ -174,16 +168,22 @@ func (o *validationObserver) observeValidationSystemWorkload(ctx context.Context
 			return fmt.Errorf("selected tenant Node was replaced: %w", errValidationResourceChanged)
 		}
 	}
-	for serial := range nodes {
-		if r.outcomes[validation.CheckID(systemRoleID(role)+"/device/"+url.PathEscape(serial))].State != validation.Passed {
-			return validationFailure(validation.Failed, validation.ReasonIncomplete, "Selected system Pod coverage is incomplete.")
-		}
-	}
-	return nil
+	return coverageErr
 }
 func validationDaemonSetReady(set *appsv1.DaemonSet, count int) error {
+	if set == nil || count < 1 || count > math.MaxInt32 || set.Generation <= 0 || set.Status.ObservedGeneration < 0 || set.Status.ObservedGeneration > set.Generation {
+		return validationFailure(validation.Failed, validation.ReasonIncomplete, "System DaemonSet generation or selected Node count is invalid or refers to a future generation.")
+	}
+	for _, value := range []int32{set.Status.DesiredNumberScheduled, set.Status.CurrentNumberScheduled, set.Status.UpdatedNumberScheduled, set.Status.NumberReady, set.Status.NumberAvailable, set.Status.NumberMisscheduled, set.Status.NumberUnavailable} {
+		if value < 0 {
+			return validationFailure(validation.Failed, validation.ReasonIncomplete, "System DaemonSet reports an invalid negative rollout count.")
+		}
+	}
+	if set.Status.NumberReady > set.Status.CurrentNumberScheduled || set.Status.NumberAvailable > set.Status.NumberReady || set.Status.UpdatedNumberScheduled > set.Status.CurrentNumberScheduled || int64(set.Status.NumberAvailable)+int64(set.Status.NumberUnavailable) > int64(set.Status.DesiredNumberScheduled) {
+		return validationFailure(validation.Failed, validation.ReasonIncomplete, "System DaemonSet reports contradictory rollout counts.")
+	}
 	n := int32(count)
-	if count < 1 || set.Generation <= 0 || set.Status.ObservedGeneration != set.Generation || set.Status.DesiredNumberScheduled != n || set.Status.CurrentNumberScheduled != n || set.Status.UpdatedNumberScheduled != n || set.Status.NumberReady != n || set.Status.NumberAvailable != n || set.Status.NumberMisscheduled != 0 {
+	if set.Status.ObservedGeneration < set.Generation || set.Status.DesiredNumberScheduled != n || set.Status.CurrentNumberScheduled != n || set.Status.UpdatedNumberScheduled != n || set.Status.NumberReady != n || set.Status.NumberAvailable != n || set.Status.NumberMisscheduled != 0 || set.Status.NumberUnavailable != 0 {
 		return validationFailure(validation.Pending, validation.ReasonProgressing, "System DaemonSet rollout does not cover every selected tenant Node at the current generation.")
 	}
 	return nil
@@ -276,6 +276,12 @@ func verifyValidationDeploymentPods(ctx context.Context, management interface {
 		if !selector.Matches(labels.Set(pod.Labels)) || !currentSelector.Matches(labels.Set(pod.Labels)) {
 			return validationFailure(validation.Failed, validation.ReasonHealth, "An owned system Pod violates the selected workload selector.")
 		}
+		if err := validationPodNetworkRequestsMatch(&pod, &deployment.Spec.Template); err != nil {
+			return err
+		}
+		if err := validationPodMatchesTemplate(&pod, &deployment.Spec.Template.Spec, "ReplicaSet", false); err != nil {
+			return err
+		}
 		if err := validationPodReady(&pod, &deployment.Spec.Template.Spec); err != nil {
 			return err
 		}
@@ -345,4 +351,82 @@ func validationPodReady(pod *corev1.Pod, template *corev1.PodSpec) error {
 		}
 	}
 	return nil
+}
+
+// Complete owner membership precedes label and selected-node joins. No selector
+// may hide a contradictory current owner-bound Pod from coverage checks.
+func validationDaemonSetPodMembership(set *appsv1.DaemonSet, pods []corev1.Pod, nodes map[string]corev1.Node) (map[string]*corev1.Pod, error) {
+	if set == nil || set.UID == "" || set.Name == "" || set.Namespace == "" || set.Spec.Selector == nil {
+		return nil, validationFailure(validation.Failed, validation.ReasonIncomplete, "Selected DaemonSet identity or selector is incomplete.")
+	}
+	selector, err := metav1.LabelSelectorAsSelector(set.Spec.Selector)
+	if err != nil || selector.Empty() || !selector.Matches(labels.Set(set.Spec.Template.Labels)) {
+		return nil, validationFailure(validation.Failed, validation.ReasonHealth, "Selected DaemonSet has an invalid Pod selector or template labels.")
+	}
+	serialByNode := map[string]string{}
+	for serial, node := range nodes {
+		if serial == "" || node.Name == "" || node.UID == "" || serialByNode[node.Name] != "" {
+			return nil, validationFailure(validation.Failed, validation.ReasonIncomplete, "Selected DaemonSet Node membership is incomplete or ambiguous.")
+		}
+		serialByNode[node.Name] = serial
+	}
+	result := map[string]*corev1.Pod{}
+	for i := range pods {
+		pod := &pods[i]
+		participates := false
+		for _, owner := range pod.OwnerReferences {
+			if owner.UID == set.UID && owner.Controller != nil && *owner.Controller {
+				participates = true
+			}
+		}
+		if !participates {
+			continue
+		}
+		if pod.Namespace != set.Namespace || !validationControllerOwner(pod.OwnerReferences, "DaemonSet", set.Name, set.UID) || !selector.Matches(labels.Set(pod.Labels)) {
+			return nil, validationFailure(validation.Failed, validation.ReasonHealth, "An owned DaemonSet Pod violates the selected current owner, namespace or workload selector.")
+		}
+		serial := serialByNode[pod.Spec.NodeName]
+		if serial == "" {
+			return nil, validationFailure(validation.Failed, validation.ReasonIncomplete, "Selected DaemonSet has an owned Pod outside the selected Node cohort.")
+		}
+		if result[serial] != nil {
+			return nil, validationFailure(validation.Failed, validation.ReasonIncomplete, "More than one selected DaemonSet Pod is active on a tenant Node.")
+		}
+		result[serial] = pod
+	}
+	return result, nil
+}
+
+func validationPodCoverageError(previous, current error) error {
+	rank := func(err error) int {
+		if err == nil {
+			return 0
+		}
+		if check, ok := err.(*validationCheckError); ok {
+			switch check.state {
+			case validation.Pending:
+				return 1
+			case validation.Unverified:
+				return 2
+			case validation.Failed:
+				return 3
+			}
+		}
+		return 4
+	}
+	if rank(current) > rank(previous) {
+		return current
+	}
+	return previous
+}
+
+func validationDaemonSetFromObject(object *unstructured.Unstructured) (*appsv1.DaemonSet, error) {
+	if object == nil {
+		return nil, validationFailure(validation.Failed, validation.ReasonIncomplete, "Selected DaemonSet observation is missing.")
+	}
+	var set appsv1.DaemonSet
+	if err := runtime.DefaultUnstructuredConverter.FromUnstructured(object.Object, &set); err != nil {
+		return nil, validationFailure(validation.Failed, validation.ReasonIncomplete, "Selected DaemonSet observation has malformed generation, rollout counts or typed fields.")
+	}
+	return &set, nil
 }

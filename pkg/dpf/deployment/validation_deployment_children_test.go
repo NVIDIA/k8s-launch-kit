@@ -75,7 +75,9 @@ func (r *deploymentChildrenReader) List(_ context.Context, object *unstructured.
 	return result, nil
 }
 
-func deploymentChildrenFixture() *deploymentChildrenReader {
+func deploymentChildrenFixture(t *testing.T) *deploymentChildrenReader {
+	t.Helper()
+	admitted, template := validationAdmittedPodFixture(t)
 	one, controller := int32(1), true
 	deployment := &appsv1.Deployment{
 		TypeMeta:   metav1.TypeMeta{APIVersion: "apps/v1", Kind: "Deployment"},
@@ -83,7 +85,7 @@ func deploymentChildrenFixture() *deploymentChildrenReader {
 		Spec: appsv1.DeploymentSpec{
 			Replicas: &one, Selector: &metav1.LabelSelector{MatchLabels: map[string]string{"app": "selected"}},
 			Template: corev1.PodTemplateSpec{ObjectMeta: metav1.ObjectMeta{Labels: map[string]string{"app": "selected"}},
-				Spec: corev1.PodSpec{Containers: []corev1.Container{{Name: "manager", Image: "registry.example/manager:v1"}}}},
+				Spec: *template.DeepCopy()},
 		},
 	}
 	set := appsv1.ReplicaSet{
@@ -101,7 +103,7 @@ func deploymentChildrenFixture() *deploymentChildrenReader {
 		ObjectMeta: metav1.ObjectMeta{Name: "manager-current", Namespace: "selected", UID: "pod-one", ResourceVersion: "12",
 			Labels:          map[string]string{"app": "selected", appsv1.DefaultDeploymentUniqueLabelKey: "revision"},
 			OwnerReferences: []metav1.OwnerReference{{APIVersion: "apps/v1", Kind: "ReplicaSet", Name: set.Name, UID: set.UID, Controller: &controller}}},
-		Spec: *deployment.Spec.Template.Spec.DeepCopy(),
+		Spec: *admitted.Spec.DeepCopy(),
 		Status: corev1.PodStatus{Phase: corev1.PodRunning, Conditions: []corev1.PodCondition{{Type: corev1.PodReady, Status: corev1.ConditionTrue}},
 			ContainerStatuses: []corev1.ContainerStatus{{Name: "manager", ImageID: "sha256:running", Ready: true, State: corev1.ContainerState{Running: &corev1.ContainerStateRunning{}}}}},
 	}
@@ -116,6 +118,17 @@ func TestValidationDeploymentChildrenUseCompleteOwnedMembership(t *testing.T) {
 		state  validation.State
 	}{
 		{name: "current revision", mutate: func(*deploymentChildrenReader) {}},
+		{name: "Pod-only command drift", state: validation.Failed, mutate: func(r *deploymentChildrenReader) {
+			r.pods[0].Spec.Containers[0].Command = []string{"sleep", "infinity"}
+		}},
+		{name: "Pod-only arguments drift", state: validation.Failed, mutate: func(r *deploymentChildrenReader) { r.pods[0].Spec.Containers[0].Args = []string{"--unexpected"} }},
+		{name: "Pod-only ServiceAccount drift", state: validation.Failed, mutate: func(r *deploymentChildrenReader) {
+			r.pods[0].Spec.ServiceAccountName = "wrong"
+			r.pods[0].Spec.DeprecatedServiceAccount = "wrong"
+		}},
+		{name: "Pod-only requested network drift", state: validation.Failed, mutate: func(r *deploymentChildrenReader) {
+			r.pods[0].Annotations = map[string]string{"k8s.v1.cni.cncf.io/networks": "unexpected"}
+		}},
 		{name: "extra owned Pod hidden by Deployment selector", state: validation.Failed, mutate: func(r *deploymentChildrenReader) {
 			pod := r.pods[0].DeepCopy()
 			pod.Name, pod.UID, pod.Labels["app"] = "hidden", "hidden-pod", "wrong"
@@ -167,7 +180,7 @@ func TestValidationDeploymentChildrenUseCompleteOwnedMembership(t *testing.T) {
 		}},
 	} {
 		t.Run(test.name, func(t *testing.T) {
-			reader := deploymentChildrenFixture()
+			reader := deploymentChildrenFixture(t)
 			test.mutate(reader)
 			object, err := reader.Get(context.Background(), validationObject("apps/v1", "Deployment", "selected", "manager"))
 			if err != nil {

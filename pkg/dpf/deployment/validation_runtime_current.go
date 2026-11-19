@@ -17,7 +17,10 @@ import (
 	"github.com/nvidia/k8s-launch-kit/pkg/dpf/hbn"
 	"github.com/nvidia/k8s-launch-kit/pkg/dpf/inventory"
 	"github.com/nvidia/k8s-launch-kit/pkg/dpf/validation"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
+	"k8s.io/apimachinery/pkg/labels"
+	"k8s.io/apimachinery/pkg/runtime"
 )
 
 // currentSelectedDevice binds retained intent and saved physical association.
@@ -118,9 +121,6 @@ func observeCurrentRuntimeGraph(ctx context.Context, reader activationObservatio
 		}
 		lists[kind] = rows
 	}
-	if err := verifyCurrentDPUSetMembership(desired, graph.deployment, lists["DPUSet"]); err != nil {
-		return graph, err
-	}
 	for _, item := range selected {
 		set := uniqueObjectByName(lists["DPUSet"], item.dpuSet.GetName())
 		dpu := uniqueObjectByName(lists["DPU"], item.dpuName)
@@ -172,6 +172,9 @@ func observeCurrentRuntimeGraph(ctx context.Context, reader activationObservatio
 		graph.nodes[node.GetName()] = node
 		graph.devices[device.GetName()] = device
 	}
+	if err := verifyCurrentDPUSetMembership(desired, graph, lists["DPUSet"]); err != nil {
+		return graph, err
+	}
 	// A complete list must not admit extra children participating in a selected
 	// set. Other deployments remain outside this graph.
 	for i := range lists["DPU"] {
@@ -198,7 +201,8 @@ func observeCurrentRuntimeGraph(ctx context.Context, reader activationObservatio
 	return graph, reader.VerifyIdentity(ctx)
 }
 
-func verifyCurrentDPUSetMembership(desired *managementDesired, deployment *unstructured.Unstructured, sets []unstructured.Unstructured) error {
+func verifyCurrentDPUSetMembership(desired *managementDesired, graph currentRuntimeGraph, sets []unstructured.Unstructured) error {
+	deployment := graph.deployment
 	expected, err := desired.rules.ActivationSetIntents(deployment, desired.plan.Intent().Devices)
 	if err != nil {
 		return err
@@ -209,24 +213,72 @@ func verifyCurrentDPUSetMembership(desired *managementDesired, deployment *unstr
 	}
 	for i := range sets {
 		set := &sets[i]
-		owned := activationOwnerMatches(set, deployment.GetAPIVersion(), deployment.GetKind(), deployment.GetName(), deployment.GetUID())
-		selector, found, err := unstructured.NestedStringMap(set.Object, "spec", "dpuDeviceSelector", "matchLabels")
-		if err != nil && owned {
-			return validationFailure(validation.Failed, validation.ReasonHealth, "A selected deployment DPUSet has a malformed device selector.")
+		if set.GetNamespace() != deployment.GetNamespace() {
+			continue
 		}
-		selected := false
-		if found {
-			for _, device := range desired.plan.Intent().Devices {
-				if reflect.DeepEqual(selector, device.SelectorLabels) {
-					selected = true
-				}
+		owned := activationOwnerMatches(set, deployment.GetAPIVersion(), deployment.GetKind(), deployment.GetName(), deployment.GetUID())
+		if owned && !names[set.GetName()] {
+			return validationFailure(validation.Failed, validation.ReasonHealth, "An additional DPUSet is owned by the selected deployment.")
+		}
+		nodeSelector, nodeErr := currentDPUSetLabelSelector(set, "dpuNodeSelector")
+		deviceSelector, deviceErr := currentDPUSetLabelSelector(set, "dpuDeviceSelector")
+		// The pinned controller falls back to the deprecated equality map only
+		// when its modern device selector is absent, and otherwise selects all.
+		modern, _, _ := unstructured.NestedFieldNoCopy(set.Object, "spec", "dpuDeviceSelector")
+		if modern == nil {
+			legacy, _, legacyErr := unstructured.NestedStringMap(set.Object, "spec", "dpuSelector")
+			if legacyErr != nil {
+				deviceErr = legacyErr
+			} else {
+				deviceSelector, deviceErr = metav1.LabelSelectorAsSelector(&metav1.LabelSelector{MatchLabels: legacy})
 			}
 		}
-		if owned && !names[set.GetName()] || selected && (!owned || !names[set.GetName()]) {
-			return validationFailure(validation.Failed, validation.ReasonHealth, "An additional or foreign DPUSet participates in the retained selected deployment or device selection.")
+		participates := false
+		for _, item := range graph.selected {
+			device, node := graph.devices[item.deviceName()], graph.nodes[item.nodeName]
+			if device == nil || node == nil {
+				return fmt.Errorf("selected current selector inputs unavailable")
+			}
+			deviceLabels, _, deviceLabelsErr := unstructured.NestedStringMap(device.Object, "metadata", "labels")
+			nodeLabels, _, nodeLabelsErr := unstructured.NestedStringMap(node.Object, "metadata", "labels")
+			if deviceLabelsErr != nil || nodeLabelsErr != nil {
+				return validationFailure(validation.Failed, validation.ReasonHealth, "Selected current device or node labels are malformed.")
+			}
+			// A proven disjoint axis makes the set unrelated even if the other axis
+			// cannot be parsed. Relevant unresolved selection must never be ignored.
+			if nodeErr == nil && !nodeSelector.Matches(labels.Set(nodeLabels)) || deviceErr == nil && !deviceSelector.Matches(labels.Set(deviceLabels)) {
+				continue
+			}
+			if nodeErr != nil || deviceErr != nil {
+				return validationFailure(validation.Failed, validation.ReasonHealth, "A potentially overlapping DPUSet has a malformed selector.")
+			}
+			participates = true
+		}
+		if participates && (!owned || !names[set.GetName()]) {
+			return validationFailure(validation.Failed, validation.ReasonHealth, "An additional or foreign DPUSet participates in the retained selected device and node selection.")
 		}
 	}
 	return nil
+}
+
+func currentDPUSetLabelSelector(set *unstructured.Unstructured, field string) (labels.Selector, error) {
+	raw, _, err := unstructured.NestedMap(set.Object, "spec", field)
+	if err != nil {
+		return nil, err
+	}
+	if raw == nil {
+		return labels.Everything(), nil
+	}
+	for key := range raw {
+		if key != "matchLabels" && key != "matchExpressions" {
+			return nil, fmt.Errorf("unrecognized label selector field")
+		}
+	}
+	var selector metav1.LabelSelector
+	if err := runtime.DefaultUnstructuredConverter.FromUnstructured(raw, &selector); err != nil {
+		return nil, err
+	}
+	return metav1.LabelSelectorAsSelector(&selector)
 }
 
 func currentObjectIdentity(current, expected *unstructured.Unstructured) bool {

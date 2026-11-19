@@ -86,20 +86,20 @@ func TestValidationWorkloadReadinessDoesNotInventNumberReady(t *testing.T) {
 	set := runtimeObject("ServiceInterfaceSet", "selected", "dpf", map[string]any{})
 	set.SetGeneration(2)
 	set.Object["status"] = map[string]any{"observedGeneration": int64(2), "numberApplied": int64(2), "conditions": []any{conditionMap("Ready", "True", "Reconciled", 2), conditionMap("ServiceInterfacesReconciled", "True", "Reconciled", 2), conditionMap("ServiceInterfacesReady", "True", "Reconciled", 2)}}
-	if err := testRules(t).ValidationWorkloadReadiness(set); err != nil {
-		t.Fatalf("valid current set without numberReady rejected: %v", err)
+	if got := testRules(t).ValidationWorkloadReadiness(set); !got.Ready {
+		t.Fatalf("valid current set without numberReady rejected: %+v", got)
 	}
 	for _, observed := range []int64{0, 1, 3} {
 		candidate := set.DeepCopy()
 		_ = unstructured.SetNestedField(candidate.Object, observed, "status", "observedGeneration")
-		if err := testRules(t).ValidationWorkloadReadiness(candidate); err == nil {
+		if got := testRules(t).ValidationWorkloadReadiness(candidate); got.Ready {
 			t.Fatalf("generation %d accepted", observed)
 		}
 	}
 	candidate := set.DeepCopy()
 	conditions, _, _ := unstructured.NestedSlice(candidate.Object, "status", "conditions")
 	_ = unstructured.SetNestedSlice(candidate.Object, append(conditions, conditions[0]), "status", "conditions")
-	if err := testRules(t).ValidationWorkloadReadiness(candidate); err == nil {
+	if got := testRules(t).ValidationWorkloadReadiness(candidate); got.Ready {
 		t.Fatal("ambiguous positive condition accepted")
 	}
 }

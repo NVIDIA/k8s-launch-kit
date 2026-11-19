@@ -120,14 +120,15 @@ func TestValidationPhysicalKnownReplacementStillPoisonsCohort(t *testing.T) {
 					d = cloneValidationDevice(t, d)
 					for i := range d.Runtime.Network.Links {
 						link := &d.Runtime.Network.Links[i]
-						if link.PhysicalPortName == "p0" {
+						switch link.PhysicalPortName {
+						case "p0":
 							if kind == "mac-binding-during-read" {
 								link.PermanentMAC = ""
 								d.Runtime.Observations["host-interface:"+link.Name+":permanent-mac"] = inventory.Observation{State: "unavailable", ReasonCode: "INVENTORY_CHANGED"}
 							} else {
 								link.PermanentMAC = "02:aa:bb:cc:dd:ee"
 							}
-						} else if link.PhysicalPortName == "p1" {
+						case "p1":
 							link.PhysicalPortName = ""
 						}
 					}

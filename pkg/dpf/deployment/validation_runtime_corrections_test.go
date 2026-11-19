@@ -186,6 +186,7 @@ func (r *correctionHBNManagement) getHBNRuntimeApplication(context.Context, stri
 
 func TestValidationNativeHBNBindingRejectsExtraParticipatingNode(t *testing.T) {
 	fixture := newRuntimeStageFixture(t, []string{"SERIAL-A"})
+	admitN3cHBNPods(fixture)
 	execution := fixture.prepared.execution
 	desired, err := prepareManagementDesiredFromPlan(execution.retained, execution.plan)
 	if err != nil {

@@ -92,6 +92,12 @@ func (o *validationObserver) validationSelectedTenantNodes(ctx context.Context, 
 }
 
 func (o *validationObserver) observeValidationRuntimeResources(ctx context.Context, management validationManagementReader, tenant *tenantClient, r *validationRecorder) error {
+	return o.observeValidationRuntimeResourcesWithImage(ctx, management, tenant, r, resolveHBNRuntimeImage)
+}
+
+// The image boundary resolves immutable OCI metadata; all resource/readiness
+// decisions remain in this shared native observation path.
+func (o *validationObserver) observeValidationRuntimeResourcesWithImage(ctx context.Context, management validationManagementReader, tenant *tenantClient, r *validationRecorder, resolveImage hbnImageResolver) error {
 	selected, selectErr := validationSelectedHosts(o.desired, o.request, o.physicalScope.expected)
 	if selectErr != nil {
 		for _, id := range []validation.CheckID{"devices/coverage", "hbn/coverage", "workloads/coverage"} {
@@ -150,7 +156,9 @@ func (o *validationObserver) observeValidationRuntimeResources(ctx context.Conte
 			return validationRuntimeError(ctx, err, false)
 		}
 	}
-	image, imageErr := resolveHBNRuntimeImage(ctx, hbnImageReference(o.desired.plan.Intent().Generation), o.request.RequestTimeout, nil)
+	imageCtx, cancelImage := context.WithTimeout(ctx, o.request.RequestTimeout)
+	image, imageErr := resolveImage(imageCtx, hbnImageReference(o.desired.plan.Intent().Generation), o.request.RequestTimeout, nil)
+	cancelImage()
 	if imageErr != nil {
 		image = hbnPodImageIdentity{}
 	}
@@ -238,7 +246,7 @@ func recordRuntimePendingDependencies(r *validationRecorder, cause error) {
 		}
 		if spec.Area == validation.AreaHBN || spec.Area == validation.AreaWorkloads || strings.HasPrefix(string(id), "physical/host-network/") {
 			r.start(id)
-			r.record(id, validation.Pending, validation.ReasonProgressing, "Waiting for the selected current device or allocation prerequisite to reconcile.", "Allow the selected controller to settle and repeat the observation.")
+			r.record(id, validation.Pending, validation.ReasonProgressing, "Waiting for the selected current controller prerequisite to reconcile.", "Allow the selected controller to settle and repeat the observation.")
 		}
 	}
 }
@@ -285,7 +293,7 @@ func (o *validationObserver) observeRetainedWorkloads(ctx context.Context, manag
 				return err
 			}
 		case "DPUServiceInterface":
-			if err := o.desired.rules.ValidationWorkloadReadiness(current); err != nil {
+			if err := validationRuntimeReadiness(o.desired.rules.ValidationWorkloadReadiness(current), "Selected workload has not reconciled its current generation."); err != nil {
 				return err
 			}
 		}
@@ -394,7 +402,7 @@ func (o *validationObserver) observeTenantSFC(ctx context.Context, tenant valida
 			continue
 		}
 		chainCount++
-		if err := o.desired.rules.ValidationWorkloadReadiness(chain); err != nil {
+		if err := validationRuntimeReadiness(o.desired.rules.ValidationWorkloadReadiness(chain), "Selected workload has not reconciled its current generation."); err != nil {
 			return err
 		}
 		sets, err := tenant.listValidationSFCObjects(ctx, "ServiceChainSet", chain.GetNamespace(), chain.GetName(), "")
@@ -406,7 +414,7 @@ func (o *validationObserver) observeTenantSFC(ctx context.Context, tenant valida
 		if e != nil || !found || !jsonEqual(expected, set.Object["spec"]) || len(set.GetOwnerReferences()) != 0 || len(set.GetLabels()) != 0 || len(set.GetAnnotations()) != 0 {
 			return fmt.Errorf("current chain set differs from parent")
 		}
-		if err := o.desired.rules.ValidationWorkloadReadiness(set); err != nil {
+		if err := validationRuntimeReadiness(o.desired.rules.ValidationWorkloadReadiness(set), "Selected workload has not reconciled its current generation."); err != nil {
 			return err
 		}
 		if err := verifySelectedSetNodes(o.desired.rules, set, snapshot.TenantNodes, graph); err != nil {
@@ -465,7 +473,7 @@ func (o *validationObserver) observeTenantSFC(ctx context.Context, tenant valida
 		return fmt.Errorf("selected NSI shard node or type differs")
 	}
 	for _, interfaceParent := range interfaces {
-		if err := o.desired.rules.ValidationWorkloadReadiness(interfaceParent); err != nil {
+		if err := validationRuntimeReadiness(o.desired.rules.ValidationWorkloadReadiness(interfaceParent), "Selected workload has not reconciled its current generation."); err != nil {
 			return err
 		}
 		sets, err := tenant.listValidationSFCObjects(ctx, "ServiceInterfaceSet", interfaceParent.GetNamespace(), interfaceParent.GetName(), "")
@@ -476,7 +484,7 @@ func (o *validationObserver) observeTenantSFC(ctx context.Context, tenant valida
 		if verifyServiceInterfaceSetChild(interfaceParent, set) != nil || len(set.GetOwnerReferences()) != 0 || set.GetAnnotations()[workloadInterfaceModeAnnotation] != "nsi" {
 			return fmt.Errorf("selected interface set projection or stable NSI mode differs")
 		}
-		if err := o.desired.rules.ValidationWorkloadReadiness(set); err != nil {
+		if err := validationRuntimeReadiness(o.desired.rules.ValidationWorkloadReadiness(set), "Selected workload has not reconciled its current generation."); err != nil {
 			return err
 		}
 		if err := verifySelectedSetNodes(o.desired.rules, set, snapshot.TenantNodes, graph); err != nil {
@@ -664,7 +672,7 @@ func verifySelectedChainChildren(rules *controllercontract.Rules, set *unstructu
 		if row.GetDeletionTimestamp() != nil || len(row.GetOwnerReferences()) != 1 || !activationOwnerMatches(row, set.GetAPIVersion(), set.GetKind(), set.GetName(), set.GetUID()) || !jsonEqual(row.Object["spec"], map[string]any{"node": node, "switches": switches}) {
 			return fmt.Errorf("selected chain child ownership or spec differs")
 		}
-		if err := rules.ValidationWorkloadReadiness(row); err != nil {
+		if err := validationRuntimeReadiness(rules.ValidationWorkloadReadiness(row), "Selected workload has not reconciled its current generation."); err != nil {
 			return err
 		}
 	}
@@ -738,7 +746,7 @@ func verifySelectedNSIEntry(rules *controllercontract.Rules, set, shard *unstruc
 	if matches != 1 {
 		return fmt.Errorf("selected NSI entry missing or duplicated")
 	}
-	return rules.ValidationNSIEntryReady(shard, name)
+	return validationRuntimeReadiness(rules.ValidationNSIEntryReady(shard, name), "Selected NSI entry has not reconciled its current generation.")
 }
 
 func validationHostNetworkError(err error) error {
