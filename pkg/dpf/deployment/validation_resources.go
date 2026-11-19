@@ -5,6 +5,7 @@ package deployment
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net/url"
 	"sort"
@@ -293,7 +294,25 @@ func (o *validationObserver) openValidationTenant(ctx context.Context, managemen
 	if err := validationTenantReady(o.desired.rules.TenantReadiness(expected, sources.observed)); err != nil {
 		return nil, err
 	}
-	return newTenantClient(ctx, o.desired.rules, management, expected, string(current.GetUID()), o.request.RequestTimeout, nil, nil)
+	tenant, err := newTenantClient(ctx, o.desired.rules, management, expected, string(current.GetUID()), o.request.RequestTimeout, nil, nil)
+	if err != nil {
+		return nil, validationTenantConnectionError(ctx, err)
+	}
+	return tenant, nil
+}
+
+// Only the constructor's direct source result can establish ordinary progress.
+// A joined/wrapped failure may contain identity, access or cancellation evidence
+// and must keep its original classification. Bound-session fencing never calls
+// this projection.
+func validationTenantConnectionError(ctx context.Context, err error) error {
+	if ctx != nil && ctx.Err() != nil {
+		return errors.Join(err, ctx.Err())
+	}
+	if source, ok := err.(*tenantSourceReadinessError); ok {
+		return errors.Join(validationTenantReady(source.readiness), err)
+	}
+	return err
 }
 
 // Tenant source convergence has its own classifier. Conflicts and malformed

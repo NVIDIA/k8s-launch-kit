@@ -31,6 +31,16 @@ type tenantSourceReader interface {
 	observeTenantSources(context.Context, controllercontract.TenantReadinessExpected) (tenantSources, error)
 }
 
+// Preserve the canonical state without granting bound tenant sessions a retry
+// policy. Only an initial validation connection may project this information.
+type tenantSourceReadinessError struct {
+	readiness controllercontract.TenantReadiness
+}
+
+func (e *tenantSourceReadinessError) Error() string {
+	return "tenant source resources are not ready: " + e.readiness.ReasonCode
+}
+
 type tenantSources struct {
 	observed controllercontract.TenantReadinessObserved
 	secret   *corev1.Secret
@@ -112,7 +122,7 @@ func validateTenantSources(rules *controllercontract.Rules, expected controllerc
 	}
 	result := rules.TenantReadiness(expected, sources.observed)
 	if !result.Ready {
-		return empty, "", nil, fmt.Errorf("tenant source resources are not ready: %s", result.ReasonCode)
+		return empty, "", nil, &tenantSourceReadinessError{readiness: result}
 	}
 	if dcUID == "" || dc == nil || dc.GetUID() == "" {
 		return empty, "", nil, fmt.Errorf("selected DPUCluster identity is unavailable")
