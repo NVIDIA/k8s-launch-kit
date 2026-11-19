@@ -15,7 +15,8 @@ import (
 )
 
 // ObjectSchemas holds immutable per-GVK schemas extracted from one retained
-// operator manifest. Build it once and reuse it for resource verification.
+// operator manifest. A validated Plan retains this owner for resource verification;
+// exported wrappers share only private read-only maps and validators.
 type ObjectSchemas struct {
 	byGVK map[resourceKey]dpfSchema
 }

@@ -120,7 +120,7 @@ func TestReservationFailuresRetainSafeReasonWithoutAdoption(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	execution, err := prepareManagementExecution(retained, time.Minute)
+	execution, err := loadManagementExecution(retained, time.Minute)
 	if err != nil {
 		t.Fatal(err)
 	}

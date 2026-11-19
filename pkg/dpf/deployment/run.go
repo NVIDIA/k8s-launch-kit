@@ -18,7 +18,6 @@ import (
 	"sync"
 	"time"
 
-	"github.com/nvidia/k8s-launch-kit/pkg/dpf/bundle"
 	"github.com/nvidia/k8s-launch-kit/pkg/dpf/catalog"
 	"github.com/nvidia/k8s-launch-kit/pkg/dpf/config"
 	"github.com/nvidia/k8s-launch-kit/pkg/dpf/discovery"
@@ -144,12 +143,12 @@ func (f RebooterFunc) RebootExternal(ctx context.Context, request ActivationRequ
 	return f(ctx, request)
 }
 
-// RunRequest contains one retained bundle and explicit, already-resolved site
+// RunRequest contains one LoadPlan-validated desired snapshot and explicit site
 // access. Run never loads ambient kubeconfig or resolves credentials itself.
 type RunRequest struct {
 	Resume *OperationRef
 
-	Bundle              *bundle.Bundle
+	Plan                *generation.Plan
 	Access              config.Request
 	ReportPath          string
 	ProbeJournalPath    string
@@ -195,7 +194,7 @@ type ActivationObjectID struct {
 	UID  types.UID `json:"uid"`
 }
 
-// Run validates the retained bundle before access, checks fresh prerequisites,
+// Run composes fresh execution from a LoadPlan-validated snapshot, checks fresh prerequisites,
 // and executes the fixed management, tenant, enrollment, software, workload,
 // DPUDeployment, external-activation, selected host-network and native HBN runtime stages against
 // one identity-bound client and the explicit selected host access.
@@ -247,15 +246,21 @@ func runWithTransports(ctx context.Context, request RunRequest, transports runTr
 		ref := *request.Resume
 		request.Resume = &ref
 	}
+	// Own the outer Plan before callbacks can replace the caller's value.
+	// Concurrent mutation during this argument handoff remains caller misuse.
+	if request.Plan != nil {
+		plan := *request.Plan
+		request.Plan = &plan
+	}
 	if err := validateRunRequest(request); err != nil {
 		return RunResult{}, err
 	}
 	if err := ctx.Err(); err != nil {
 		return RunResult{}, err
 	}
-	execution, err := prepareManagementExecution(request.Bundle, remaining)
+	execution, err := prepareManagementExecution(request.Plan, remaining)
 	if err != nil {
-		return RunResult{}, fmt.Errorf("validate retained deployment bundle: %w", err)
+		return RunResult{}, fmt.Errorf("prepare validated deployment plan: %w", err)
 	}
 	plan := execution.plan
 	request.ReportPath, err = canonicalNewFilePath(request.ReportPath)
@@ -543,8 +548,11 @@ func activationSummary(receipt activationStageReceipt) *ActivationSummary {
 }
 
 func validateRunRequest(request RunRequest) error {
-	if request.Bundle == nil || request.VerifyPrerequisites == nil || request.VerifyChartSource == nil || request.Rebooter == nil {
-		return fmt.Errorf("deployment run requires a retained bundle and prerequisite, chart-source and external-reboot callbacks")
+	if request.Plan == nil || request.Plan.Digest() == "" || request.Plan.Bundle() == nil || request.Plan.ObjectSchemas() == nil {
+		return fmt.Errorf("deployment run requires a validated plan")
+	}
+	if request.VerifyPrerequisites == nil || request.VerifyChartSource == nil || request.Rebooter == nil {
+		return fmt.Errorf("deployment run requires prerequisite, chart-source and external-reboot callbacks")
 	}
 	if _, ok := request.Rebooter.(ExternalRebootObserver); !ok {
 		return fmt.Errorf("deployment run requires a reboot backend with separate observation-only recovery")

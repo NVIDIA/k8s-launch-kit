@@ -62,6 +62,8 @@ func NewValidationObserver(retained *bundle.Bundle, plan *generation.Plan, reque
 	if err != nil {
 		return validation.Plan{}, nil, err
 	}
+	// Retain the isolated Plan snapshot owned by desired preparation.
+	plan = desired.plan
 	if mode != validation.ModeFull && mode != validation.ModeResources {
 		return validation.Plan{}, nil, fmt.Errorf("validation mode must be full or resources")
 	}

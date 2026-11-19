@@ -19,11 +19,14 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strconv"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
+	"github.com/nvidia/k8s-launch-kit/pkg/dpf/bundle"
 	"github.com/nvidia/k8s-launch-kit/pkg/dpf/config"
 	"github.com/nvidia/k8s-launch-kit/pkg/dpf/discovery"
 	"github.com/nvidia/k8s-launch-kit/pkg/dpf/generation"
@@ -88,6 +91,7 @@ func TestRunPersistsPrerequisiteFailureBeforeManagementEffects(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	plan := requireRunPlan(t, generated)
 	root := t.TempDir()
 	reportPath := filepath.Join(root, "run.jsonl")
 	probePath := filepath.Join(root, "probe.jsonl")
@@ -96,7 +100,7 @@ func TestRunPersistsPrerequisiteFailureBeforeManagementEffects(t *testing.T) {
 	target := config.Target{Role: "dpus", Endpoint: "https://192.0.2.10:443", InputRef: "dpu-input"}
 	var request RunRequest
 	request = RunRequest{
-		Bundle:     generated,
+		Plan:       plan,
 		Access:     config.Request{Targets: []config.Target{target}, Kubeconfig: api.request.Kubeconfig, Context: api.request.Context},
 		ReportPath: reportPath, ProbeJournalPath: probePath,
 		VerifyPrerequisites: func(ctx context.Context, observed config.Request, plan *generation.Plan, _ PrerequisitePhase) (PrerequisiteVerification, error) {
@@ -130,6 +134,8 @@ func TestRunPersistsPrerequisiteFailureBeforeManagementEffects(t *testing.T) {
 		if reference != defaults.ImageRepository+":"+defaults.ImageTag+"@"+defaults.ImageDigest {
 			t.Fatalf("early check changed the release-selected default image reference: %s", reference)
 		}
+		// Run owns its snapshot before any callback can replace the caller token.
+		*plan = generation.Plan{}
 		return retainedTestImageResolver(ctx, reference, timeout, transport)
 	}})
 	if runErr == nil || !strings.Contains(runErr.Error(), "prerequisite observation failed") || !called {
@@ -178,6 +184,7 @@ func TestRunPrerequisitesPreserveResolvedSwitchAccessAndIsolateInputs(t *testing
 	if err != nil {
 		t.Fatal(err)
 	}
+	plan := requireRunPlan(t, generated)
 	for _, authentication := range []string{"password", "private-key"} {
 		t.Run(authentication, func(t *testing.T) {
 			access, knownHosts, privateKey := resolvedPrerequisiteAccess(t, authentication)
@@ -188,7 +195,7 @@ func TestRunPrerequisitesPreserveResolvedSwitchAccessAndIsolateInputs(t *testing
 			ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
 			defer cancel()
 			_, runErr := runWithTransports(ctx, RunRequest{
-				Bundle: generated, Access: access,
+				Plan: plan, Access: access,
 				ReportPath: filepath.Join(root, "run.jsonl"), ProbeJournalPath: filepath.Join(root, "probe.jsonl"),
 				VerifyPrerequisites: func(_ context.Context, observed config.Request, _ *generation.Plan, _ PrerequisitePhase) (PrerequisiteVerification, error) {
 					called = true
@@ -575,4 +582,101 @@ func (f runRebooterFunc) RebootExternal(ctx context.Context, request ActivationR
 }
 func (runRebooterFunc) ObserveExternal(context.Context, ActivationRequest, string) (ActivationObservation, error) {
 	return ActivationObservation{}, errors.New("observation not reached")
+}
+
+// requireRunPlan makes the real constructor visible at each desired-input owner.
+func requireRunPlan(t *testing.T, retained *bundle.Bundle) *generation.Plan {
+	t.Helper()
+	plan, err := generation.LoadPlan(retained)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return plan
+}
+
+func TestRunRejectsMissingOrZeroPlanBeforeAuthority(t *testing.T) {
+	for name, plan := range map[string]*generation.Plan{"nil": nil, "zero": {}} {
+		t.Run(name, func(t *testing.T) {
+			request := imagePrerequisiteRunRequest(t, plan, func(context.Context, config.Request, *generation.Plan, PrerequisitePhase) (PrerequisiteVerification, error) {
+				t.Fatal("prerequisites ran for invalid Plan")
+				return PrerequisiteVerification{}, nil
+			})
+			ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
+			defer cancel()
+			_, err := runWithTransports(ctx, request, runTransports{resolveImage: func(context.Context, string, time.Duration, http.RoundTripper) (hbnPodImageIdentity, error) {
+				t.Fatal("image transport ran for invalid Plan")
+				return hbnPodImageIdentity{}, nil
+			}})
+			if err == nil || !strings.Contains(err.Error(), "validated plan") {
+				t.Fatalf("invalid Plan accepted: %v", err)
+			}
+			for _, path := range []string{request.ReportPath, request.ProbeJournalPath} {
+				if _, err := os.Stat(path); !os.IsNotExist(err) {
+					t.Fatalf("invalid Plan created journal %s: %v", path, err)
+				}
+			}
+		})
+	}
+}
+
+func TestRunSharedPlanReopensAccessAndRechecksIdentity(t *testing.T) {
+	var credentials []string
+	var credentialsMu sync.Mutex
+	api := newAPIFixture(t, func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet || !strings.Contains(r.URL.Path, "/configmaps/dpf-op-") {
+			t.Errorf("unexpected API/effect: %s %s", r.Method, r.URL.Path)
+		}
+		credentialsMu.Lock()
+		credentials = append(credentials, r.Header.Get("Authorization"))
+		credentialsMu.Unlock()
+		w.WriteHeader(http.StatusForbidden)
+		fmt.Fprint(w, `{"apiVersion":"v1","kind":"Status","status":"Failure","reason":"Forbidden","code":403}`)
+	})
+	retained, err := generateFixtureBundle(operationRunInputs(t, api))
+	if err != nil {
+		t.Fatal(err)
+	}
+	plan := requireRunPlan(t, retained)
+	original, err := os.ReadFile(api.request.Kubeconfig)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for i, credential := range []string{"fresh-first", "fresh-second", "fresh-third"} {
+		if err := os.WriteFile(api.request.Kubeconfig, bytes.ReplaceAll(original, []byte("private-test-token"), []byte(credential)), 0600); err != nil {
+			t.Fatal(err)
+		}
+		if i == 2 {
+			api.uid.Store("replacement-cluster")
+		}
+		request := imagePrerequisiteRunRequest(t, plan, func(context.Context, config.Request, *generation.Plan, PrerequisitePhase) (PrerequisiteVerification, error) {
+			t.Fatal("prerequisites ran despite denied operation/changed identity")
+			return PrerequisiteVerification{}, nil
+		})
+		request.Access = api.request
+		ctx, cancel := context.WithTimeout(context.Background(), time.Duration(i+1)*time.Minute)
+		deadline, _ := ctx.Deadline()
+		imageCalls := 0
+		_, err := runWithTransports(ctx, request, runTransports{resolveImage: func(actual context.Context, reference string, timeout time.Duration, transport http.RoundTripper) (hbnPodImageIdentity, error) {
+			imageCalls++
+			if current, ok := actual.Deadline(); !ok || !current.Equal(deadline) {
+				t.Error("shared Plan reused another execution context/deadline")
+			}
+			return retainedTestImageResolver(actual, reference, timeout, transport)
+		}})
+		cancel()
+		if err == nil || imageCalls != 1 {
+			t.Fatalf("shared Plan skipped current image/authority checks: %v calls=%d", err, imageCalls)
+		}
+		if i == 2 && !strings.Contains(err.Error(), "identity") {
+			t.Fatalf("changed management identity was not rejected: %v", err)
+		}
+	}
+	credentialsMu.Lock()
+	defer credentialsMu.Unlock()
+	if !reflect.DeepEqual(credentials, []string{"Bearer fresh-first", "Bearer fresh-second"}) {
+		t.Fatalf("access or operation observation reused across Runs: %v", credentials)
+	}
+	if api.writes.Load() != 0 {
+		t.Fatal("denied shared-Plan execution performed an API effect")
+	}
 }

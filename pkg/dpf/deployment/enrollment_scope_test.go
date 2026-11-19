@@ -103,7 +103,7 @@ func enrollmentScopeFixture(t *testing.T) (*managementExecution, *enrollmentScop
 	if err != nil {
 		t.Fatal(err)
 	}
-	execution, err := prepareManagementExecution(generated, time.Minute)
+	execution, err := loadManagementExecution(generated, time.Minute)
 	if err != nil {
 		t.Fatal(err)
 	}

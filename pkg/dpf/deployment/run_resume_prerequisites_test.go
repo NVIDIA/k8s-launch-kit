@@ -55,7 +55,7 @@ func TestRunResumeBindsOperationBeforeCallingPrerequisiteProvider(t *testing.T) 
 	if err != nil {
 		t.Fatal(err)
 	}
-	execution, err := prepareManagementExecution(retained, time.Minute)
+	execution, err := loadManagementExecution(retained, time.Minute)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -116,7 +116,7 @@ func TestRunResumeBindsOperationBeforeCallingPrerequisiteProvider(t *testing.T) 
 			namespaceUID = "operator-namespace-uid"
 			mu.Unlock()
 			called := false
-			request := imagePrerequisiteRunRequest(t, retained, func(context.Context, config.Request, *generation.Plan, PrerequisitePhase) (PrerequisiteVerification, error) {
+			request := imagePrerequisiteRunRequest(t, execution.plan, func(context.Context, config.Request, *generation.Plan, PrerequisitePhase) (PrerequisiteVerification, error) {
 				called = true
 				return PrerequisiteVerification{}, fmt.Errorf("provider must not run before exact operation binding")
 			})

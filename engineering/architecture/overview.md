@@ -333,7 +333,11 @@ Its inputs and lease closure retain no operation store, first-create callback,
 installer, selector/activation patcher, resetter or host configurer. The retained
 plan, bundle and compiled schemas remain immutable data owners.
 `LoadPlan` regenerates and exactly compares the retained bundle before management
-access. Management desired preparation then reuses that
+access, retaining its immutable bundle and the schemas used for strict generation
+validation. `RunRequest` accepts this Plan alone; each Run composes fresh execution
+with current deadlines, access, identity, authorization and lifecycle fences. Plan
+accessors return isolated outer wrappers over private immutable data. Management
+desired preparation then reuses that
 validated stage's raw operator projection and explicit Helm values for chart
 comparison and readiness; standalone operator requests still render their inputs.
 Management preparation selects one concrete immutable controller rules value from

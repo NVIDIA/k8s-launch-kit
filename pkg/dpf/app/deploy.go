@@ -79,7 +79,7 @@ func Deploy(ctx context.Context, r DeploymentRequest) (*deployment.RunResult, er
 	}
 	progress.Info("[RUNNING] Deployment records: %s", runDir)
 	result, runErr := deployment.Run(ctx, deployment.RunRequest{
-		Bundle: retained, Access: access, Resume: r.Resume,
+		Plan: plan, Access: access, Resume: r.Resume,
 		ReportPath: filepath.Join(runDir, "deployment.jsonl"), ProbeJournalPath: filepath.Join(runDir, "probe-resources.json"),
 		VerifyPrerequisites: DeploymentPrerequisites(retained, runDir, r.Resume != nil), VerifyChartSource: verifyDeploymentChart,
 		Rebooter:     rebooter,

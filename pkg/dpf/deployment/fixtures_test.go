@@ -22,7 +22,7 @@ var fixtureBundles = struct {
 // fixture inputs across lifecycle failure cases. Bundle is immutable: its
 // accessors return copies. Tests construct fresh clients and journals; only the
 // fixed stage fixtures also reuse their immutable prepared desired execution.
-// Public lifecycle entrypoints still perform production LoadPlan validation.
+// Run callers explicitly obtain a production LoadPlan token before execution.
 // Tests of generation or invalid input types must call generation.Generate
 // directly; this cache identifies fixture inputs by their serialized values.
 func generateFixtureBundle(input generation.Inputs) (*bundle.Bundle, error) {
@@ -52,11 +52,11 @@ var fixtureExecutions = struct {
 // snapshot for an exact bundle. Its operator timeout is always one minute,
 // matching the fixed software, enrollment, and tenant fixture constructors.
 // Contexts, clients, live objects, credentials, receipts and journals belong to
-// each fresh harness. Public Run/LoadPlan, dynamic-deadline wrappers, and tests
-// of prepareManagementExecution itself must keep their real validation paths.
+// each fresh harness. Run composes fresh execution from this exact validated
+// plan; dynamic-deadline stage wrappers keep their real constructor paths.
 func prepareStageFixtureExecution(retained *bundle.Bundle) (*managementExecution, error) {
 	if retained == nil {
-		return prepareManagementExecution(nil, time.Minute)
+		return loadManagementExecution(nil, time.Minute)
 	}
 	key := retained.Index().BundleDigest
 	fixtureExecutions.Lock()
@@ -64,7 +64,7 @@ func prepareStageFixtureExecution(retained *bundle.Bundle) (*managementExecution
 	if cached := fixtureExecutions.values[key]; cached != nil {
 		return cached, nil
 	}
-	execution, err := prepareManagementExecution(retained, time.Minute)
+	execution, err := loadManagementExecution(retained, time.Minute)
 	if err == nil {
 		fixtureExecutions.values[key] = execution
 	}

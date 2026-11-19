@@ -97,12 +97,12 @@ type managementVerificationInputs struct {
 	crds                []operatorCRDExpectation
 }
 
-func prepareManagementExecution(retained *bundle.Bundle, timeout time.Duration) (*managementExecution, error) {
-	desired, err := prepareManagementDesired(retained)
+func prepareManagementExecution(plan *generation.Plan, timeout time.Duration) (*managementExecution, error) {
+	desired, err := prepareManagementDesiredFromPlan(plan.Bundle(), plan)
 	if err != nil {
 		return nil, err
 	}
-	prerequisites, err := managementPreflightPlanFromValidated(ManagementPreflightRequest{Bundle: retained}, desired.plan)
+	prerequisites, err := managementPreflightPlanFromValidated(ManagementPreflightRequest{Bundle: desired.retained}, desired.plan)
 	if err != nil {
 		return nil, err
 	}

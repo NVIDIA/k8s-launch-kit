@@ -14,6 +14,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/nvidia/k8s-launch-kit/pkg/dpf/bundle"
 	"github.com/nvidia/k8s-launch-kit/pkg/dpf/config"
 	"github.com/nvidia/k8s-launch-kit/pkg/dpf/deployment/internal/controllercontract"
 	"github.com/nvidia/k8s-launch-kit/pkg/dpf/generation"
@@ -541,6 +542,9 @@ func TestValidationConstructorFreezesExplicitAccessWithoutNetwork(t *testing.T) 
 	if err != nil {
 		t.Fatal(err)
 	}
+	// Own a wrapper so the replacement test cannot mutate the shared fixture cache.
+	retainedWrapper := *retained
+	retained = &retainedWrapper
 	plan, err := generation.LoadPlan(retained)
 	if err != nil {
 		t.Fatal(err)
@@ -562,6 +566,9 @@ func TestValidationConstructorFreezesExplicitAccessWithoutNetwork(t *testing.T) 
 		t.Fatal("unavailable credentials reduced expected checks")
 	}
 	native := observer.(*validationObserver)
+	// Replacing caller-owned wrappers after handoff cannot change later identity reads.
+	*plan = generation.Plan{}
+	*retained = bundle.Bundle{}
 	request.Input.Site.Discovery.DPUs[0].BMCEndpoint = "https://192.0.2.99"
 	if native.request.Input.Site.Discovery.DPUs[0].BMCEndpoint != "https://192.0.2.20" {
 		t.Fatal("constructor retained mutable request scope")

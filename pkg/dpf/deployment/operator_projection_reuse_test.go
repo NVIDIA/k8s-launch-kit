@@ -7,11 +7,14 @@ import (
 	"bytes"
 	"context"
 	"reflect"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/nvidia/k8s-launch-kit/pkg/dpf/bundle"
+	"github.com/nvidia/k8s-launch-kit/pkg/dpf/config"
 	"github.com/nvidia/k8s-launch-kit/pkg/dpf/generation"
+	"github.com/nvidia/k8s-launch-kit/pkg/dpf/validation"
 )
 
 func TestManagementDesiredReusesExactValidatedOperatorArtifacts(t *testing.T) {
@@ -114,6 +117,9 @@ func TestManagementDesiredRejectsUnboundOperatorArtifacts(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			if got, err := prepareManagementDesiredFromPlan(test.retained, test.plan); err == nil || got != nil {
 				t.Fatalf("unbound preparation: desired=%v error=%v", got != nil, err)
+			}
+			if _, observer, err := NewValidationObserver(test.retained, test.plan, config.Request{}, nil, validation.ModeResources); err == nil || observer != nil || !strings.Contains(err.Error(), "validated plan does not identify the retained bundle") {
+				t.Fatalf("unbound observer: observer=%v error=%v", observer != nil, err)
 			}
 		})
 	}

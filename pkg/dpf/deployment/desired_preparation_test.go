@@ -67,7 +67,7 @@ func TestManagementDesiredAndDeploymentPrepareSameReadProjection(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	execution, err := prepareManagementExecution(retained, time.Minute)
+	execution, err := loadManagementExecution(retained, time.Minute)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -151,5 +151,25 @@ func TestOperatorDesiredAndDeploymentShareExactReleaseComparison(t *testing.T) {
 	request.Archive[0] ^= 0xff
 	if !bytes.Equal(pure.archive, archiveBefore) {
 		t.Fatal("desired chart aliases caller input")
+	}
+}
+
+func TestSharedPlanComposesSeparateExecutionControls(t *testing.T) {
+	retained, err := generateFixtureBundle(preflightGenerationInputs(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	plan := requireRunPlan(t, retained)
+	first, err := prepareManagementExecution(plan, time.Minute)
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, err := prepareManagementExecution(plan, 2*time.Minute)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if first == second || first.operator == second.operator || first.operator.postRenderer == nil || second.operator.postRenderer == nil || first.reconciler == second.reconciler ||
+		first.operator.timeout != time.Minute || second.operator.timeout != 2*time.Minute {
+		t.Fatal("shared Plan reused mutable execution, omitted its postrenderer, or retained a stale timeout")
 	}
 }
