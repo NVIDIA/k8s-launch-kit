@@ -29,7 +29,6 @@ func (e *publicationError) Unwrap() error { return e.cause }
 // The caller closes it after publishing or abandoning the report.
 type ReportDestination struct {
 	parent    reportParent
-	path      string
 	filename  string
 	newOnly   bool
 	bundle    reportInput
@@ -111,7 +110,7 @@ func (d *ReportDestination) prepareExplicit(reportPath string, protectedPaths []
 	if err != nil {
 		return err
 	}
-	d.parent, d.path, d.filename = parent, path, filename
+	d.parent, d.filename = parent, filename
 	return nil
 }
 
@@ -146,7 +145,6 @@ func (d *ReportDestination) prepareDefault() error {
 		return &publicationError{message: "The adjacent report directory changed after creation"}
 	}
 	d.parent, d.filename, d.newOnly = child, "validation.html", true
-	d.path = filepath.Join(path, d.filename)
 	return nil
 }
 

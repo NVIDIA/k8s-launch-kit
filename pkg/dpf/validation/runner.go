@@ -425,7 +425,7 @@ func inspectError(err error) errorClassification {
 		if current == nil {
 			continue
 		}
-		if reflect.TypeOf(current).Comparable() {
+		if reflect.ValueOf(current).Comparable() {
 			if seen[current] {
 				continue
 			}

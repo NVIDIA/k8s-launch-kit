@@ -23,6 +23,15 @@ func TestValidation(t *testing.T) {
 	ginkgo.RunSpecs(t, "DPF validation coverage")
 }
 
+// A statically comparable error type may hold a dynamically unhashable value.
+type valueWrappedError struct {
+	payload any
+	cause   error
+}
+
+func (valueWrappedError) Error() string   { return "private transport failure" }
+func (e valueWrappedError) Unwrap() error { return e.cause }
+
 type fakeObserver struct {
 	input                    PlanInput
 	resources                func(context.Context, Progress) (ResourceSnapshot, error)
@@ -683,6 +692,17 @@ var _ = ginkgo.Describe("Bounded waiting and cancellation", func() {
 })
 
 var _ = ginkgo.Describe("Safe progress and result disposition", func() {
+	ginkgo.It("classifies dynamically unhashable error values without losing their wrapped cause", func() {
+		for _, payload := range []any{[]byte("private bytes"), map[string]string{"private": "value"}} {
+			cause := valueWrappedError{payload: payload, cause: &ObservationError{Category: FatalIdentity}}
+			result := PreparationFailure(ModeFull, FatalObservation, cause)
+			Expect(result.Fatal).To(Equal(FatalIdentity))
+			Expect(result.ExitCode()).To(Equal(3))
+			data, err := json.Marshal(result)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(string(data)).NotTo(ContainSubstring("private"))
+		}
+	})
 	ginkgo.It("does not allow observer-disabled reasons to hide a requested blocker", func() {
 		for _, state := range []State{Failed, Unverified, Pending} {
 			i, f := fixture(ModeResources, 2)
