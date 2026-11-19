@@ -17,14 +17,24 @@ apply to agent-assisted contributions; `CLAUDE.md` points to the same guide.
 Build, test, and lint jobs use `Mellanox/cloud-orchestration-reusable-workflows`.
 Go and golangci-lint versions are selected centrally. CI retains documentation
 contract checks and cross-platform builds, and combines race detection and
-coverage in one test run. `make lint` installs a versioned local binary;
+coverage in each test run. `make lint` installs a versioned local binary;
 `GOLANGCILINT_VERSION` can select the same version used by CI.
 The full race-and-coverage run uses a 45-minute per-package timeout because the
 DPF lifecycle suite renders and verifies the retained operator schemas across
 many failure paths. To reproduce that gate, use
 `go test -v -race -timeout=45m -count=1 -coverprofile=coverage.out ./...`.
-Each CI job allows 60 minutes including dependency setup and compilation; these
-limits do not alter the individual workflow deadlines tested by the suite.
+CI schedules three independent lanes through `scripts/test-ci.sh`: `lifecycle`
+runs top-level tests starting with `TestRun` or `TestOperation`, `validation` runs
+those starting with `TestValidation`, and `core` runs the complement, including
+examples and fuzz seed tests. Every lane covers all packages and keeps each
+parent's subtests together. `Complete test suite` fails if any lane fails or is
+skipped. Each CI job allows 60 minutes including dependency setup and compilation;
+these limits do not alter the individual workflow deadlines tested by the suite.
+
+Run a lane locally with `bash scripts/test-ci.sh core` (or `lifecycle` or
+`validation`). Each writes and displays its own `coverage-<lane>.out` profile.
+Those percentages describe individual lanes; use the full command above for
+combined repository coverage. CI does not upload or merge the lane profiles.
 
 ### Recreate the latest release
 
