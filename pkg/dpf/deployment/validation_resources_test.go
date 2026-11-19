@@ -95,7 +95,7 @@ func validationResourceFixture(t *testing.T) *validationObserver {
 	if err != nil {
 		t.Fatal(err)
 	}
-	desired, err := prepareManagementDesired(retained)
+	desired, err := prepareValidationFixtureDesired(retained)
 	if err != nil {
 		t.Fatal(err)
 	}

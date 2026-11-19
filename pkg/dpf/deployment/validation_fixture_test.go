@@ -20,7 +20,7 @@ type validationFixturePreparation struct {
 func prepareValidationFixture(t *testing.T, serials []string) validationFixturePreparation {
 	t.Helper()
 	execution := prepareSoftwareStageExecution(t, serials)
-	desired, err := prepareManagementDesiredFromPlan(execution.retained, execution.plan)
+	desired, err := prepareValidationFixtureDesired(execution.retained)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -29,6 +29,7 @@ func prepareValidationFixture(t *testing.T, serials []string) validationFixtureP
 
 func TestValidationRuntimeFixturePreparationKeepsChildStateIsolated(t *testing.T) {
 	prepared := prepareValidationFixture(t, []string{"SERIAL-A"})
+	before := fixtureDesiredSnapshot(t, prepared.desired)
 	const childKey = "NodeServiceInterfaces/selected-node-sfc"
 	const changed = "first-child-only"
 	var first *n3cRuntimeAdapter
@@ -68,10 +69,14 @@ func TestValidationRuntimeFixturePreparationKeepsChildStateIsolated(t *testing.T
 			t.Errorf("fresh runtime observation after first cleanup: %+v", row)
 		}
 	}
+	if fixtureDesiredSnapshot(t, prepared.desired) != before {
+		t.Fatal("runtime child observation or cleanup changed shared desired state")
+	}
 }
 
 func TestValidationPhysicalFixturePreparationKeepsChildStateIsolated(t *testing.T) {
 	prepared := preparePhysicalValidationFixture(t)
+	before := fixtureDesiredSnapshot(t, prepared.desired)
 	const changed = "first-child-only"
 	var first *validationObserver
 	if !t.Run("mutate physical and request state", func(t *testing.T) {
@@ -114,5 +119,8 @@ func TestValidationPhysicalFixturePreparationKeepsChildStateIsolated(t *testing.
 				t.Errorf("fresh physical observation after first cleanup: %+v", row)
 			}
 		}
+	}
+	if fixtureDesiredSnapshot(t, prepared.desired) != before {
+		t.Fatal("physical child observation or cleanup changed shared desired state")
 	}
 }

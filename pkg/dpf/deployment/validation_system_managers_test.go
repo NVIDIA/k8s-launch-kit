@@ -38,7 +38,13 @@ func directManagerTestObserver(t *testing.T, pvc string, feature bool) *validati
 	if err != nil {
 		t.Fatal(err)
 	}
-	desired, err := prepareManagementDesired(retained)
+	plan, err := prepareFixturePlan(retained)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// These tests deliberately change desired controller settings. Keep that
+	// projection private while reusing only the validated immutable plan.
+	desired, err := prepareManagementDesiredFromPlan(plan.Bundle(), plan)
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -720,48 +720,10 @@ func newActivationIntegrationFixtureFromExecution(t *testing.T, execution *manag
 	client.base.tenant = tenant
 	receipts.tenant.Client = &fixtureTenantReader{tenantClient: tenant, child: client.workloadChild}
 
-	request := controlPlaneTestRequest(t)
-	firstDPUTarget := -1
-	for i := range request.Targets {
-		if request.Targets[i].Endpoint == "https://192.0.2.20" {
-			request.Targets[i].Endpoint = "https://192.0.2.30"
-			firstDPUTarget = i
-		}
-	}
-	if firstDPUTarget < 0 {
-		t.Fatal("activation fixture is missing its initial DPU access target")
-	}
-	for i := 1; i < len(selected); i++ {
-		target := request.Targets[firstDPUTarget]
-		target.InputRef = fmt.Sprintf("dpu-input-%d", i+1)
-		target.Endpoint = "https://" + selected[i].device.BMCIP
-		request.Targets = append(request.Targets, target)
-	}
-	hosts := make([]inventory.Device, 0, len(selected))
-	dpus := make([]inventory.Device, 0, len(selected))
-	associations := make([]inventory.Association, 0, len(selected))
-	for i, item := range selected {
-		suffix := string(rune('a' + i))
-		systemUUID := "12345678-1234-1234-1234-123456789abc"
-		if i > 0 {
-			systemUUID = fmt.Sprintf("12345678-1234-1234-1234-123456789ab%d", i+1)
-		}
-		host := inventory.Device{ID: "host-" + suffix, InputRef: "host-input-" + suffix,
-			SSHEndpoint: "ssh://host-" + suffix + ".example.test:22", SystemUUID: systemUUID,
-			Adapters: []inventory.Adapter{{Key: "adapter-" + suffix, SerialNumber: item.device.Serial, IdentityState: "known"}}}
-		if sameHost && i > 0 {
-			hosts[0].Adapters = append(hosts[0].Adapters, host.Adapters[0])
-			host = hosts[0]
-		} else {
-			hosts = append(hosts, host)
-			request.Targets = append(request.Targets, config.Target{Role: "hosts", InputRef: host.InputRef, Endpoint: host.SSHEndpoint, SSH: &config.SSHAccess{}})
-		}
-		dpu := inventory.Device{ID: "dpu-" + suffix, SerialNumber: item.device.Serial}
-		dpus = append(dpus, dpu)
-		associations = append(associations, inventory.Association{DPUID: dpu.ID, HostID: host.ID, HostAdapterKey: "adapter-" + suffix, SerialNumber: dpu.SerialNumber})
-	}
+	inputs := newPhysicalFixtureInputs(t, execution.plan.Intent().Devices, sameHost)
+	request, inv := inputs.request, inputs.inventory
+	hosts := inv.Hosts
 	host := hosts[0]
-	inv := &inventory.Inventory{FormatVersion: inventory.FormatVersion, Hosts: hosts, DPUs: dpus, Associations: associations}
 
 	journal := testJournal(execution)
 	ctx := tenantStageContext(t)

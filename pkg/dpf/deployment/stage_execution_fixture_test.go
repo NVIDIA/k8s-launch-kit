@@ -141,15 +141,15 @@ func TestStageFixtureCacheBindsInputsAndConcurrentEnrollmentLookups(t *testing.T
 }
 
 func TestStageFixtureCacheDoesNotRetainFailedPreparation(t *testing.T) {
-	fixtureExecutions.Lock()
-	before := len(fixtureExecutions.values)
-	fixtureExecutions.Unlock()
+	fixturePreparations.Lock()
+	before := len(fixturePreparations.values)
+	fixturePreparations.Unlock()
 	if execution, err := prepareStageFixtureExecution(nil); execution != nil || err == nil {
 		t.Fatal("nil retained fixture was accepted")
 	}
-	fixtureExecutions.Lock()
-	after := len(fixtureExecutions.values)
-	fixtureExecutions.Unlock()
+	fixturePreparations.Lock()
+	after := len(fixturePreparations.values)
+	fixturePreparations.Unlock()
 	if after != before {
 		t.Fatal("failed fixture preparation changed the success-only memo")
 	}

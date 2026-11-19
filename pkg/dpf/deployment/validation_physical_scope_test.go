@@ -4,11 +4,13 @@
 package deployment
 
 import (
+	"bytes"
 	"context"
 	"os"
 	"path/filepath"
 	"slices"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -45,12 +47,29 @@ discovery:
         - {name: swp2, dpuSerial: SERIAL-A, dpuInterface: p1}
 `
 
+var physicalScopeBaselineCA struct {
+	sync.Mutex
+	pem []byte
+}
+
+// Baseline trust is the same fixture input, copied into each test's own files.
+// Trust replacement scenarios still generate independent certificate bytes.
+func physicalScopeCAPEM(t *testing.T) []byte {
+	t.Helper()
+	physicalScopeBaselineCA.Lock()
+	defer physicalScopeBaselineCA.Unlock()
+	if physicalScopeBaselineCA.pem == nil {
+		physicalScopeBaselineCA.pem = softwareTestCAPEM(t)
+	}
+	return bytes.Clone(physicalScopeBaselineCA.pem)
+}
+
 func physicalScopeFixture(t *testing.T) (*managementDesired, config.Input) {
 	t.Helper()
 	dir := t.TempDir()
 	for name, data := range map[string][]byte{
 		"bmc-password": []byte("test-password"), "host-password": []byte("test-password"), "leaf-password": []byte("test-password"),
-		"bmc-ca.pem":       softwareTestCAPEM(t),
+		"bmc-ca.pem":       physicalScopeCAPEM(t),
 		"host-known-hosts": []byte("host.example.test ssh-ed25519 AAAA\n"),
 		"leaf-known-hosts": []byte("leaf.example.test ssh-ed25519 AAAA\n"),
 	} {
@@ -99,7 +118,7 @@ func physicalScopeFixture(t *testing.T) (*managementDesired, config.Input) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	desired, err := prepareManagementDesired(retained)
+	desired, err := prepareValidationFixtureDesired(retained)
 	if err != nil {
 		t.Fatal(err)
 	}

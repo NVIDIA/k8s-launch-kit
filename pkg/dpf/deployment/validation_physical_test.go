@@ -182,8 +182,11 @@ func physicalValidationFixture(t *testing.T) (*validationObserver, map[string]in
 
 func physicalValidationFixtureFromPreparation(t *testing.T, prepared validationFixturePreparation) (*validationObserver, map[string]inventory.Device, map[string]inventory.Device) {
 	t.Helper()
-	f := newActivationIntegrationFixtureFromExecution(t, prepared.execution, false)
-	enrichHostNetworkFixtureIdentities(t, &f)
+	if prepared.execution == nil || prepared.execution.plan == nil || prepared.desired == nil {
+		t.Fatal("physical validation fixture requires prepared execution and desired state")
+	}
+	f := newPhysicalFixtureInputs(t, prepared.execution.plan.Intent().Devices, false)
+	enrichHostNetworkInventory(t, f.inventory)
 	desired := prepared.desired
 	f.request.Input.Site.Inventory = f.inventory
 	bmcs, hosts := map[string]inventory.Device{}, map[string]inventory.Device{}

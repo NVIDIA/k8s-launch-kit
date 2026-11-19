@@ -517,8 +517,16 @@ func hostNetworkStageFixtureFromExecution(t *testing.T, execution *managementExe
 
 func enrichHostNetworkFixtureIdentities(t *testing.T, fixture *activationIntegrationFixture) {
 	t.Helper()
-	for i := range fixture.hosts {
-		host := fixture.hosts[i]
+	enrichHostNetworkInventory(t, fixture.inventory)
+	fixture.hosts = fixture.inventory.Hosts
+	fixture.host = fixture.hosts[0]
+}
+
+// Enrichment depends only on inventory inputs, not activation lifecycle state.
+func enrichHostNetworkInventory(t *testing.T, inv *inventory.Inventory) {
+	t.Helper()
+	for i := range inv.Hosts {
+		host := inv.Hosts[i]
 		pciBus := 0x21 + i
 		interfaceP0, interfaceP1 := "ens5f0np0", "ens5f1np1"
 		if i > 0 {
@@ -536,10 +544,8 @@ func enrichHostNetworkFixtureIdentities(t *testing.T, fixture *activationIntegra
 			{Name: interfaceP0, PCIAddress: pciP0, PhysicalPortName: "p0", MAC: fmt.Sprintf("02:00:00:00:00:%02x", i*2+1), PermanentMAC: macP0},
 			{Name: interfaceP1, PCIAddress: pciP1, PhysicalPortName: "p1", MAC: fmt.Sprintf("02:00:00:00:00:%02x", i*2+2), PermanentMAC: macP1},
 		}}}
-		fixture.hosts[i] = host
-		fixture.inventory.Hosts[i] = host
+		inv.Hosts[i] = host
 	}
-	fixture.host = fixture.hosts[0]
 }
 
 func hostNetworkFixtureLeaseSnapshot(t *testing.T, fixture activationIntegrationFixture, activation activationStageReceipt) hostWorkloadLeaseSnapshot {
