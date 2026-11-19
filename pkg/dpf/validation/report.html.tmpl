@@ -1,0 +1,111 @@
+<!--
+ SPDX-FileCopyrightText: Copyright 2026 NVIDIA CORPORATION & AFFILIATES
+ SPDX-License-Identifier: Apache-2.0
+-->
+{{define "target-style"}}
+.dpf-checks { overflow-x: auto; }
+.dpf-checks td { overflow-wrap: anywhere; }
+{{end}}
+{{define "body"}}
+
+{{- if .AttentionRows}}
+<section>
+  <h2>Needs attention</h2>
+  <div class="body dpf-checks">
+    {{template "check-table" .AttentionRows}}
+    {{- if .RemainingAttention}}
+    <p class="summary-line">Additional checks needing attention in the grouped tables below ({{.RemainingAttention}}).</p>
+    {{- end}}
+  </div>
+</section>
+{{- end}}
+
+<section>
+  <h2>Selected deployment scope</h2>
+  <div class="body">
+  {{- if or .Hosts .Devices}}
+    <dl class="kv">
+      {{- if .Hosts}}
+      <dt>Hosts ({{len .Hosts}})</dt>
+      <dd>{{range $i, $host := .Hosts}}{{if $i}}, {{end}}<code>{{$host}}</code>{{end}}</dd>
+      {{- end}}
+      {{- if .Devices}}
+      <dt>DPUs ({{len .Devices}})</dt>
+      <dd>{{range $i, $device := .Devices}}{{if $i}}, {{end}}<code>{{$device}}</code>{{end}}</dd>
+      {{- end}}
+      {{- if .RuntimeBudget}}
+      <dt>Connectivity timeout</dt><dd>{{.RuntimeBudget}}</dd>
+      {{- end}}
+    </dl>
+  {{- else}}
+    <p class="empty">Selected deployment identities are unavailable.</p>
+  {{- end}}
+  </div>
+</section>
+
+{{- range .Groups}}
+<section>
+  <h2>{{.Title}}</h2>
+  <div class="body">
+    <p class="summary-line">{{.Passed}} passed · {{.Failed}} failed · {{.Pending}} pending · {{.Unverified}} unverified · {{.Skipped}} skipped</p>
+    <details class="dpf-checks"{{if .OpenDetails}} open{{end}}>
+      <summary>Show {{len .Rows}} checks</summary>
+      {{template "check-table" .Rows}}
+    </details>
+  </div>
+</section>
+{{- else}}
+<section>
+  <h2>Checks</h2>
+  <div class="body"><p class="empty">No check results were available for this run.</p></div>
+</section>
+{{- end}}
+
+{{end}}
+
+{{define "check-table"}}
+<table>
+  <thead><tr><th>Subject</th><th>Status</th><th>Details</th><th>Action</th></tr></thead>
+  <tbody>
+    {{- range .}}{{template "check-row" .}}{{end}}
+  </tbody>
+</table>
+{{end}}
+
+{{define "check-row"}}
+<tr>
+  <td>
+    <code>{{.Subject}}</code>
+    {{- with .Group}}<br><span class="muted">{{.}}</span>{{end}}
+  </td>
+  <td>
+    <span class="badge {{stateClass .Outcome.State}}">{{or .Outcome.State "unverified"}}</span>
+    {{- with .Outcome.Reason}}<br><span class="muted">{{reasonText .}}</span>{{end}}
+  </td>
+  <td>
+    {{- with .Outcome.Summary}}{{.}}{{end}}
+    {{- template "outcome-facts" .Outcome}}
+    {{- with .PriorOutcome}}
+    <div class="muted">
+      <p>At measurement time: {{.State}}{{if .Summary}} · {{.Summary}}{{end}}</p>
+      {{- template "outcome-facts" .}}
+    </div>
+    {{- end}}
+  </td>
+  <td>{{.Outcome.Action}}</td>
+</tr>
+{{end}}
+
+{{define "outcome-facts"}}
+{{- with .BGP}}
+<p>BGP peers established {{.EstablishedPeers}} of {{.ExpectedPeers}}{{if .LocalASN}} · local ASN {{.LocalASN}}{{end}}</p>
+{{- end}}
+{{- with .Route}}
+{{- if .Prefix.IsValid}}
+<p>Route <code>{{.Prefix}}</code> {{if .Installed}}installed{{else}}missing from the routing table{{end}}</p>
+{{- end}}
+{{- end}}
+{{- with .Traffic}}
+<p>ICMP packets transmitted {{.Transmitted}} · received {{.Received}} · payload {{.PayloadBytes}} bytes</p>
+{{- end}}
+{{- end}}
