@@ -84,9 +84,10 @@ func TestValidationPhysicalUnavailableFactsDoNotProveReplacement(t *testing.T) {
 }
 
 func TestValidationPhysicalKnownReplacementStillPoisonsCohort(t *testing.T) {
+	prepared := preparePhysicalValidationFixture(t)
 	for _, kind := range []string{"dpu", "host", "bmc-during-read", "host-during-read", "psid-during-read", "mac-binding-during-read", "changed-mac-with-partial-links", "renamed-interface-without-mac"} {
 		t.Run(kind, func(t *testing.T) {
-			o, bmcs, hosts := physicalValidationFixture(t)
+			o, bmcs, hosts := physicalValidationFixtureFromPreparation(t, prepared)
 			switch kind {
 			case "dpu":
 				for endpoint, d := range bmcs {
@@ -169,14 +170,21 @@ func TestValidationPhysicalAllowsQualifiedPSIDFallback(t *testing.T) {
 	}
 }
 
+func preparePhysicalValidationFixture(t *testing.T) validationFixturePreparation {
+	t.Helper()
+	return prepareValidationFixture(t, []string{"SERIAL-A", "SERIAL-B"})
+}
+
 func physicalValidationFixture(t *testing.T) (*validationObserver, map[string]inventory.Device, map[string]inventory.Device) {
 	t.Helper()
-	f := newActivationIntegrationFixtureForSerials(t, []string{"SERIAL-A", "SERIAL-B"})
+	return physicalValidationFixtureFromPreparation(t, preparePhysicalValidationFixture(t))
+}
+
+func physicalValidationFixtureFromPreparation(t *testing.T, prepared validationFixturePreparation) (*validationObserver, map[string]inventory.Device, map[string]inventory.Device) {
+	t.Helper()
+	f := newActivationIntegrationFixtureFromExecution(t, prepared.execution, false)
 	enrichHostNetworkFixtureIdentities(t, &f)
-	desired, err := prepareManagementDesiredFromPlan(f.prepared.execution.retained, f.prepared.execution.plan)
-	if err != nil {
-		t.Fatal(err)
-	}
+	desired := prepared.desired
 	f.request.Input.Site.Inventory = f.inventory
 	bmcs, hosts := map[string]inventory.Device{}, map[string]inventory.Device{}
 	for i := range f.inventory.DPUs {

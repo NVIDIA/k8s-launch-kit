@@ -54,6 +54,7 @@ func TestValidationFabricPartialReadsPreserveIndependentContradictions(t *testin
 }
 
 func TestValidationFabricPortFieldIssuesPreserveMeasuredContradictions(t *testing.T) {
+	prepared := preparePhysicalValidationFixture(t)
 	for _, tc := range []struct {
 		name, input, field, want string
 	}{
@@ -68,7 +69,7 @@ func TestValidationFabricPortFieldIssuesPreserveMeasuredContradictions(t *testin
 		{"whole source malformed", "appliedInterfaces", "$", "unknown"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			o, _, _ := physicalValidationFixture(t)
+			o, _, _ := physicalValidationFixtureFromPreparation(t, prepared)
 			inv := o.physicalInventory()
 			wrongMTU := 1280
 			inv.HBN.Switches = []inventory.FabricSwitch{{Name: "leaf-a", Ports: []inventory.SwitchPort{{Name: "swp1", DPUSerial: "SERIAL-A", DPUInterface: "p0"}, {Name: "swp2", DPUSerial: "SERIAL-A", DPUInterface: "p1"}}, Snapshot: fabric.Snapshot{

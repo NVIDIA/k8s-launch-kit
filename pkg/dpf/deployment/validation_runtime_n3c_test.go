@@ -197,17 +197,19 @@ func n3cRuntimeAdapterFixture(t *testing.T, serials ...string) (*n3cRuntimeAdapt
 	if len(serials) == 0 {
 		serials = []string{"SERIAL-A"}
 	}
-	f := newRuntimeStageFixture(t, serials)
+	return n3cRuntimeAdapterFixtureFromPreparation(t, prepareValidationFixture(t, serials))
+}
+
+func n3cRuntimeAdapterFixtureFromPreparation(t *testing.T, prepared validationFixturePreparation) (*n3cRuntimeAdapter, map[string]*unstructured.Unstructured) {
+	t.Helper()
+	f := newRuntimeStageFixtureFromExecution(t, prepared.execution)
+	desired := prepared.desired
 	admitN3cHBNPods(f)
 	for i := range f.snapshot.TenantNodes {
 		nodeLabels := f.snapshot.TenantNodes[i].GetLabels()
 		nodeLabels["svc.dpu.nvidia.com/dpuservicechain-version"] = f.client.deployment.GetName() + "-current"
 		nodeLabels[corev1.LabelHostname] = f.activation.selected[i].dpuName
 		f.snapshot.TenantNodes[i].SetLabels(nodeLabels)
-	}
-	desired, err := prepareManagementDesiredFromPlan(f.prepared.execution.retained, f.prepared.execution.plan)
-	if err != nil {
-		t.Fatal(err)
 	}
 	objects := map[string]*unstructured.Unstructured{}
 	for key, obj := range f.client.base.resources {
@@ -392,10 +394,11 @@ func n3cRuntimeAdapterFixture(t *testing.T, serials ...string) (*n3cRuntimeAdapt
 		http.NotFound(w, r)
 	}))
 	t.Cleanup(server.Close)
-	tenant.api, err = kubernetes.NewForConfig(&rest.Config{Host: server.URL, Timeout: time.Second, RateLimiter: flowcontrol.NewFakeAlwaysRateLimiter()})
+	api, err := kubernetes.NewForConfig(&rest.Config{Host: server.URL, Timeout: time.Second, RateLimiter: flowcontrol.NewFakeAlwaysRateLimiter()})
 	if err != nil {
 		t.Fatal(err)
 	}
+	tenant.api = api
 	checks, _, err := validationRuntimeChecks(desired.plan)
 	if err != nil {
 		t.Fatal(err)
@@ -516,6 +519,7 @@ func (o *n3cRunnerBoundary) ObserveResources(ctx context.Context, p validation.P
 }
 
 func TestValidationN3cNativeWorkloadPendingConvergesThroughRunner(t *testing.T) {
+	prepared := prepareValidationFixture(t, []string{"SERIAL-A"})
 	for _, test := range []struct {
 		name, kind           string
 		tenant, stale, entry bool
@@ -528,7 +532,7 @@ func TestValidationN3cNativeWorkloadPendingConvergesThroughRunner(t *testing.T) 
 		{name: "selected NSI entry Pending", kind: "NodeServiceInterfaces", tenant: true, entry: true, row: "workloads/SERIAL-A"},
 	} {
 		t.Run(test.name, func(t *testing.T) {
-			actual, children := n3cRuntimeAdapterFixture(t)
+			actual, children := n3cRuntimeAdapterFixtureFromPreparation(t, prepared)
 			var target *unstructured.Unstructured
 			candidates := actual.objects
 			if test.tenant {
@@ -633,6 +637,7 @@ func TestValidationN3cNativeHBNRejectsActualPodOnlyFunctionDrift(t *testing.T) {
 }
 
 func TestValidationN3cNativeHBNMalformedAndUnknownRemainTerminal(t *testing.T) {
+	prepared := prepareValidationFixture(t, []string{"SERIAL-A"})
 	for _, test := range []struct {
 		name   string
 		mutate func(*unstructured.Unstructured)
@@ -654,7 +659,7 @@ func TestValidationN3cNativeHBNMalformedAndUnknownRemainTerminal(t *testing.T) {
 		}},
 	} {
 		t.Run(test.name, func(t *testing.T) {
-			actual, _ := n3cRuntimeAdapterFixture(t)
+			actual, _ := n3cRuntimeAdapterFixtureFromPreparation(t, prepared)
 			for _, object := range actual.objects {
 				if object.GetKind() == "DPUService" {
 					test.mutate(object)

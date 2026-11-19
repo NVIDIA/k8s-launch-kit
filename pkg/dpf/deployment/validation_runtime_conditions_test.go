@@ -13,6 +13,7 @@ import (
 )
 
 func TestValidationNativeMalformedConditionsBlockRunnerWithoutRetry(t *testing.T) {
+	prepared := prepareValidationFixture(t, []string{"SERIAL-A"})
 	for _, test := range []struct {
 		name, kind             string
 		entry, missing, empty  bool
@@ -31,7 +32,7 @@ func TestValidationNativeMalformedConditionsBlockRunnerWithoutRetry(t *testing.T
 		{name: "NSI empty selected entry collection remains Pending", kind: "NodeServiceInterfaces", entry: true, empty: true, pending: true},
 	} {
 		t.Run(test.name, func(t *testing.T) {
-			actual, children := n3cRuntimeAdapterFixture(t)
+			actual, children := n3cRuntimeAdapterFixtureFromPreparation(t, prepared)
 			objects := actual.objects
 			id := validation.CheckID("hbn/SERIAL-A")
 			if test.entry {
