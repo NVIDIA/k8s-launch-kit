@@ -155,9 +155,9 @@ func validationFabricCheckIssues(check inventory.Check, switchName string, issue
 	var properties []string
 	switch check.ID {
 	case "dpf.hbn.port-mtu":
-		properties = []string{"$.type", "$.link.mtu"}
+		properties = []string{"$.link.mtu"}
 	case "dpf.hbn.port-vrf":
-		properties = []string{"$.type", "$.vrf", "$.parent"}
+		properties = []string{"$.vrf"}
 	case "dpf.hbn.routed-port":
 		properties = []string{"$.type", "$.bridge", "$.parent"}
 	}

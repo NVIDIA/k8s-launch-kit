@@ -84,7 +84,7 @@ func TestValidationPhysicalUnavailableFactsDoNotProveReplacement(t *testing.T) {
 }
 
 func TestValidationPhysicalKnownReplacementStillPoisonsCohort(t *testing.T) {
-	for _, kind := range []string{"dpu", "host", "bmc-during-read", "host-during-read"} {
+	for _, kind := range []string{"dpu", "host", "bmc-during-read", "host-during-read", "psid-during-read", "mac-binding-during-read", "changed-mac-with-partial-links"} {
 		t.Run(kind, func(t *testing.T) {
 			o, bmcs, hosts := physicalValidationFixture(t)
 			switch kind {
@@ -108,12 +108,56 @@ func TestValidationPhysicalKnownReplacementStillPoisonsCohort(t *testing.T) {
 				o.physical.host = func(context.Context, config.Target, time.Duration) (inventory.Device, map[string]inventory.Evidence, error) {
 					return inventory.Device{}, nil, &sshprobe.Error{Code: "INVENTORY_CHANGED"}
 				}
+			case "psid-during-read":
+				for endpoint, d := range bmcs {
+					d = cloneValidationDevice(t, d)
+					d.PSID = ""
+					d.Observations["psid"] = inventory.Observation{State: "unavailable", ReasonCode: "PSID_CHANGED"}
+					bmcs[endpoint] = d
+				}
+			case "mac-binding-during-read", "changed-mac-with-partial-links":
+				for endpoint, d := range hosts {
+					d = cloneValidationDevice(t, d)
+					for i := range d.Runtime.Network.Links {
+						link := &d.Runtime.Network.Links[i]
+						if link.PhysicalPortName == "p0" {
+							if kind == "mac-binding-during-read" {
+								link.PermanentMAC = ""
+								d.Runtime.Observations["host-interface:"+link.Name+":permanent-mac"] = inventory.Observation{State: "unavailable", ReasonCode: "INVENTORY_CHANGED"}
+							} else {
+								link.PermanentMAC = "02:aa:bb:cc:dd:ee"
+							}
+						} else if link.PhysicalPortName == "p1" {
+							link.PhysicalPortName = ""
+						}
+					}
+					hosts[endpoint] = d
+				}
 			}
 			r := newValidationRecorder(o.checks, nil)
 			_, err := o.observePhysicalDevices(context.Background(), r, true)
 			var fatal *validation.ObservationError
 			if !errors.As(err, &fatal) || fatal.Category != validation.FatalIdentity {
 				t.Fatalf("known identity replacement did not poison cohort: %v", err)
+			}
+		})
+	}
+}
+
+func TestValidationPhysicalAllowsQualifiedPSIDFallback(t *testing.T) {
+	for _, code := range []string{"PSID_NOT_EXPOSED", "PSID_READER_UNSUPPORTED"} {
+		t.Run(code, func(t *testing.T) {
+			o, bmcs, _ := physicalValidationFixture(t)
+			for endpoint, d := range bmcs {
+				d = cloneValidationDevice(t, d)
+				d.PSID = ""
+				d.Observations["psid"] = inventory.Observation{State: "unknown", ReasonCode: code}
+				bmcs[endpoint] = d
+			}
+			r := newValidationRecorder(o.checks, nil)
+			_, err := o.observePhysicalDevices(context.Background(), r, true)
+			if err != nil || r.outcomes[physicalID("dpu", "SERIAL-A")].State != validation.Passed {
+				t.Fatalf("qualified non-Redfish PSID fallback rejected: %v %+v", err, r.outcomes[physicalID("dpu", "SERIAL-A")])
 			}
 		})
 	}

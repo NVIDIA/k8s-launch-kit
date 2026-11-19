@@ -60,6 +60,7 @@ func TestValidationFabricPortFieldIssuesPreserveMeasuredContradictions(t *testin
 		{"unselected port", "appliedInterfaces", `$["swp99"].link.mtu`, "failed"},
 		{"other selected port", "appliedInterfaces", `$["swp2"].link.mtu`, "failed"},
 		{"other field on same port", "appliedInterfaces", `$["swp1"].vrf`, "failed"},
+		{"invalid type does not erase MTU", "appliedInterfaces", `$["swp1"].type`, "failed"},
 		{"other detail field", "appliedInterface/swp1", "$.bridge", "failed"},
 		{"same field", "appliedInterfaces", `$["swp1"].link.mtu`, "unknown"},
 		{"same parent field", "appliedInterfaces", `$["swp1"].link`, "unknown"},

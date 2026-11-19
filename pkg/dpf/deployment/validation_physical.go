@@ -7,6 +7,7 @@ import (
 	"context"
 	"fmt"
 	"maps"
+	"net"
 	"net/url"
 	"slices"
 	"strings"
@@ -283,7 +284,7 @@ func (o *validationObserver) observePhysicalDevices(ctx context.Context, r *vali
 			r.record(hostID, validation.Unverified, validation.ReasonInvalidInput, "The retained inventory does not establish the selected host interface identity.", "Repeat discovery and generation to retain a complete host binding.")
 			return inv, &validation.ObservationError{Category: validation.FatalInput, Cause: oldErr}
 		}
-		if validationHostIdentityConflict(host, item.host, item.adapter) || newErr == nil && oldIdentity != newIdentity {
+		if validationHostIdentityConflict(host, item.host, item.adapter, oldIdentity) || newErr == nil && oldIdentity != newIdentity {
 			r.record(hostID, validation.Failed, validation.ReasonIdentityDrift, "The host UUID, selected card, PCI function or permanent MAC differs from the retained binding.", "Inspect the host and repeat discovery and generation.")
 			fatal = &validation.ObservationError{Category: validation.FatalIdentity}
 			continue
@@ -328,10 +329,10 @@ func validationDPUIdentityConflict(current inventory.Device, id, serial, psid st
 		return true
 	}
 	observed := current.Observations["psid"]
-	return observed.State == "observed" && len(observed.Values) == 1 && observed.Values[0] != "" && !strings.EqualFold(observed.Values[0], psid)
+	return observed.ReasonCode == "PSID_CHANGED" || observed.State == "observed" && len(observed.Values) == 1 && observed.Values[0] != "" && !strings.EqualFold(observed.Values[0], psid)
 }
 
-func validationHostIdentityConflict(current, expected inventory.Device, adapter inventory.Adapter) bool {
+func validationHostIdentityConflict(current, expected inventory.Device, adapter inventory.Adapter, selected sshprobe.HostNetworkIdentity) bool {
 	if current.ID != "" && current.ID != expected.ID || current.SystemUUID != "" && !strings.EqualFold(current.SystemUUID, expected.SystemUUID) {
 		return true
 	}
@@ -341,6 +342,25 @@ func validationHostIdentityConflict(current, expected inventory.Device, adapter 
 		}
 		if observed.Key == adapter.Key && observed.SerialNumber != adapter.SerialNumber || observed.SerialNumber == adapter.SerialNumber && observed.Key != adapter.Key {
 			return true
+		}
+	}
+	if current.Runtime == nil {
+		return false
+	}
+	if current.Runtime.Observations["host-interface:"+selected.InterfaceName+":permanent-mac"].ReasonCode == "INVENTORY_CHANGED" {
+		return true
+	}
+	if current.Runtime.Network != nil {
+		for _, link := range current.Runtime.Network.Links {
+			if !strings.EqualFold(link.PCIAddress, selected.PCIAddress) || link.PhysicalPortName != selected.PhysicalPort {
+				continue
+			}
+			// A valid measurement for the selected physical function remains a
+			// contradiction even if another link's optional fields are missing.
+			mac, err := net.ParseMAC(link.PermanentMAC)
+			if err == nil && len(mac) == 6 && mac[0]&1 == 0 && mac.String() != "00:00:00:00:00:00" && mac.String() != selected.PermanentMAC {
+				return true
+			}
 		}
 	}
 	return false
