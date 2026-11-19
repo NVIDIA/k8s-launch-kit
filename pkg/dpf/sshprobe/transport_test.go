@@ -29,6 +29,22 @@ import (
 	"golang.org/x/crypto/ssh/knownhosts"
 )
 
+// cancelOnOpenConn models a transport whose first channel attempt ends after
+// the caller cancels it. Further opens return EOF instead of risking a test hang.
+type cancelOnOpenConn struct {
+	ssh.Conn
+	cancel context.CancelFunc
+	opens  int
+}
+
+func (c *cancelOnOpenConn) OpenChannel(string, []byte) (ssh.Channel, <-chan *ssh.Request, error) {
+	c.opens++
+	c.cancel()
+	return nil, nil, io.EOF
+}
+
+func (*cancelOnOpenConn) Close() error { return nil }
+
 type testServer struct {
 	listener      net.Listener
 	key           ssh.Signer
@@ -287,6 +303,16 @@ var _ = Describe("bounded SSH transport", func() {
 		Expect(Code(err)).To(Equal("SSH_CONFIGURATION_INVALID"))
 	})
 	It("redacts stdin from command failures and reconnects after a command timeout", func() {
+		var commands []string
+		server.mu.Lock()
+		server.onCommand = func(_ ssh.Channel, command string) bool {
+			server.mu.Lock()
+			defer server.mu.Unlock()
+			commands = append(commands, command)
+			return false
+		}
+		server.mu.Unlock()
+
 		access, err := resolvedTestAccess(server, server.auth().knownHosts)
 		Expect(err).NotTo(HaveOccurred())
 		session, err := OpenReadSession(context.Background(), "ssh://"+server.listener.Addr().String(), access, 120*time.Millisecond)
@@ -302,6 +328,10 @@ var _ = Describe("bounded SSH transport", func() {
 		out, err := session.Run(context.Background(), "query", "query")
 		Expect(err).NotTo(HaveOccurred())
 		Expect(out).To(Equal("observed\n"))
+		server.mu.Lock()
+		defer server.mu.Unlock()
+		Expect(server.connections).To(HaveLen(2))
+		Expect(commands).To(Equal([]string{"LC_ALL=C sudo -S -p '' fail", "LC_ALL=C slow", "LC_ALL=C query"}))
 	})
 	It("retains a real remote exit status without retaining command diagnostics", func() {
 		access, err := resolvedTestAccess(server, server.auth().knownHosts)
@@ -318,20 +348,82 @@ var _ = Describe("bounded SSH transport", func() {
 		unknown := commandFailure(fmt.Errorf("private diagnostic"), "traffic", "ping", "")
 		Expect(unknown.ExitStatus).To(BeNil())
 	})
-	It("honors caller cancellation without reconnecting", func() {
+	It("never opens another channel after a caller-canceled attempt", func() {
+		ctx, cancel := context.WithCancel(context.Background())
+		defer cancel()
+		conn := &cancelOnOpenConn{cancel: cancel}
+		runner := &reconnectingRunner{
+			auth:    credentials{user: "reader", key: []byte("key"), knownHosts: []byte("trust")},
+			timeout: time.Second,
+			client:  &client{ssh: &ssh.Client{Conn: conn}, stop: func() bool { return true }},
+		}
+		defer runner.Close()
+
+		_, err := runner.Run(ctx, "slow", "slow")
+		Expect(Code(err)).To(Equal("SSH_TIMEOUT_OR_CANCELLED"))
+		Expect(conn.opens).To(Equal(1))
+		_, err = runner.Run(context.Background(), "after-cancel", "query")
+		Expect(Code(err)).To(Equal("SSH_COMMAND_FAILED"))
+		_, err = runner.Run(ctx, "after-cancel", "query")
+		Expect(Code(err)).To(Equal("SSH_TIMEOUT_OR_CANCELLED"))
+		_, err = runner.Run(ctx, externalRebootStage, "systemctl reboot")
+		Expect(Code(err)).To(Equal("SSH_REBOOT_NOT_STARTED"))
+		Expect(conn.opens).To(Equal(1))
+		Expect(runner.auth.key).To(Equal(make([]byte, len("key"))))
+		Expect(runner.auth.knownHosts).To(Equal(make([]byte, len("trust"))))
+		Expect(runner.Close()).To(Succeed())
+	})
+	DescribeTable("honors caller cancellation without reconnecting", func(deadline bool) {
+		commandStarted := make(chan struct{})
+		ctx, cancel := context.WithCancel(context.Background())
+		defer cancel()
+		server.mu.Lock()
+		server.onCommand = func(_ ssh.Channel, command string) bool {
+			if command == "LC_ALL=C slow" {
+				close(commandStarted)
+				if !deadline {
+					cancel()
+				}
+			}
+			return false
+		}
+		server.mu.Unlock()
+
 		access, err := resolvedTestAccess(server, server.auth().knownHosts)
 		Expect(err).NotTo(HaveOccurred())
 		session, err := OpenReadSession(context.Background(), "ssh://"+server.listener.Addr().String(), access, time.Second)
 		Expect(err).NotTo(HaveOccurred())
 		defer session.Close()
 
-		ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
-		defer cancel()
-		_, err = session.Run(ctx, "slow", "slow")
+		preCanceled, cancelBeforeRun := context.WithCancel(context.Background())
+		cancelBeforeRun()
+		_, err = session.Run(preCanceled, "before-attempt", "query")
 		Expect(Code(err)).To(Equal("SSH_TIMEOUT_OR_CANCELLED"))
+
+		runCtx := ctx
+		if deadline {
+			var stopDeadline context.CancelFunc
+			runCtx, stopDeadline = context.WithTimeout(ctx, 50*time.Millisecond)
+			defer stopDeadline()
+		}
+		_, err = session.Run(runCtx, "slow", "slow")
+		Expect(commandStarted).To(BeClosed())
+		Expect(Code(err)).To(Equal("SSH_TIMEOUT_OR_CANCELLED"))
+		// A failed terminal-state assertion stops here on the old implementation
+		// rather than entering the upstream orphan-channel wait.
+		runner := session.(*reconnectingRunner)
+		Expect(runner.closed).To(BeTrue())
+		Expect(runner.auth.password).To(BeEmpty())
 		_, err = session.Run(context.Background(), "after-cancel", "query")
 		Expect(Code(err)).To(Equal("SSH_COMMAND_FAILED"))
-	})
+		server.mu.Lock()
+		connectionCount := len(server.connections)
+		server.mu.Unlock()
+		Expect(connectionCount).To(Equal(1))
+	},
+		Entry("when canceled after command start", false),
+		Entry("when the caller deadline expires", true),
+	)
 	It("accepts hashed known-hosts entries through the upstream parser", func() {
 		auth := server.auth()
 		auth.knownHosts = []byte(knownhosts.HashHostname(knownhosts.Normalize(server.listener.Addr().String())) + " " + strings.TrimSpace(string(ssh.MarshalAuthorizedKey(server.key.PublicKey()))) + "\n")
