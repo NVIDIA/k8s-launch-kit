@@ -31,6 +31,7 @@ type reportBody struct {
 	Hosts              []HostID
 	Devices            []DeviceID
 	RuntimeBudget      time.Duration
+	DisabledRuntime    *RuntimeCoverage
 	AttentionRows      []reportRow
 	RemainingAttention int
 	Groups             []reportGroup
@@ -86,7 +87,12 @@ func RenderHTML(w io.Writer, result Result, metadata ReportMetadata) error {
 	if metadata.GeneratedAt.IsZero() {
 		metadata.GeneratedAt = time.Now()
 	}
-	body := reportBody{Hosts: result.Scope.Hosts, Devices: result.Scope.Devices, RuntimeBudget: result.RuntimeBudget}
+	body := reportBody{
+		Hosts:           result.Scope.Hosts,
+		Devices:         result.Scope.Devices,
+		RuntimeBudget:   result.RuntimeBudget,
+		DisabledRuntime: result.DisabledRuntime,
+	}
 	outcome := reportOutcome(result)
 	groupIndexes := make(map[string]int)
 	for i := range result.Checks {
@@ -101,7 +107,7 @@ func RenderHTML(w io.Writer, result Result, metadata ReportMetadata) error {
 		group := &body.Groups[index]
 		group.Rows = append(group.Rows, reportRow{CheckResult: check})
 		group.add(check.Outcome.State)
-		if check.Outcome.State == Passed || check.Outcome.State == Skipped || check.Outcome.Reason == ReasonDisabled {
+		if check.Outcome.State == Passed || check.Outcome.State == Skipped {
 			continue
 		}
 		if len(body.AttentionRows) < maxAttentionRows {
@@ -163,9 +169,9 @@ func reportOutcome(result Result) validationreport.OutcomeView {
 	}
 	switch result.Mode {
 	case ModeResources:
-		outcome.Notes = append(outcome.Notes, "Resource-only scope covers selected DPF setup and HBN workloads. Physical, host networking, switch, BGP, route, and traffic probes are excluded.")
+		outcome.Notes = append(outcome.Notes, "Requested resource-only scope covers selected DPF setup and HBN workloads. Physical, host networking, switch, BGP, route, and traffic probes are excluded.")
 	case ModeFull:
-		outcome.Notes = append(outcome.Notes, "Full scope includes selected DPF setup and HBN workloads, physical identities, host and switch networking, BGP, installed routes, and directed source-bound IPv4 ICMP (ordinary and MTU-sized DF).")
+		outcome.Notes = append(outcome.Notes, "Requested full scope includes selected DPF setup and HBN workloads, physical identities, host and switch networking, BGP, installed routes, and directed source-bound IPv4 ICMP (ordinary and MTU-sized DF).")
 	}
 	if result.Mode == ModeResources || result.Mode == ModeFull {
 		outcome.Notes = append(outcome.Notes, "Coverage excludes complete software cache payload hashing, physically installed bytes, RDMA, throughput, every ECMP member, and failover.")
@@ -189,6 +195,8 @@ func reportGroupTitle(check CheckSpec) string {
 		return "Runtime coverage"
 	}
 	switch check.Area {
+	case AreaPreparation:
+		return "Validation preparation"
 	case AreaManagement:
 		return "Management cluster"
 	case AreaOperator:
@@ -210,7 +218,7 @@ func reportGroupTitle(check CheckSpec) string {
 	case AreaPhysical:
 		return "Physical topology and host networking"
 	default:
-		return "Validation preparation"
+		return "Other checks"
 	}
 }
 

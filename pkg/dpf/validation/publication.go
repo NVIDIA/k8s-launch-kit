@@ -29,7 +29,9 @@ func (e *publicationError) Unwrap() error { return e.cause }
 // The caller closes it after publishing or abandoning the report.
 type ReportDestination struct {
 	parent    reportParent
+	path      string
 	filename  string
+	newOnly   bool
 	bundle    reportInput
 	protected []reportInput
 }
@@ -51,7 +53,8 @@ type reportInput struct {
 // PrepareReportDestination accepts a disabled path ("-"), an explicit file in
 // an existing directory, or an empty path for a new private sibling of the
 // retained bundle. Protected paths include inventory, overrides, and access
-// references resolved by the caller.
+// references resolved by the caller for an explicit destination. The private
+// default directory permits only exclusive creation of a new report.
 func PrepareReportDestination(bundlePath, reportPath string, protectedPaths []string) (*ReportDestination, error) {
 	destination := &ReportDestination{}
 	if reportPath == "-" {
@@ -65,40 +68,51 @@ func PrepareReportDestination(bundlePath, reportPath string, protectedPaths []st
 		return nil, &publicationError{"Cannot verify the deployment bundle path for report publication", err}
 	}
 	destination.bundle = bundle
-	for _, path := range protectedPaths {
-		if path == "" {
-			continue
-		}
-		input, err := inspectReportInput(path)
-		if err != nil {
-			return nil, &publicationError{"Cannot verify a protected input path for report publication", err}
-		}
-		destination.protected = append(destination.protected, input)
-	}
-
 	if reportPath == "" {
 		if err := destination.prepareDefault(); err != nil {
 			return nil, err
 		}
 	} else {
-		path, err := filepath.Abs(reportPath)
-		if err != nil {
-			return nil, &publicationError{"Cannot resolve the report path", err}
-		}
-		if os.IsPathSeparator(reportPath[len(reportPath)-1]) {
-			return nil, &publicationError{message: "Choose a report file path within an existing directory"}
-		}
-		parent, err := openReportParent(filepath.Dir(path))
-		if err != nil {
+		if err := destination.prepareExplicit(reportPath, protectedPaths); err != nil {
 			return nil, err
 		}
-		destination.parent, destination.filename = parent, filepath.Base(path)
 	}
 	if err := destination.check(); err != nil {
 		_ = destination.Close()
 		return nil, err
 	}
+	if err := destination.probeStaging(); err != nil {
+		_ = destination.Close()
+		return nil, err
+	}
 	return destination, nil
+}
+
+func (d *ReportDestination) prepareExplicit(reportPath string, protectedPaths []string) error {
+	path, err := absoluteReportPath(reportPath)
+	if err != nil {
+		return &publicationError{"Cannot resolve the report path", err}
+	}
+	dir, filename := filepath.Split(path)
+	if filename == "" || filename == "." || filename == ".." {
+		return &publicationError{message: "Choose a report file path within an existing directory"}
+	}
+	for _, protectedPath := range protectedPaths {
+		if protectedPath == "" {
+			continue
+		}
+		input, err := inspectReportInput(protectedPath)
+		if err != nil {
+			return &publicationError{"Cannot verify a protected input path for report publication", err}
+		}
+		d.protected = append(d.protected, input)
+	}
+	parent, err := openReportParent(dir)
+	if err != nil {
+		return err
+	}
+	d.parent, d.path, d.filename = parent, path, filename
+	return nil
 }
 
 func (d *ReportDestination) prepareDefault() error {
@@ -114,6 +128,10 @@ func (d *ReportDestination) prepareDefault() error {
 	if err := parent.root.Mkdir(name, 0o700); err != nil {
 		return &publicationError{"Cannot reserve an adjacent report directory", err}
 	}
+	info, err := parent.root.Lstat(name)
+	if err != nil || !info.IsDir() {
+		return &publicationError{"The adjacent report directory changed after creation", err}
+	}
 	path := filepath.Join(parent.path, name)
 	root, err := parent.root.OpenRoot(name)
 	if err != nil {
@@ -123,7 +141,12 @@ func (d *ReportDestination) prepareDefault() error {
 	if err != nil {
 		return err
 	}
-	d.parent, d.filename = child, "validation.html"
+	if !sameReportFile(child.info, info) {
+		_ = child.root.Close()
+		return &publicationError{message: "The adjacent report directory changed after creation"}
+	}
+	d.parent, d.filename, d.newOnly = child, "validation.html", true
+	d.path = filepath.Join(path, d.filename)
 	return nil
 }
 
@@ -185,6 +208,12 @@ func (d *ReportDestination) check() error {
 	if err != nil && !errors.Is(err, fs.ErrNotExist) {
 		return &publicationError{"Cannot inspect the report destination", err}
 	}
+	if d.newOnly {
+		if info != nil {
+			return &publicationError{message: "The new report destination already exists"}
+		}
+		return nil
+	}
 	if info != nil && !info.Mode().IsRegular() {
 		return &publicationError{message: "Choose a report destination that is a regular file or does not exist"}
 	}
@@ -225,7 +254,7 @@ func sameReportPath(a, b string) bool {
 func sameReportFile(a, b fs.FileInfo) bool { return a != nil && b != nil && os.SameFile(a, b) }
 
 func inspectReportInput(path string) (reportInput, error) {
-	absolute, err := absoluteReportInputPath(path)
+	absolute, err := absoluteReportPath(path)
 	if err != nil {
 		return reportInput{}, err
 	}
@@ -244,7 +273,7 @@ func inspectReportInput(path string) (reportInput, error) {
 	return reportInput{path: absolute, resolved: resolved, info: info, parent: parent}, nil
 }
 
-func absoluteReportInputPath(path string) (string, error) {
+func absoluteReportPath(path string) (string, error) {
 	if filepath.IsAbs(path) {
 		return path, nil
 	}
@@ -308,9 +337,9 @@ func (d *ReportDestination) Close() error {
 	return d.parent.root.Close()
 }
 
-// Publish stages the rendered report in the pinned directory and replaces the
-// destination only after a successful render and file sync. It can finalize
-// using retained evidence even after the observation context is canceled.
+// Publish stages the rendered report in the pinned directory and publishes it
+// only after a successful render and file sync. It can finalize using the
+// retained result even after the observation context is canceled.
 func (d *ReportDestination) Publish(render func(io.Writer) error) (ReportDisposition, error) {
 	if d == nil {
 		return ReportDisposition{Status: ReportFailed}, &publicationError{message: "Report destination was not prepared"}
@@ -332,20 +361,14 @@ func (d *ReportDestination) publish(render func(io.Writer) error) (string, error
 	if err := d.check(); err != nil {
 		return "", err
 	}
-	temp := ".l8k-validation-" + rand.Text()
-	file, err := d.parent.root.OpenFile(temp, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
+	stage, err := d.openStage()
 	if err != nil {
-		return "", &publicationError{"Cannot create the staged report", err}
+		return "", err
 	}
-	tempInfo, err := file.Stat()
-	if err != nil {
-		_ = file.Close()
-		_ = d.parent.root.Remove(temp)
-		return "", &publicationError{"Cannot inspect the staged report", err}
-	}
+	file := stage.file
 	defer func() {
 		_ = file.Close()
-		d.removeStagedReport(temp, tempInfo)
+		_ = d.removeStage(stage.name, stage.info)
 	}()
 	writer := bufio.NewWriter(file)
 	err = render(writer)
@@ -361,27 +384,87 @@ func (d *ReportDestination) publish(render func(io.Writer) error) (string, error
 	if err := d.check(); err != nil {
 		return "", err
 	}
-	before, err := d.parent.root.Lstat(temp)
-	if err != nil || !sameReportFile(tempInfo, before) {
+	before, err := d.parent.root.Lstat(stage.name)
+	if err != nil || !sameReportFile(stage.info, before) {
 		return "", &publicationError{"The staged report changed before publication", err}
 	}
-	if err := d.parent.root.Rename(temp, d.filename); err != nil {
+	if d.newOnly {
+		// A private default never replaces an entry. Linking the synced
+		// stage makes the completed report visible only if the name is free.
+		if err := d.parent.root.Link(stage.name, d.filename); err != nil {
+			return "", &publicationError{"Cannot create the new report file", err}
+		}
+		if err := d.removeStage(stage.name, stage.info); err != nil {
+			return "", &publicationError{"Cannot remove the staged report after publication", err}
+		}
+	} else if err := d.parent.root.Rename(stage.name, d.filename); err != nil {
 		return "", &publicationError{"Cannot replace the report file", err}
 	}
 
 	if err := d.parent.check(d.bundle); err != nil {
 		return "", err
 	}
-	path := filepath.Join(d.parent.path, d.filename)
-	after, err := os.Lstat(path)
-	if err != nil || !sameReportFile(tempInfo, after) {
+	// Advertise the resolved destination so link consumers cannot lexically
+	// collapse a caller's symlink/.. spelling into a different file.
+	published := filepath.Join(d.parent.resolved, d.filename)
+	after, err := os.Lstat(published)
+	if err != nil || !sameReportFile(stage.info, after) {
 		return "", &publicationError{"The published report path no longer identifies this report", err}
 	}
-	return path, nil
+	return published, nil
 }
 
-func (d *ReportDestination) removeStagedReport(name string, opened fs.FileInfo) {
-	if current, err := d.parent.root.Lstat(name); err == nil && sameReportFile(current, opened) {
-		_ = d.parent.root.Remove(name)
+type stagedReport struct {
+	name string
+	file *os.File
+	info fs.FileInfo
+}
+
+func (d *ReportDestination) openStage() (stagedReport, error) {
+	name := ".l8k-validation-" + rand.Text()
+	file, err := d.parent.root.OpenFile(name, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
+	if err != nil {
+		return stagedReport{}, &publicationError{"Cannot stage a report in the selected directory", err}
 	}
+	info, err := file.Stat()
+	if err != nil {
+		_ = file.Close()
+		_ = d.parent.root.Remove(name)
+		return stagedReport{}, &publicationError{"Cannot inspect the staged report", err}
+	}
+	return stagedReport{name: name, file: file, info: info}, nil
+}
+
+func (d *ReportDestination) probeStaging() error {
+	stage, err := d.openStage()
+	if err != nil {
+		return err
+	}
+	closeErr := stage.file.Close()
+	var linkErr error
+	if d.newOnly && closeErr == nil {
+		link := stage.name + "-link"
+		linkErr = d.parent.root.Link(stage.name, link)
+		if linkErr == nil {
+			linkErr = d.removeStage(link, stage.info)
+		}
+	}
+	if err := errors.Join(closeErr, linkErr, d.removeStage(stage.name, stage.info)); err != nil {
+		return &publicationError{"Cannot safely stage and remove a report in the selected directory", err}
+	}
+	return nil
+}
+
+func (d *ReportDestination) removeStage(name string, opened fs.FileInfo) error {
+	current, err := d.parent.root.Lstat(name)
+	if errors.Is(err, fs.ErrNotExist) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	if !sameReportFile(current, opened) {
+		return errors.New("staged report identity changed")
+	}
+	return d.parent.root.Remove(name)
 }

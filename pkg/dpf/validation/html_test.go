@@ -88,25 +88,41 @@ var _ = Describe("DPF report HTML", func() {
 		}
 	})
 
-	It("distinguishes resource-only success from active connectivity coverage", func() {
+	It("distinguishes resource-only success and summarizes excluded runtime measurements", func() {
 		result := validation.Result{
 			Mode: validation.ModeResources, Verdict: validation.VerdictResourcesPassed,
-			Scope: validation.RuntimeScope{Hosts: []validation.HostID{"host-a"}, Devices: []validation.DeviceID{"dpu-a"}},
+			DisabledRuntime: &validation.RuntimeCoverage{
+				BGP: 256, Routes: 65_280, OrdinaryTraffic: 65_280, DFTraffic: 65_280,
+			},
 			Checks: []validation.CheckResult{
 				{
-					CheckSpec: validation.CheckSpec{ID: validation.BGPCheckID("dpu-a"), Subject: "dpu-a"},
-					Outcome:   validation.Outcome{State: validation.Skipped, Reason: validation.ReasonDisabled},
+					CheckSpec: validation.CheckSpec{ID: "software", Area: validation.AreaSoftware, Subject: "DPU software", Required: true},
+					Outcome:   validation.Outcome{State: validation.Passed},
 				},
 			},
 		}
+		for i := range 256 {
+			result.Scope.Hosts = append(result.Scope.Hosts, validation.HostID(fmt.Sprintf("host-%03d", i)))
+			result.Scope.Devices = append(result.Scope.Devices, validation.DeviceID(fmt.Sprintf("dpu-%03d", i)))
+		}
 		var rendered bytes.Buffer
 		Expect(validation.RenderHTML(&rendered, result, validation.ReportMetadata{})).To(Succeed())
-		Expect(rendered.String()).To(ContainSubstring("RESOURCE CHECKS PASSED"))
-		Expect(rendered.String()).To(ContainSubstring("Resource-only scope"))
-		Expect(rendered.String()).To(ContainSubstring("0 passed · 0 failed · 0 pending · 0 unverified · 1 skipped"))
-		Expect(rendered.String()).To(ContainSubstring("disabled"))
-		Expect(rendered.String()).NotTo(ContainSubstring("VALIDATION PASSED"))
-		Expect(rendered.String()).NotTo(ContainSubstring("<h2>Needs attention</h2>"))
+		html := rendered.String()
+		for _, want := range []string{
+			"RESOURCE CHECKS PASSED",
+			"Requested resource-only scope",
+			"Connectivity excluded by resource-only scope",
+			"<dt>DPU BGP checks</dt><dd>256</dd>",
+			"<dt>Directed installed route checks</dt><dd>65280</dd>",
+			"<dt>Directed ordinary ICMP probes</dt><dd>65280</dd>",
+			"<dt>Directed MTU-sized DF ICMP probes</dt><dd>65280</dd>",
+		} {
+			Expect(html).To(ContainSubstring(want))
+		}
+		Expect(html).NotTo(ContainSubstring("VALIDATION PASSED"))
+		Expect(html).NotTo(ContainSubstring("<h2>Needs attention</h2>"))
+		Expect(html).NotTo(ContainSubstring("<h2>BGP peers</h2>"))
+		Expect(rendered.Len()).To(BeNumerically("<", 30_000))
 	})
 
 	It("shows a bounded list of next actions before the grouped tables", func() {
@@ -118,6 +134,8 @@ var _ = Describe("DPF report HTML", func() {
 				state, reason = validation.Passed, validation.ReasonNone
 			case 1:
 				state, reason = validation.Skipped, validation.ReasonDisabled
+			case 2:
+				state, reason = validation.Unverified, validation.ReasonDisabled
 			}
 			result.Checks = append(result.Checks, validation.CheckResult{
 				CheckSpec: validation.CheckSpec{
@@ -147,14 +165,22 @@ var _ = Describe("DPF report HTML", func() {
 		Expect(html).To(ContainSubstring("Restore &lt;package-14&gt;"))
 	})
 
-	It("shows unavailable identities and a safe reason for a preparation failure", func() {
+	It("keeps the bound mode and unavailable identities in a preparation failure", func() {
+		result := validation.PreparationFailure(validation.ModeResources, validation.FatalInput, errors.New("private input location"))
 		var rendered bytes.Buffer
-		Expect(validation.RenderHTML(&rendered, validation.Result{
-			Verdict: validation.VerdictIncomplete, Fatal: validation.FatalInput, Cause: errors.New("private input location"),
-		}, validation.ReportMetadata{})).To(Succeed())
+		Expect(validation.RenderHTML(&rendered, result, validation.ReportMetadata{})).To(Succeed())
 		Expect(rendered.String()).To(ContainSubstring("Selected deployment identities are unavailable"))
 		Expect(rendered.String()).To(ContainSubstring("Validation input or preparation could not complete"))
-		Expect(rendered.String()).To(ContainSubstring("No check results were available"))
+		Expect(rendered.String()).To(ContainSubstring("<h2>Validation preparation</h2>"))
+		Expect(rendered.String()).To(ContainSubstring("Requested resource-only scope"))
+		Expect(rendered.String()).NotTo(ContainSubstring("Requested full scope"))
+		Expect(rendered.String()).NotTo(ContainSubstring("Connectivity excluded by resource-only scope"))
 		Expect(rendered.String()).NotTo(ContainSubstring("private input location"))
+
+		rendered.Reset()
+		unknown := validation.PreparationFailure(validation.ModeUnknown, validation.FatalInput, nil)
+		Expect(validation.RenderHTML(&rendered, unknown, validation.ReportMetadata{})).To(Succeed())
+		Expect(rendered.String()).NotTo(ContainSubstring("Requested resource-only scope"))
+		Expect(rendered.String()).NotTo(ContainSubstring("Requested full scope"))
 	})
 })

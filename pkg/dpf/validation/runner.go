@@ -58,10 +58,21 @@ func pause(ctx context.Context, d time.Duration) error {
 
 func (r *Runner) Run(ctx context.Context) Result {
 	if r == nil || ctx == nil {
-		return PreparationFailure(FatalInput, errors.New("validation runner and context are required"))
+		mode := ModeUnknown
+		if r != nil {
+			mode = r.plan.Mode()
+		}
+		return PreparationFailure(mode, FatalInput, errors.New("validation runner and context are required"))
 	}
 	result := Result{Mode: r.plan.Mode(), Scope: r.plan.RuntimeScope(), Verdict: VerdictIncomplete, Report: ReportDisposition{Status: ReportPending}}
+	if result.Mode == ModeResources {
+		result.DisabledRuntime = &RuntimeCoverage{BGP: len(result.Scope.Devices), Routes: len(result.Scope.Routes), OrdinaryTraffic: len(result.Scope.Traffic), DFTraffic: len(result.Scope.Traffic)}
+		result.Scope.Routes = nil
+		result.Scope.Traffic = nil
+	}
 	result.RuntimeBudget, _ = RuntimeBudget(len(result.Scope.Hosts), r.options.ConnectivityTimeout, r.options.ConnectivityTimeoutSet, result.Mode)
+	rowIndex := make(map[CheckID]int, len(r.plan.checks))
+	result.Checks = make([]CheckResult, 0, len(r.plan.checks))
 	for _, spec := range r.plan.checks {
 		o := Outcome{ID: spec.ID, State: Unverified, Reason: ReasonDependency, Summary: "Required observation has not completed"}
 		if result.Mode == ModeResources && spec.FullOnly {
@@ -70,6 +81,7 @@ func (r *Runner) Run(ctx context.Context) Result {
 		if spec.ID == "runtime/cross-host-coverage" && result.Mode == ModeFull {
 			o = Outcome{ID: spec.ID, State: Unverified, Reason: ReasonIncomplete, Summary: "Cross-host traffic requires at least two selected hosts", Action: "Select at least two physical hosts to measure cross-host coverage"}
 		}
+		rowIndex[spec.ID] = len(result.Checks)
 		result.Checks = append(result.Checks, CheckResult{CheckSpec: spec, Outcome: o})
 	}
 	progress := newProgress(r.options.Progress, r.plan.checks, result.Mode)
@@ -86,7 +98,7 @@ func (r *Runner) Run(ctx context.Context) Result {
 	if result.Mode == ModeFull && result.Fatal == "" {
 		// Missing/unhealthy resource regions may make runtime unavailable, but the
 		// adapter can still bind independently safe regions. It owns this decision.
-		r.observeRuntime(ctx, &result, progress)
+		r.observeRuntime(ctx, &result, progress, rowIndex)
 	}
 	if result.Fatal != "" {
 		markRemaining(&result, reasonForFatal(result.Fatal))
@@ -108,14 +120,13 @@ func (r *Runner) observeResources(ctx context.Context, result *Result, progress 
 		if err == nil {
 			err = ctx.Err()
 		}
+		if err != nil {
+			setFatal(result, err)
+		}
 		if !r.applySnapshot(result, snapshot, progress, err) {
 			return
 		}
 		if err != nil {
-			setFatal(result, err)
-			if classify(err) == FatalIdentity {
-				invalidate(result, ReasonIdentityDrift, false)
-			}
 			return
 		}
 		pending, blocker := false, false
@@ -146,6 +157,7 @@ func (r *Runner) isResource(spec CheckSpec) bool {
 func (r *Runner) applySnapshot(result *Result, snapshot ResourceSnapshot, progress *progressSink, observationErr error) bool {
 	observed := make(map[CheckID]Outcome, len(snapshot.Checks))
 	valid := true
+	identityDrift := inspectError(observationErr).identity
 	for _, o := range snapshot.Checks {
 		spec, ok := progress.specs[o.ID]
 		if !ok || !r.isResource(spec) {
@@ -158,6 +170,7 @@ func (r *Runner) applySnapshot(result *Result, snapshot ResourceSnapshot, progre
 		}
 		observed[o.ID] = normalize(o, o.ID)
 		if o.Reason == ReasonIdentityDrift {
+			identityDrift = true
 			setFatal(result, &ObservationError{Category: FatalIdentity})
 		}
 	}
@@ -180,16 +193,15 @@ func (r *Runner) applySnapshot(result *Result, snapshot ResourceSnapshot, progre
 	}
 	if !valid {
 		setFatal(result, &ObservationError{Category: FatalObservation})
-		return false
 	}
-	if result.Fatal == FatalIdentity {
+	if identityDrift {
 		invalidate(result, ReasonIdentityDrift, false)
 		return false
 	}
-	return true
+	return valid
 }
 
-func (r *Runner) observeRuntime(ctx context.Context, result *Result, progress *progressSink) {
+func (r *Runner) observeRuntime(ctx context.Context, result *Result, progress *progressSink, rowIndex map[CheckID]int) {
 	runtimeCtx, cancel := context.WithTimeout(ctx, result.RuntimeBudget)
 	defer cancel()
 	session, err := r.observer.OpenRuntime(runtimeCtx, progress.emit)
@@ -198,7 +210,7 @@ func (r *Runner) observeRuntime(ctx context.Context, result *Result, progress *p
 	}
 	if err != nil {
 		setFatal(result, err)
-		if classify(err) == FatalIdentity {
+		if inspectError(err).identity {
 			invalidate(result, ReasonIdentityDrift, true)
 		}
 		return
@@ -212,8 +224,21 @@ func (r *Runner) observeRuntime(ctx context.Context, result *Result, progress *p
 		invalidate(result, ReasonIdentityDrift, true)
 		return
 	}
+	verified := false
+	var completionErr error
+	defer func() {
+		if verified {
+			return
+		}
+		reason := reasonForFatal(classify(completionErr))
+		if inspectError(completionErr).identity {
+			reason = ReasonIdentityDrift
+		}
+		invalidate(result, reason, true)
+	}()
 	measure := func(ids []CheckID, observe func(context.Context) ([]Outcome, error)) bool {
 		if runtimeCtx.Err() != nil {
+			completionErr = runtimeCtx.Err()
 			setFatal(result, runtimeCtx.Err())
 			return false
 		}
@@ -244,7 +269,7 @@ func (r *Runner) observeRuntime(ctx context.Context, result *Result, progress *p
 				}
 				o = Outcome{ID: id, State: Unverified, Reason: reasonForFatal(classify(callErr)), Summary: "Measurement did not complete safely"}
 			}
-			if row := setOutcome(result, o); row != nil {
+			if row := setOutcome(result, rowIndex, o); row != nil {
 				row.PriorOutcome = partial
 			}
 			progress.emit(ProgressEvent{Check: progress.specs[id], Phase: Completed, Outcome: o})
@@ -254,13 +279,14 @@ func (r *Runner) observeRuntime(ctx context.Context, result *Result, progress *p
 		}
 		if callErr != nil {
 			category := classify(callErr)
-			if category == FatalIdentity {
+			if inspectError(callErr).identity {
 				setFatal(result, callErr)
-				invalidate(result, ReasonIdentityDrift, true)
+				completionErr = callErr
 				return false
 			}
 			if category == FatalInput || category == FatalCanceled || runtimeCtx.Err() != nil {
 				setFatal(result, callErr)
+				completionErr = callErr
 				return false
 			}
 			// Access/ordinary observation failures retain their category but do not
@@ -299,8 +325,10 @@ func (r *Runner) observeRuntime(ctx context.Context, result *Result, progress *p
 	}
 	if err != nil {
 		setFatal(result, err)
-		invalidate(result, reasonForFatal(classify(err)), true)
+		completionErr = err
+		return
 	}
+	verified = true
 }
 
 func sameScope(a, b RuntimeScope) bool {
@@ -328,20 +356,27 @@ func sameScope(a, b RuntimeScope) bool {
 	return true
 }
 
-func setOutcome(result *Result, o Outcome) *CheckResult {
-	for i := range result.Checks {
-		if result.Checks[i].ID == o.ID {
-			result.Checks[i].Outcome = o
-			return &result.Checks[i]
-		}
+func setOutcome(result *Result, index map[CheckID]int, o Outcome) *CheckResult {
+	if i, ok := index[o.ID]; ok {
+		result.Checks[i].Outcome = o
+		return &result.Checks[i]
 	}
 	return nil
 }
 func preservePrior(row *CheckResult) {
-	if row.Outcome.State == Passed || row.Outcome.State == Failed {
-		previous := row.Outcome
-		row.PriorOutcome = &previous
+	switch row.Outcome.State {
+	case Passed, Failed:
+	case Unverified:
+		switch row.Outcome.Reason {
+		case ReasonDenied, ReasonUnavailable, ReasonInvalidInput:
+		default:
+			return
+		}
+	default:
+		return
 	}
+	previous := row.Outcome
+	row.PriorOutcome = &previous
 }
 func invalidate(result *Result, reason Reason, runtimeOnly bool) {
 	for i := range result.Checks {
@@ -366,29 +401,89 @@ func markRemaining(result *Result, reason Reason) {
 }
 
 func classify(err error) FatalCategory {
-	var observation *ObservationError
-	if errors.As(err, &observation) && observation != nil {
-		switch observation.Category {
-		case FatalInput, FatalAccess, FatalIdentity, FatalCanceled, FatalTimeout, FatalObservation:
-			return observation.Category
+	return inspectError(err).primary
+}
+
+// Error precedence and identity poisoning are separate decisions. Walk every
+// joined/wrapped cause: an earlier access/input error must never hide drift in
+// another branch, even when input failure determines the command's exit code.
+type errorClassification struct {
+	primary  FatalCategory
+	identity bool
+}
+
+func inspectError(err error) errorClassification {
+	if err == nil {
+		return errorClassification{primary: FatalObservation}
+	}
+	out := errorClassification{}
+	remaining := []error{err}
+	seen := map[error]bool{}
+	for len(remaining) > 0 {
+		current := remaining[len(remaining)-1]
+		remaining = remaining[:len(remaining)-1]
+		if current == nil {
+			continue
+		}
+		if reflect.TypeOf(current).Comparable() {
+			if seen[current] {
+				continue
+			}
+			seen[current] = true
+		}
+		category := FatalCategory("")
+		if observation, ok := current.(*ObservationError); ok && observation != nil {
+			switch observation.Category {
+			case FatalInput, FatalAccess, FatalIdentity, FatalCanceled, FatalTimeout, FatalObservation:
+				category = observation.Category
+			}
+		}
+		switch current {
+		case context.Canceled:
+			category = FatalCanceled
+		case context.DeadlineExceeded:
+			category = FatalTimeout
+		}
+		if custom, ok := current.(interface{ Is(error) bool }); ok {
+			if custom.Is(context.Canceled) && fatalPriority(category) < fatalPriority(FatalCanceled) {
+				category = FatalCanceled
+			}
+			if custom.Is(context.DeadlineExceeded) && fatalPriority(category) < fatalPriority(FatalTimeout) {
+				category = FatalTimeout
+			}
+		}
+		if category == FatalIdentity {
+			out.identity = true
+		}
+		if fatalPriority(category) > fatalPriority(out.primary) {
+			out.primary = category
+		}
+		switch cause := current.(type) {
+		case interface{ Unwrap() []error }:
+			remaining = append(remaining, cause.Unwrap()...)
+		case interface{ Unwrap() error }:
+			remaining = append(remaining, cause.Unwrap())
 		}
 	}
-	if errors.Is(err, context.Canceled) {
-		return FatalCanceled
+	if out.primary == "" {
+		out.primary = FatalObservation
 	}
-	if errors.Is(err, context.DeadlineExceeded) {
-		return FatalTimeout
-	}
-	return FatalObservation
+	return out
 }
 func fatalPriority(c FatalCategory) int {
 	switch c {
 	case FatalInput:
+		return 6
+	case FatalIdentity:
+		return 5
+	case FatalAccess:
 		return 4
-	case FatalAccess, FatalIdentity:
+	case FatalCanceled:
 		return 3
-	case FatalCanceled, FatalTimeout, FatalObservation:
+	case FatalTimeout:
 		return 2
+	case FatalObservation:
+		return 1
 	}
 	return 0
 }
@@ -397,7 +492,7 @@ func setFatal(result *Result, err error) {
 		return
 	}
 	category := classify(err)
-	if result.Fatal == "" || fatalPriority(category) > fatalPriority(result.Fatal) || (category == FatalIdentity && result.Fatal == FatalAccess) {
+	if result.Fatal == "" || fatalPriority(category) > fatalPriority(result.Fatal) {
 		result.Fatal = category
 	}
 	result.Cause = errors.Join(result.Cause, err)
@@ -437,7 +532,7 @@ func normalize(o Outcome, id CheckID) Outcome {
 	o.Action = safeText(o.Action)
 	validReason := false
 	switch o.Reason {
-	case ReasonHealth, ReasonMissing, ReasonDenied, ReasonUnavailable, ReasonUnsupported, ReasonIncomplete, ReasonProgressing, ReasonDependency, ReasonDisabled, ReasonInapplicable, ReasonCanceled, ReasonTimedOut, ReasonIdentityDrift, ReasonInvalidInput:
+	case ReasonHealth, ReasonMissing, ReasonDenied, ReasonUnavailable, ReasonUnsupported, ReasonIncomplete, ReasonProgressing, ReasonDependency, ReasonInapplicable, ReasonCanceled, ReasonTimedOut, ReasonIdentityDrift, ReasonInvalidInput:
 		validReason = true
 	}
 	switch o.State {
@@ -477,10 +572,13 @@ func normalize(o Outcome, id CheckID) Outcome {
 // PreparationFailure provides the same terminal envelope before a retained plan
 // can be loaded. No release, selection, expected count or successful report is
 // invented. The raw cause is available only to library callers.
-func PreparationFailure(category FatalCategory, cause error) Result {
-	result := Result{Mode: ModeFull, Verdict: VerdictIncomplete, Report: ReportDisposition{Status: ReportUnavailable}}
+func PreparationFailure(mode Mode, category FatalCategory, cause error) Result {
+	if mode != ModeFull && mode != ModeResources {
+		mode = ModeUnknown
+	}
+	result := Result{Mode: mode, Verdict: VerdictIncomplete, Report: ReportDisposition{Status: ReportUnavailable}}
 	setFatal(&result, &ObservationError{Category: category, Cause: cause})
-	spec := CheckSpec{ID: "preparation", Area: AreaManagement, Subject: "Validation preparation", Required: true}
+	spec := CheckSpec{ID: "preparation", Area: AreaPreparation, Subject: "Validation preparation", Required: true}
 	result.Checks = []CheckResult{{CheckSpec: spec, Outcome: Outcome{ID: spec.ID, State: Unverified, Reason: reasonForFatal(result.Fatal), Summary: "Validation preparation could not complete", Action: "Check the retained inputs and explicit access configuration"}}}
 	return result
 }
@@ -578,14 +676,19 @@ func (r *Result) evaluate() {
 func (r Result) ExitCode() int {
 	inputFailure, accessFailure := r.Fatal == FatalInput, r.Fatal == FatalAccess || r.Fatal == FatalIdentity
 	for _, row := range r.Checks {
-		if !row.Required || (r.Mode == ModeResources && row.FullOnly) || row.Outcome.State == Passed {
+		if !row.Required || (r.Mode == ModeResources && row.FullOnly) {
 			continue
 		}
-		switch row.Outcome.Reason {
-		case ReasonInvalidInput:
-			inputFailure = true
-		case ReasonDenied, ReasonUnavailable, ReasonIdentityDrift:
-			accessFailure = true
+		for _, outcome := range []*Outcome{&row.Outcome, row.PriorOutcome} {
+			if outcome == nil || outcome.State == Passed {
+				continue
+			}
+			switch outcome.Reason {
+			case ReasonInvalidInput:
+				inputFailure = true
+			case ReasonDenied, ReasonUnavailable, ReasonIdentityDrift:
+				accessFailure = true
+			}
 		}
 	}
 	if inputFailure {

@@ -59,6 +59,9 @@ func NewPlan(input PlanInput) (Plan, error) {
 		return Plan{}, err
 	}
 	p.checks = append([]CheckSpec(nil), p.input.Checks...)
+	if input.Mode == ModeResources {
+		return p, nil
+	}
 	for _, d := range p.input.Runtime.Devices {
 		p.checks = append(p.checks, runtimeSpec(BGPCheckID(d), string(d)))
 	}

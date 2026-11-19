@@ -15,6 +15,7 @@ import (
 type Mode string
 
 const (
+	ModeUnknown   Mode = "unknown"
 	ModeFull      Mode = "full"
 	ModeResources Mode = "resources"
 )
@@ -57,6 +58,7 @@ type HostID string
 type Area string
 
 const (
+	AreaPreparation Area = "preparation"
 	AreaManagement  Area = "management"
 	AreaOperator    Area = "operator"
 	AreaDefinitions Area = "definitions"
@@ -95,6 +97,8 @@ type DirectedHostPair struct {
 // RuntimeScope contains safe selected identities, not commands or transports.
 // A session returns independent copies. Routes and Traffic contain the complete
 // directed matrices of the retained selected Devices and Hosts respectively.
+// Resource-only results omit these unrequested matrices and disclose their
+// exact excluded measurement counts through Result.DisabledRuntime.
 type RuntimeScope struct {
 	Devices []DeviceID           `json:"devices"`
 	Hosts   []HostID             `json:"hosts"`
@@ -252,18 +256,28 @@ type ReportDisposition struct {
 	Path   string       `json:"path,omitempty"`
 }
 
+// RuntimeCoverage describes intentionally excluded measurements without
+// expanding an unrequested directed matrix into individual result rows.
+type RuntimeCoverage struct {
+	BGP             int `json:"bgp"`
+	Routes          int `json:"routes"`
+	OrdinaryTraffic int `json:"ordinaryTraffic"`
+	DFTraffic       int `json:"dfTraffic"`
+}
+
 // Result is the one evaluation model for text, JSON, HTML and exit decisions.
 // Cause is library-only. Publication never changes the measured verdict.
 type Result struct {
-	Mode          Mode              `json:"mode"`
-	Scope         RuntimeScope      `json:"scope"`
-	Verdict       Verdict           `json:"verdict"`
-	Checks        []CheckResult     `json:"checks"`
-	RuntimeBudget time.Duration     `json:"-"`
-	Fatal         FatalCategory     `json:"fatal,omitempty"`
-	Report        ReportDisposition `json:"report"`
-	OutputFailed  bool              `json:"outputFailed,omitempty"`
-	Cause         error             `json:"-"`
+	Mode            Mode              `json:"mode"`
+	Scope           RuntimeScope      `json:"scope"`
+	DisabledRuntime *RuntimeCoverage  `json:"disabledRuntime,omitempty"`
+	Verdict         Verdict           `json:"verdict"`
+	Checks          []CheckResult     `json:"checks"`
+	RuntimeBudget   time.Duration     `json:"-"`
+	Fatal           FatalCategory     `json:"fatal,omitempty"`
+	Report          ReportDisposition `json:"report"`
+	OutputFailed    bool              `json:"outputFailed,omitempty"`
+	Cause           error             `json:"-"`
 }
 
 // MarshalJSON keeps the canonical duration useful to callers while presenting

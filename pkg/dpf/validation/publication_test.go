@@ -87,7 +87,9 @@ var _ = Describe("DPF report publication", func() {
 
 		report, err = destination.Publish(writeReport)
 		Expect(err).NotTo(HaveOccurred())
-		Expect(report).To(Equal(validation.ReportDisposition{Status: validation.ReportPublished, Path: target}))
+		canonical, err := filepath.EvalSymlinks(target)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(report).To(Equal(validation.ReportDisposition{Status: validation.ReportPublished, Path: canonical}))
 		Expect(fileContents(target)).To(Equal("<p>report</p>"))
 		Expect(directoryNames(base)).To(ConsistOf("retained", "report.html"))
 	})
@@ -98,6 +100,128 @@ var _ = Describe("DPF report publication", func() {
 		Expect(err).To(MatchError(ContainSubstring("parent directory must already exist")))
 		Expect(destination).To(BeNil())
 		Expect(os.Lstat(missing)).Error().To(MatchError(os.ErrNotExist))
+	})
+
+	It("resolves an explicit symlink before traversing to its parent", func() {
+		if runtime.GOOS == "windows" {
+			Skip("the fixture exercises POSIX parent traversal")
+		}
+		real := filepath.Join(base, "real")
+		child := filepath.Join(real, "child")
+		Expect(os.MkdirAll(child, 0o700)).To(Succeed())
+		link := filepath.Join(base, "link")
+		Expect(os.Symlink(child, link)).To(Succeed())
+		request := link + "/../report.html"
+		intended := filepath.Join(real, "report.html")
+		Expect(os.WriteFile(intended, []byte("previous requested report"), 0o600)).To(Succeed())
+		Expect(os.WriteFile(target, []byte("unrelated report"), 0o600)).To(Succeed())
+		Expect(fileContents(request)).To(Equal("previous requested report"))
+
+		destination, err := validation.PrepareReportDestination(bundle, request, nil)
+		Expect(err).NotTo(HaveOccurred())
+		DeferCleanup(destination.Close)
+		Expect(directoryNames(real)).To(ConsistOf("child", "report.html"))
+		renderErr := errors.New("render failed")
+		report, err := destination.Publish(func(w io.Writer) error {
+			Expect(io.WriteString(w, "partial")).Error().NotTo(HaveOccurred())
+			return renderErr
+		})
+		Expect(err).To(MatchError(renderErr))
+		Expect(report).To(Equal(validation.ReportDisposition{Status: validation.ReportFailed}))
+		Expect(fileContents(intended)).To(Equal("previous requested report"))
+		Expect(fileContents(target)).To(Equal("unrelated report"))
+
+		report, err = destination.Publish(writeReport)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(report.Status).To(Equal(validation.ReportPublished))
+		Expect(fileContents(report.Path)).To(Equal("<p>report</p>"))
+		Expect(fileContents(intended)).To(Equal("<p>report</p>"))
+		Expect(fileContents(target)).To(Equal("unrelated report"))
+		canonical, err := filepath.EvalSymlinks(intended)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(report.Path).To(Equal(canonical), "the published link must identify the actual destination without ambiguous traversal")
+	})
+
+	It("rejects a non-writable destination before observing and leaves its old report intact", func() {
+		if runtime.GOOS == "windows" {
+			Skip("the fixture requires POSIX directory permissions")
+		}
+		parent := filepath.Join(base, "read-only")
+		Expect(os.Mkdir(parent, 0o700)).To(Succeed())
+		existing := filepath.Join(parent, "report.html")
+		Expect(os.WriteFile(existing, []byte("previous report"), 0o600)).To(Succeed())
+		Expect(os.Chmod(parent, 0o500)).To(Succeed())
+		DeferCleanup(os.Chmod, parent, os.FileMode(0o700))
+		probe, err := os.OpenFile(filepath.Join(parent, "probe"), os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
+		if err == nil {
+			Expect(probe.Close()).To(Succeed())
+			Expect(os.Remove(probe.Name())).To(Succeed())
+			Skip("directory modes do not restrict this test user")
+		}
+		Expect(err).To(MatchError(os.ErrPermission))
+
+		destination, err := validation.PrepareReportDestination(bundle, existing, nil)
+		Expect(err).To(MatchError(os.ErrPermission))
+		Expect(err.Error()).To(ContainSubstring("Cannot stage a report"))
+		Expect(destination).To(BeNil())
+		Expect(fileContents(existing)).To(Equal("previous report"))
+		Expect(directoryNames(parent)).To(Equal([]string{"report.html"}))
+	})
+
+	It("allows a new private default with an inaccessible protected reference while explicit paths fail closed", func() {
+		if runtime.GOOS == "windows" {
+			Skip("the fixture requires POSIX directory permissions and symlinks")
+		}
+		private := filepath.Join(base, "private")
+		Expect(os.Mkdir(private, 0o700)).To(Succeed())
+		Expect(os.WriteFile(target, []byte("protected report path"), 0o600)).To(Succeed())
+		protected := filepath.Join(private, "credential")
+		Expect(os.Symlink(target, protected)).To(Succeed())
+		Expect(os.Chmod(private, 0o000)).To(Succeed())
+		DeferCleanup(os.Chmod, private, os.FileMode(0o700))
+		if _, err := os.Stat(protected); err == nil {
+			Skip("directory modes do not restrict this test user")
+		} else {
+			Expect(err).To(MatchError(os.ErrPermission))
+		}
+
+		destination, err := validation.PrepareReportDestination(bundle, target, []string{protected})
+		Expect(err).To(MatchError(os.ErrPermission))
+		Expect(err.Error()).To(ContainSubstring("Cannot verify a protected input path"))
+		Expect(err.Error()).NotTo(ContainSubstring(protected))
+		Expect(destination).To(BeNil())
+
+		destination, err = validation.PrepareReportDestination(bundle, "", []string{protected})
+		Expect(err).NotTo(HaveOccurred())
+		DeferCleanup(destination.Close)
+		report, err := destination.Publish(writeReport)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(report.Status).To(Equal(validation.ReportPublished))
+		Expect(fileContents(report.Path)).To(Equal("<p>report</p>"))
+		Expect(directoryNames(filepath.Dir(report.Path))).To(Equal([]string{"validation.html"}))
+		Expect(fileContents(target)).To(Equal("protected report path"))
+	})
+
+	It("keeps a default report exclusive when an entry appears during rendering", func() {
+		destination, err := validation.PrepareReportDestination(bundle, "", nil)
+		Expect(err).NotTo(HaveOccurred())
+		DeferCleanup(destination.Close)
+		parents, err := filepath.Glob(filepath.Join(base, "retained-validation-*"))
+		Expect(err).NotTo(HaveOccurred())
+		Expect(parents).To(HaveLen(1))
+		Expect(directoryNames(parents[0])).To(BeEmpty())
+		existing := filepath.Join(parents[0], "validation.html")
+
+		report, err := destination.Publish(func(w io.Writer) error {
+			if err := writeReport(w); err != nil {
+				return err
+			}
+			return os.WriteFile(existing, []byte("another report"), 0o600)
+		})
+		Expect(err).To(MatchError(ContainSubstring("already exists")))
+		Expect(report).To(Equal(validation.ReportDisposition{Status: validation.ReportFailed}))
+		Expect(fileContents(existing)).To(Equal("another report"))
+		Expect(directoryNames(parents[0])).To(Equal([]string{"validation.html"}))
 	})
 
 	It("rejects a report beneath the retained bundle through a symlink alias", func() {

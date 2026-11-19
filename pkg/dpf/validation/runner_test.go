@@ -7,6 +7,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"strings"
 	"sync"
 	"testing"
@@ -99,8 +100,12 @@ func fixture(mode Mode, n int) (PlanInput, *fakeObserver) {
 		i.Checks = append(i.Checks, CheckSpec{ID: CheckID(area) + "/coverage", Area: area, Subject: string(area), Required: true, Coverage: true, FullOnly: area == AreaPhysical})
 	}
 	for k := 0; k < n; k++ {
-		i.Runtime.Devices = append(i.Runtime.Devices, DeviceID(string(rune('a'+k))))
-		i.Runtime.Hosts = append(i.Runtime.Hosts, HostID(string(rune('a'+k))))
+		identity := string(rune('a' + k))
+		if k >= 26 {
+			identity = fmt.Sprintf("selected-%03d", k)
+		}
+		i.Runtime.Devices = append(i.Runtime.Devices, DeviceID(identity))
+		i.Runtime.Hosts = append(i.Runtime.Hosts, HostID(identity))
 	}
 	for _, a := range i.Runtime.Devices {
 		for _, b := range i.Runtime.Devices {
@@ -242,6 +247,129 @@ var _ = ginkgo.Describe("Frozen expected coverage", func() {
 })
 
 var _ = ginkgo.Describe("Independent scheduling and modes", func() {
+	ginkgo.It("applies joined drift poisoning consistently at resource, session-open and final-fence boundaries", func() {
+		for _, stage := range []string{"resources", "open", "final"} {
+			for _, reverse := range []bool{false, true} {
+				i, f := fixture(ModeFull, 2)
+				i.Checks[5].CohortBound = true
+				f.input = cloneInput(i)
+				access := &ObservationError{Category: FatalAccess}
+				identity := &ObservationError{Category: FatalIdentity}
+				joined := errors.Join(access, identity)
+				if reverse {
+					joined = errors.Join(identity, access)
+				}
+				switch stage {
+				case "resources":
+					f.resources = func(context.Context, Progress) (ResourceSnapshot, error) { return healthySnapshot(i), joined }
+				case "open":
+					f.open = func(context.Context, Progress) (RuntimeSession, error) { return nil, joined }
+				case "final":
+					f.session.verify = func(context.Context) error { return joined }
+				}
+				result := runner(i, f, Options{}).Run(context.Background())
+				Expect(result.Fatal).To(Equal(FatalIdentity))
+				Expect(check(result, i.Checks[5].ID).Outcome.Reason).To(Equal(ReasonIdentityDrift))
+				if stage == "resources" {
+					Expect(f.openCalls).To(BeZero())
+					Expect(check(result, i.Checks[0].ID).Outcome.State).To(Equal(Unverified))
+				} else {
+					Expect(check(result, i.Checks[0].ID).Outcome.State).To(Equal(Passed))
+				}
+				if stage == "final" {
+					Expect(check(result, BGPCheckID("a")).PriorOutcome.State).To(Equal(Passed))
+				}
+				Expect(result.ExitCode()).To(Equal(3))
+			}
+		}
+	})
+	ginkgo.It("stops after an earlier independent access failure when a later joined error contains drift", func() {
+		i, f := fixture(ModeFull, 2)
+		f.session.bgp = func(context.Context, DeviceID) (BGPObservation, error) {
+			if f.session.bgpCalls == 1 {
+				return BGPObservation{}, &ObservationError{Category: FatalAccess}
+			}
+			return BGPObservation{}, errors.Join(&ObservationError{Category: FatalObservation}, &ObservationError{Category: FatalIdentity})
+		}
+		result := runner(i, f, Options{}).Run(context.Background())
+		Expect(result.Fatal).To(Equal(FatalIdentity))
+		Expect(f.session.routeCalls).To(BeZero())
+		Expect(f.session.trafficCalls).To(BeZero())
+		Expect(result.ExitCode()).To(Equal(3))
+	})
+	ginkgo.It("finds identity drift in every joined branch independently of exit precedence and order", func() {
+		for _, otherCategory := range []FatalCategory{FatalAccess, FatalInput} {
+			for _, reverse := range []bool{false, true} {
+				i, f := fixture(ModeFull, 2)
+				i.Checks[5].CohortBound = true
+				f.input = cloneInput(i)
+				drift := &ObservationError{Category: FatalIdentity}
+				other := &ObservationError{Category: otherCategory}
+				joined := errors.Join(other, fmt.Errorf("wrapped drift: %w", drift))
+				if reverse {
+					joined = errors.Join(drift, other)
+				}
+				f.session.bgp = func(context.Context, DeviceID) (BGPObservation, error) {
+					if f.session.bgpCalls == 1 {
+						return BGPObservation{Outcome: Outcome{State: Passed}}, nil
+					}
+					return BGPObservation{}, joined
+				}
+				result := runner(i, f, Options{}).Run(context.Background())
+				Expect(f.session.routeCalls).To(BeZero())
+				Expect(f.session.trafficCalls).To(BeZero())
+				Expect(f.session.verifyCalls).To(BeZero())
+				first := check(result, BGPCheckID(i.Runtime.Devices[0]))
+				Expect(first.Outcome.Reason).To(Equal(ReasonIdentityDrift))
+				Expect(first.PriorOutcome.State).To(Equal(Passed))
+				Expect(check(result, i.Checks[5].ID).Outcome.Reason).To(Equal(ReasonIdentityDrift))
+				Expect(check(result, i.Checks[0].ID).Outcome.State).To(Equal(Passed))
+				Expect(errors.Is(result.Cause, drift)).To(BeTrue())
+				Expect(errors.Is(result.Cause, other)).To(BeTrue())
+				if otherCategory == FatalInput {
+					Expect(result.Fatal).To(Equal(FatalInput))
+					Expect(result.ExitCode()).To(Equal(2))
+				} else {
+					Expect(result.Fatal).To(Equal(FatalIdentity))
+					Expect(result.ExitCode()).To(Equal(3))
+				}
+			}
+		}
+	})
+	ginkgo.It("accumulates the maximum selected full matrix through the planned constant-time index", func() {
+		i, f := fixture(ModeFull, 256)
+		r := runner(i, f, Options{})
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+		result := r.Run(ctx)
+		Expect(result.Verdict).To(Equal(VerdictPassed))
+		Expect(result.Checks).To(HaveLen(len(i.Checks) + 196096))
+		Expect(f.session.bgpCalls).To(Equal(256))
+		Expect(f.session.routeCalls).To(Equal(65280))
+		Expect(f.session.trafficCalls).To(Equal(65280))
+		Expect(f.session.verifyCalls).To(Equal(1))
+		Expect(result.Checks[len(i.Checks)].ID).To(Equal(BGPCheckID(i.Runtime.Devices[0])))
+		last := result.Checks[len(result.Checks)-1]
+		Expect(last.ID).To(Equal(TrafficCheckID(i.Runtime.Traffic[len(i.Runtime.Traffic)-1], true)))
+		Expect(last.Outcome.State).To(Equal(Passed))
+	})
+	ginkgo.It("keeps maximum resource-only results bounded while disclosing every excluded measurement count", func() {
+		i, f := fixture(ModeResources, 256)
+		p, e := NewPlan(i)
+		Expect(e).NotTo(HaveOccurred())
+		Expect(p.Checks()).To(HaveLen(len(i.Checks)))
+		result := runner(i, f, Options{}).Run(context.Background())
+		Expect(result.Verdict).To(Equal(VerdictResourcesPassed))
+		Expect(result.Checks).To(HaveLen(len(i.Checks)))
+		Expect(f.openCalls).To(BeZero())
+		Expect(result.DisabledRuntime).To(Equal(&RuntimeCoverage{BGP: 256, Routes: 65280, OrdinaryTraffic: 65280, DFTraffic: 65280}))
+		Expect(result.Scope.Devices).To(HaveLen(256))
+		Expect(result.Scope.Routes).To(BeEmpty())
+		Expect(result.Scope.Traffic).To(BeEmpty())
+		data, e := json.Marshal(result)
+		Expect(e).NotTo(HaveOccurred())
+		Expect(len(data)).To(BeNumerically("<", 25000))
+	})
 	ginkgo.It("keeps independent resource evidence while invalidating cohort-bound resource rows", func() {
 		i, f := fixture(ModeFull, 2)
 		i.Checks[5].CohortBound = true
@@ -361,6 +489,52 @@ var _ = ginkgo.Describe("Independent scheduling and modes", func() {
 })
 
 var _ = ginkgo.Describe("Bounded waiting and cancellation", func() {
+	ginkgo.It("retains earlier source-access precedence when cancellation invalidates its cohort-bound row", func() {
+		i, f := fixture(ModeFull, 2)
+		i.Checks[5].CohortBound = true
+		f.input = cloneInput(i)
+		f.resources = func(context.Context, Progress) (ResourceSnapshot, error) {
+			s := healthySnapshot(i)
+			s.Checks[5] = Outcome{ID: s.Checks[5].ID, State: Unverified, Reason: ReasonDenied}
+			return s, nil
+		}
+		ctx, cancel := context.WithCancel(context.Background())
+		defer cancel()
+		f.session.route = func(context.Context, DirectedDevicePair) (RouteObservation, error) {
+			cancel()
+			return RouteObservation{}, context.Canceled
+		}
+		result := runner(i, f, Options{}).Run(ctx)
+		row := check(result, i.Checks[5].ID)
+		Expect(row.Outcome.Reason).To(Equal(ReasonCanceled))
+		Expect(row.PriorOutcome.Reason).To(Equal(ReasonDenied))
+		Expect(result.ExitCode()).To(Equal(3))
+	})
+	ginkgo.It("invalidates earlier cohort successes when cancellation prevents the final fence", func() {
+		i, f := fixture(ModeFull, 2)
+		i.Checks[5].CohortBound = true
+		f.input = cloneInput(i)
+		ctx, cancel := context.WithCancel(context.Background())
+		defer cancel()
+		f.session.route = func(context.Context, DirectedDevicePair) (RouteObservation, error) {
+			cancel()
+			return RouteObservation{}, context.Canceled
+		}
+		result := runner(i, f, Options{}).Run(ctx)
+		Expect(f.session.bgpCalls).To(Equal(2))
+		Expect(f.session.routeCalls).To(Equal(1))
+		Expect(f.session.trafficCalls).To(BeZero())
+		Expect(f.session.verifyCalls).To(BeZero())
+		for _, device := range i.Runtime.Devices {
+			row := check(result, BGPCheckID(device))
+			Expect(row.Outcome.State).To(Equal(Unverified))
+			Expect(row.Outcome.Reason).To(Equal(ReasonCanceled))
+			Expect(row.PriorOutcome.State).To(Equal(Passed))
+		}
+		Expect(check(result, i.Checks[5].ID).Outcome.Reason).To(Equal(ReasonCanceled))
+		Expect(check(result, i.Checks[0].ID).Outcome.State).To(Equal(Passed))
+		Expect(result.ExitCode()).To(Equal(4))
+	})
 	ginkgo.It("stops runtime after caller cancellation and leaves remaining pairs explicitly unverified", func() {
 		i, f := fixture(ModeFull, 2)
 		ctx, cancel := context.WithCancel(context.Background())
@@ -509,6 +683,43 @@ var _ = ginkgo.Describe("Bounded waiting and cancellation", func() {
 })
 
 var _ = ginkgo.Describe("Safe progress and result disposition", func() {
+	ginkgo.It("does not allow observer-disabled reasons to hide a requested blocker", func() {
+		for _, state := range []State{Failed, Unverified, Pending} {
+			i, f := fixture(ModeResources, 2)
+			f.resources = func(context.Context, Progress) (ResourceSnapshot, error) {
+				s := healthySnapshot(i)
+				s.Checks[0] = Outcome{ID: s.Checks[0].ID, State: state, Reason: ReasonDisabled}
+				return s, nil
+			}
+			result := runner(i, f, Options{}).Run(context.Background())
+			row := check(result, i.Checks[0].ID)
+			Expect(row.Outcome.State).To(Equal(Unverified))
+			Expect(row.Outcome.Reason).To(Equal(ReasonIncomplete))
+			Expect(result.ExitCode()).To(Equal(4))
+		}
+	})
+	ginkgo.It("preserves requested or explicitly unknown scope through real preparation failures", func() {
+		for _, mode := range []Mode{ModeFull, ModeResources, ModeUnknown, Mode("invalid")} {
+			result := PreparationFailure(mode, FatalInput, errors.New("private input"))
+			expected := mode
+			if mode == "invalid" {
+				expected = ModeUnknown
+			}
+			Expect(result.Mode).To(Equal(expected))
+			Expect(result.Checks[0].Area).To(Equal(AreaPreparation))
+			Expect(result.Scope.Hosts).To(BeEmpty())
+			Expect(result.DisabledRuntime).To(BeNil())
+			data, e := json.Marshal(result)
+			Expect(e).NotTo(HaveOccurred())
+			Expect(string(data)).To(ContainSubstring(`"mode":"` + string(expected) + `"`))
+			Expect(string(data)).NotTo(ContainSubstring("private input"))
+		}
+		var absent *Runner
+		Expect(absent.Run(context.Background()).Mode).To(Equal(ModeUnknown))
+		i, f := fixture(ModeResources, 2)
+		var missingContext context.Context
+		Expect(runner(i, f, Options{}).Run(missingContext).Mode).To(Equal(ModeResources))
+	})
 	ginkgo.It("streams per-check running and completion, deduplicates and contains callback panic", func() {
 		i, f := fixture(ModeResources, 2)
 		events := map[CheckID][]ProgressPhase{}
@@ -598,7 +809,7 @@ var _ = ginkgo.Describe("Safe progress and result disposition", func() {
 		var nilObserver *fakeObserver
 		_, e = NewRunner(p, nilObserver, Options{})
 		Expect(e).To(HaveOccurred())
-		result := PreparationFailure(FatalInput, errors.New("private"))
+		result := PreparationFailure(ModeFull, FatalInput, errors.New("private"))
 		Expect(result.Checks).To(HaveLen(1))
 		Expect(result.Report.Status).To(Equal(ReportUnavailable))
 		Expect(result.Scope.Hosts).To(BeEmpty())

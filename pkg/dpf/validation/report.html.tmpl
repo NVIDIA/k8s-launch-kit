@@ -43,6 +43,20 @@
   </div>
 </section>
 
+{{- with .DisabledRuntime}}
+<section>
+  <h2>Connectivity excluded by resource-only scope</h2>
+  <div class="body">
+    <dl class="kv">
+      <dt>DPU BGP checks</dt><dd>{{.BGP}}</dd>
+      <dt>Directed installed route checks</dt><dd>{{.Routes}}</dd>
+      <dt>Directed ordinary ICMP probes</dt><dd>{{.OrdinaryTraffic}}</dd>
+      <dt>Directed MTU-sized DF ICMP probes</dt><dd>{{.DFTraffic}}</dd>
+    </dl>
+  </div>
+</section>
+{{- end}}
+
 {{- range .Groups}}
 <section>
   <h2>{{.Title}}</h2>
