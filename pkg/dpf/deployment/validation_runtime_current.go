@@ -90,13 +90,10 @@ func validationSelectedHosts(desired *managementDesired, request config.Request,
 	return result, err
 }
 
-func observeCurrentRuntimeGraph(ctx context.Context, reader activationObservationReader, desired *managementDesired, selected []currentSelectedDevice) (currentRuntimeGraph, error) {
+func observeCurrentRuntimeGraph(ctx context.Context, reader validationCurrentGraphReader, desired *managementDesired, selected []currentSelectedDevice) (currentRuntimeGraph, error) {
 	graph := currentRuntimeGraph{selected: selected, sets: map[string]*unstructured.Unstructured{}, dpus: map[string]*unstructured.Unstructured{}, nodes: map[string]*unstructured.Unstructured{}, devices: map[string]*unstructured.Unstructured{}}
 	if reader == nil || desired == nil || len(selected) == 0 {
 		return graph, fmt.Errorf("selected current graph input incomplete")
-	}
-	if err := reader.VerifyIdentity(ctx); err != nil {
-		return graph, err
 	}
 	expected, err := retainedValidationDeployment(desired.plan)
 	if err != nil {
@@ -198,7 +195,7 @@ func observeCurrentRuntimeGraph(ctx context.Context, reader activationObservatio
 	graph.services = lists["DPUService"]
 	graph.chains = lists["DPUServiceChain"]
 	graph.interfaces = lists["DPUServiceInterface"]
-	return graph, reader.VerifyIdentity(ctx)
+	return graph, nil
 }
 
 func verifyCurrentDPUSetMembership(desired *managementDesired, graph currentRuntimeGraph, sets []unstructured.Unstructured) error {

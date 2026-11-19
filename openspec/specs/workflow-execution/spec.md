@@ -241,6 +241,14 @@ reset, remediation, host configuration or operation-record creation.
 - **THEN** management/tenant resources and selected workloads remain required, while physical/BGP/routes/traffic are explicitly excluded; any explicit connectivity timeout is invalid.
 - **AND** positive `--wait` retries known progressing snapshots only while no terminal blocker exists; malformed/future state, access failure and drift cannot be relabeled Pending.
 
+#### Scenario: Bounded current-data capture
+
+- **WHEN** standalone DPF validation collects a current cohort
+- **THEN** it may group fresh reads under explicit management/tenant source checks at entry and exit, with immutable selected access and no successful-identity cache across captures.
+- **AND** all current object, allocation, Pod and association checks remain required; scope completion and semantic before/after comparison gate dependent outcomes, including progress announcements.
+- **AND** collection, closing-verification and context errors are joined; an incomplete scope cannot publish an accepted cohort or authorize a diagnostic probe.
+- **AND** independent management-only observations remain available when tenant access fails; bounded capture does not claim atomic isolation or detection of every transient change.
+
 ## Baseline and limits
 
 Standalone DPF HBN-BGP deploy composes the retained management, tenant, enrollment,

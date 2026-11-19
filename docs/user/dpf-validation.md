@@ -118,7 +118,10 @@ attention. HTML adds grouped detail and measurement coverage. Full acceptance
 requires the complete retained selection: an inaccessible source or disappearing
 member cannot be omitted to create a passing smaller matrix. A host reboot,
 replaced workload or changed allocation during diagnostics can invalidate earlier
-measurements; inspect the final result.
+measurements; inspect the final result. If an observation cannot complete, the
+result identifies the known stage, explains the failure and gives a next action.
+Earlier measurements may remain visible as prior observations; they do not count
+as current acceptance when the required verification could not finish.
 
 HTML is enabled by default. Each run reserves a private directory beside the
 bundle and writes `validation.html` there, for example

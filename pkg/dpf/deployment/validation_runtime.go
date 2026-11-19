@@ -72,13 +72,8 @@ func validationRuntimeChecks(plan *generation.Plan) ([]validation.CheckSpec, val
 // validationRuntimeTenantReader exposes only fixed current reads and bounded
 // diagnostics, never the tenant transport's mutation-capable Kubernetes client.
 type validationRuntimeTenantReader interface {
-	VerifyIdentity(context.Context) error
-	getWorkloadChild(context.Context, *unstructured.Unstructured) (*unstructured.Unstructured, error)
-	listCompleteNodes(context.Context) ([]unstructured.Unstructured, error)
-	listRuntimeObjects(context.Context, string, string) ([]appsv1.DaemonSet, []corev1.Pod, error)
-	readPod(context.Context, string, string) (*corev1.Pod, error)
-	checkTenantPodExecPermissions(context.Context, string, string) []PreflightCheck
-	listValidationSFCObjects(context.Context, string, string, string, string) ([]unstructured.Unstructured, error)
+	validationTenantReadSource
+	validationCurrentTenantReader
 	readValidationHBN(context.Context, string, string, hbnRuntimeCommand, netip.Prefix) ([]byte, error)
 }
 
@@ -154,7 +149,7 @@ func openCurrentHostNetworkFence(ctx context.Context, hosts []validationHostRequ
 	}, nil
 }
 
-func observeCurrentAllocation(ctx context.Context, management resourceReader, tenant validationRuntimeTenantReader, desired *managementDesired, graph currentRuntimeGraph) (hostWorkloadLeaseSnapshot, []hostWorkloadLease, error) {
+func observeCurrentAllocation(ctx context.Context, management resourceReader, tenant validationCurrentTenantReader, desired *managementDesired, graph currentRuntimeGraph) (hostWorkloadLeaseSnapshot, []hostWorkloadLease, error) {
 	var empty hostWorkloadLeaseSnapshot
 	if tenant == nil {
 		return empty, nil, fmt.Errorf("bound tenant unavailable")
@@ -237,13 +232,10 @@ func currentHostNetworkRequest(identity sshprobe.HostNetworkIdentity, lease host
 	return sshprobe.HostNetworkRequest{Identity: identity, MTU: mtu, HostAddressPrefix: netip.PrefixFrom(address, prefix.Bits()).String(), Gateway: lease.Gateway, WorkloadCIDR: workloadCIDR}, nil
 }
 
-func observeCurrentHBNBindings(ctx context.Context, management validationManagementReader, tenant validationRuntimeTenantReader, desired *managementDesired, graph currentRuntimeGraph, snapshot hostWorkloadLeaseSnapshot, leases []hostWorkloadLease, image hbnPodImageIdentity, requireExec bool) (validationHBNBindings, error) {
+func observeCurrentHBNBindings(ctx context.Context, management validationCurrentManagementReader, tenant validationCurrentTenantReader, desired *managementDesired, graph currentRuntimeGraph, snapshot hostWorkloadLeaseSnapshot, leases []hostWorkloadLease, image hbnPodImageIdentity, requireExec bool) (validationHBNBindings, error) {
 	empty := validationHBNBindings{}
 	if tenant == nil {
 		return empty, fmt.Errorf("bound tenant unavailable")
-	}
-	if err := tenant.VerifyIdentity(ctx); err != nil {
-		return empty, err
 	}
 	var service *unstructured.Unstructured
 	var intent hbnPodBindingIntent
@@ -366,9 +358,6 @@ func observeCurrentHBNBindings(ctx context.Context, management validationManagem
 			result.anchors[lease.Serial] = anchor
 		}
 	}
-	if err := tenant.VerifyIdentity(ctx); err != nil {
-		return empty, err
-	}
 	if len(result.unavailable) == 0 && serviceErr != nil {
 		return result, serviceErr
 	}
@@ -440,41 +429,47 @@ func verifyHBNRuntimeMembership(intent hbnPodBindingIntent, daemonSets []appsv1.
 
 func (o *validationObserver) captureValidationCohort(ctx context.Context, management validationManagementReader, tenant validationRuntimeTenantReader, selected []currentSelectedDevice, image hbnPodImageIdentity, requireExec bool) (validationCurrentCohort, error) {
 	var result validationCurrentCohort
+	err := withValidationCurrentReads(ctx, management, tenant, func(management validationCurrentManagementReader, tenant validationCurrentTenantReader) error {
+		var err error
+		result, err = o.collectValidationCohort(ctx, management, tenant, selected, image, requireExec)
+		return err
+	})
+	if err != nil {
+		return validationCurrentCohort{}, validationRuntimeStageError(ctx, validation.StageRuntimeIdentity, err)
+	}
+	return result, nil
+}
+
+func (o *validationObserver) collectValidationCohort(ctx context.Context, management validationCurrentManagementReader, tenant validationCurrentTenantReader, selected []currentSelectedDevice, image hbnPodImageIdentity, requireExec bool) (validationCurrentCohort, error) {
 	graph, err := observeCurrentRuntimeGraph(ctx, management, o.desired, selected)
 	if err != nil {
-		return result, err
+		return validationCurrentCohort{}, validationRuntimeStageError(ctx, validation.StageRuntimeCurrentGraph, err)
 	}
 	snapshot, leases, err := observeCurrentAllocation(ctx, management, tenant, o.desired, graph)
 	if err != nil {
-		return result, err
+		return validationCurrentCohort{}, validationRuntimeStageError(ctx, validation.StageRuntimeAllocation, err)
 	}
 	bindings, err := observeCurrentHBNBindings(ctx, management, tenant, o.desired, graph, snapshot, leases, image, requireExec)
 	if err != nil {
-		return result, err
+		return validationCurrentCohort{}, validationRuntimeStageError(ctx, validation.StageRuntimeHBN, err)
 	}
 	workloads, err := currentSFCAnchors(ctx, tenant, o.desired, graph, snapshot)
 	if err != nil {
-		return result, err
+		return validationCurrentCohort{}, validationRuntimeStageError(ctx, validation.StageRuntimeSFC, err)
 	}
 	after, afterLeases, err := observeCurrentAllocation(ctx, management, tenant, o.desired, graph)
 	if err != nil {
-		return result, err
+		return validationCurrentCohort{}, validationRuntimeStageError(ctx, validation.StageRuntimeAllocation, err)
 	}
 	if !sameCurrentLeaseSnapshot(snapshot, after) || !reflect.DeepEqual(leases, afterLeases) {
-		return result, fmt.Errorf("current allocation changed during HBN observation: %w", errValidationResourceChanged)
+		return validationCurrentCohort{}, validationRuntimeStageError(ctx, validation.StageRuntimeAllocation, fmt.Errorf("current allocation changed during HBN observation: %w", errValidationResourceChanged))
 	}
 	graphAfter, err := observeCurrentRuntimeGraph(ctx, management, o.desired, selected)
 	if err != nil {
-		return result, err
+		return validationCurrentCohort{}, validationRuntimeStageError(ctx, validation.StageRuntimeCurrentGraph, err)
 	}
 	if currentGraphDigest(graph) != currentGraphDigest(graphAfter) {
-		return result, fmt.Errorf("current selected graph changed during observation: %w", errValidationResourceChanged)
-	}
-	if err := tenant.VerifyIdentity(ctx); err != nil {
-		return result, err
-	}
-	if err := management.VerifyIdentity(ctx); err != nil {
-		return result, err
+		return validationCurrentCohort{}, validationRuntimeStageError(ctx, validation.StageRuntimeCurrentGraph, fmt.Errorf("current selected graph changed during observation: %w", errValidationResourceChanged))
 	}
 	return validationCurrentCohort{graph: graphAfter, snapshot: after, leases: afterLeases, bindings: bindings, workloads: workloads}, nil
 }
@@ -609,13 +604,13 @@ func (s *validationRuntimeSession) fence(ctx context.Context) error {
 	}
 	if s.verifyHostNetwork != nil {
 		if err := s.verifyHostNetwork(ctx); err != nil {
-			s.poisoned = validationRuntimeError(ctx, err, validationIdentityChanged(err))
+			s.poisoned = validationRuntimeStageError(ctx, validation.StageRuntimeHostNetwork, err)
 			return s.poisoned
 		}
 	}
 	current, err := s.observe(ctx)
 	if err == nil && (currentGraphDigest(s.anchor.graph) != currentGraphDigest(current.graph) || !reflect.DeepEqual(s.anchor.leases, current.leases) || !reflect.DeepEqual(s.anchor.bindings, current.bindings) || !reflect.DeepEqual(s.anchor.workloads, current.workloads)) {
-		err = fmt.Errorf("current runtime cohort changed: %w", errValidationResourceChanged)
+		err = validationRuntimeStageError(ctx, validation.StageRuntimeCohort, fmt.Errorf("current runtime cohort changed: %w", errValidationResourceChanged))
 	}
 	if err != nil {
 		s.poisoned = validationRuntimeError(ctx, err, validationIdentityChanged(err))

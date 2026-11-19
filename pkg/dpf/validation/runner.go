@@ -367,6 +367,9 @@ func preservePrior(row *CheckResult) {
 	switch row.Outcome.State {
 	case Passed, Failed:
 	case Unverified:
+		if row.PriorOutcome != nil {
+			return
+		}
 		switch row.Outcome.Reason {
 		case ReasonDenied, ReasonUnavailable, ReasonInvalidInput:
 		default:
@@ -379,6 +382,10 @@ func preservePrior(row *CheckResult) {
 	row.PriorOutcome = &previous
 }
 func invalidate(result *Result, reason Reason, runtimeOnly bool) {
+	action := "Resolve the reported observation failure and validate again"
+	if reason == ReasonIdentityDrift {
+		action = "Restore the selected identities and validate again"
+	}
 	for i := range result.Checks {
 		row := &result.Checks[i]
 		if row.Outcome.State == Skipped {
@@ -388,7 +395,7 @@ func invalidate(result *Result, reason Reason, runtimeOnly bool) {
 			continue
 		}
 		preservePrior(row)
-		row.Outcome = Outcome{ID: row.ID, State: Unverified, Reason: reason, Summary: "Cohort verification did not complete; earlier evidence cannot qualify this run", Action: "Restore the selected identities and validate again"}
+		row.Outcome = Outcome{ID: row.ID, State: Unverified, Reason: reason, Summary: "Cohort verification did not complete; earlier evidence cannot qualify this run", Action: action}
 	}
 }
 func markRemaining(result *Result, reason Reason) {
@@ -408,8 +415,11 @@ func classify(err error) FatalCategory {
 // joined/wrapped cause: an earlier access/input error must never hide drift in
 // another branch, even when input failure determines the command's exit code.
 type errorClassification struct {
-	primary  FatalCategory
-	identity bool
+	primary            FatalCategory
+	identity           bool
+	diagnostic         *Diagnostic
+	diagnosticPriority int
+	diagnosticCategory FatalCategory
 }
 
 func inspectError(err error) errorClassification {
@@ -437,6 +447,12 @@ func inspectError(err error) errorClassification {
 			case FatalInput, FatalAccess, FatalIdentity, FatalCanceled, FatalTimeout, FatalObservation:
 				category = observation.Category
 			}
+			if diagnostic := NormalizeDiagnostic(observation.Diagnostic); diagnostic != nil {
+				priority := max(fatalPriority(category), fatalPriority(FatalObservation))
+				if out.diagnostic == nil || priority > out.diagnosticPriority {
+					out.diagnostic, out.diagnosticPriority, out.diagnosticCategory = diagnostic, priority, category
+				}
+			}
 		}
 		switch current {
 		case context.Canceled:
@@ -460,7 +476,10 @@ func inspectError(err error) errorClassification {
 		}
 		switch cause := current.(type) {
 		case interface{ Unwrap() []error }:
-			remaining = append(remaining, cause.Unwrap()...)
+			children := cause.Unwrap()
+			for i := len(children) - 1; i >= 0; i-- {
+				remaining = append(remaining, children[i])
+			}
 		case interface{ Unwrap() error }:
 			remaining = append(remaining, cause.Unwrap())
 		}
@@ -491,11 +510,51 @@ func setFatal(result *Result, err error) {
 	if err == nil {
 		return
 	}
-	category := classify(err)
+	classified := inspectError(err)
+	category := classified.primary
 	if result.Fatal == "" || fatalPriority(category) > fatalPriority(result.Fatal) {
 		result.Fatal = category
 	}
+	// Inspect only this incoming failure, never the growing Result.Cause tree.
+	// Equal-priority poison/final replays retain the first concrete origin.
+	if classified.diagnostic != nil && (result.Diagnostic == nil || classified.diagnosticPriority > result.diagnosticPriority) {
+		result.Diagnostic, result.diagnosticPriority = classified.diagnostic, classified.diagnosticPriority
+	}
 	result.Cause = errors.Join(result.Cause, err)
+}
+
+// DiagnosticForError returns a defensive safe projection using the same cause
+// walk and precedence as fatal classification. Unknown raw errors have none.
+func DiagnosticForError(err error) (*Diagnostic, FatalCategory) {
+	classified := inspectError(err)
+	return classified.diagnostic, classified.diagnosticCategory
+}
+
+// ErrorCategory exposes the existing fatal precedence to native projections.
+func ErrorCategory(err error) FatalCategory { return classify(err) }
+
+// NormalizeDiagnostic bounds trusted diagnostic fields and rejects unsupported
+// stage/reason values. It never derives text from an error or remote payload.
+func NormalizeDiagnostic(d *Diagnostic) *Diagnostic {
+	if d == nil {
+		return nil
+	}
+	switch d.Stage {
+	case StageRuntimeHostNetwork, StageRuntimeCurrentGraph, StageRuntimeAllocation, StageRuntimeHBN, StageRuntimeSFC, StageRuntimeIdentity, StageRuntimeCohort:
+	default:
+		return nil
+	}
+	switch d.Reason {
+	case ReasonHealth, ReasonMissing, ReasonDenied, ReasonUnavailable, ReasonUnsupported, ReasonIncomplete, ReasonProgressing, ReasonDependency, ReasonCanceled, ReasonTimedOut, ReasonIdentityDrift, ReasonInvalidInput:
+	default:
+		return nil
+	}
+	copy := *d
+	copy.Summary, copy.Action = safeText(copy.Summary), safeText(copy.Action)
+	if copy.Summary == "" {
+		return nil
+	}
+	return &copy
 }
 func reasonForFatal(c FatalCategory) Reason {
 	switch c {

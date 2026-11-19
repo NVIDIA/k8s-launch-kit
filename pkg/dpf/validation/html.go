@@ -28,6 +28,7 @@ type ReportMetadata struct {
 const maxAttentionRows = 12
 
 type reportBody struct {
+	Diagnostic         *Diagnostic
 	Hosts              []HostID
 	Devices            []DeviceID
 	RuntimeBudget      time.Duration
@@ -88,6 +89,7 @@ func RenderHTML(w io.Writer, result Result, metadata ReportMetadata) error {
 		metadata.GeneratedAt = time.Now()
 	}
 	body := reportBody{
+		Diagnostic:      NormalizeDiagnostic(result.Diagnostic),
 		Hosts:           result.Scope.Hosts,
 		Devices:         result.Scope.Devices,
 		RuntimeBudget:   result.RuntimeBudget,

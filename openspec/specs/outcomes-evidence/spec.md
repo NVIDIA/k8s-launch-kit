@@ -99,6 +99,14 @@ DPF validation SHALL use one result for text, JSON, HTML and exit decisions.
 Required missing, failed, pending or unverified coverage SHALL prevent a pass.
 Resource-only success SHALL be named `resource_checks_passed`, not full validation.
 
+#### Scenario: A runtime observation cannot complete
+
+- **WHEN** a DPF validation measurement or its verification boundary stops
+- **THEN** the canonical result retains a source-safe diagnostic identifying the known stage, reason and action, and text/HTML present the same explanation once.
+- **AND** raw error strings, credentials and transport bodies remain private; replaying a poisoned session does not replace its original diagnostic with a generic later failure.
+- **AND** invalidated measurements remain unverified with prior facts distinguished from accepted results; nonidentity failures do not instruct the user to restore identities that were not shown to have changed.
+- **AND** validation progress describes its required checks without inherited discovery messages promising optional details absent from the validation report.
+
 #### Scenario: Partial preparation, observation or cancellation
 
 - **WHEN** DPF validation starts and later stops

@@ -14,8 +14,10 @@ import (
 
 	"github.com/nvidia/k8s-launch-kit/pkg/dpf/validation"
 	appsv1 "k8s.io/api/apps/v1"
+	authorizationv1 "k8s.io/api/authorization/v1"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/labels"
+	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/rest"
 	"k8s.io/client-go/util/flowcontrol"
@@ -190,14 +192,17 @@ func (*n3cRuntimeAdapter) OpenRuntime(context.Context, validation.Progress) (val
 // This joins the complete current selected device graph, current allocation,
 // HBN App/DS/Pod and all six realized interface sets/NSI entries over real tenant
 // HTTP reads. Only immutable OCI metadata resolution is substituted.
-func n3cRuntimeAdapterFixture(t *testing.T) (*n3cRuntimeAdapter, map[string]*unstructured.Unstructured) {
+func n3cRuntimeAdapterFixture(t *testing.T, serials ...string) (*n3cRuntimeAdapter, map[string]*unstructured.Unstructured) {
 	t.Helper()
-	f := newRuntimeStageFixture(t, []string{"SERIAL-A"})
+	if len(serials) == 0 {
+		serials = []string{"SERIAL-A"}
+	}
+	f := newRuntimeStageFixture(t, serials)
 	admitN3cHBNPods(f)
 	for i := range f.snapshot.TenantNodes {
 		nodeLabels := f.snapshot.TenantNodes[i].GetLabels()
 		nodeLabels["svc.dpu.nvidia.com/dpuservicechain-version"] = f.client.deployment.GetName() + "-current"
-		nodeLabels[corev1.LabelHostname] = f.activation.selected[0].dpuName
+		nodeLabels[corev1.LabelHostname] = f.activation.selected[i].dpuName
 		f.snapshot.TenantNodes[i].SetLabels(nodeLabels)
 	}
 	desired, err := prepareManagementDesiredFromPlan(f.prepared.execution.retained, f.prepared.execution.plan)
@@ -297,9 +302,27 @@ func n3cRuntimeAdapterFixture(t *testing.T) (*n3cRuntimeAdapter, map[string]*uns
 	_ = unstructured.SetNestedSlice(shard.Object, entries, "spec", "interfaces")
 	_ = unstructured.SetNestedSlice(shard.Object, statuses, "status", "interfaceStatuses")
 	children["NodeServiceInterfaces/"+shard.GetName()] = shard
+	for i := 1; i < len(f.snapshot.TenantNodes); i++ {
+		node := f.snapshot.TenantNodes[i].GetName()
+		chainChild := child.DeepCopy()
+		chainChild.SetName(fmt.Sprintf("selected-chain-%d", i))
+		chainChild.SetUID(types.UID(chainChild.GetName()))
+		_ = unstructured.SetNestedField(chainChild.Object, node, "spec", "node")
+		children["ServiceChain/"+chainChild.GetName()] = chainChild
+		nsi := shard.DeepCopy()
+		nsi.SetName(fmt.Sprintf("selected-node-sfc-%d", i))
+		nsi.SetUID(types.UID(nsi.GetName()))
+		nsi.SetLabels(map[string]string{"svc.dpu.nvidia.com/node": node, "svc.dpu.nvidia.com/nsi-type": "sfc"})
+		_ = unstructured.SetNestedField(nsi.Object, node, "spec", "node")
+		children["NodeServiceInterfaces/"+nsi.GetName()] = nsi
+	}
 	resources := map[string]string{"ServiceChainSet": "servicechainsets", "ServiceChain": "servicechains", "ServiceInterfaceSet": "serviceinterfacesets", "NodeServiceInterfaces": "nodeserviceinterfaces", "CIDRPool": "cidrpools"}
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
+		if r.URL.Path == "/apis/authorization.k8s.io/v1/selfsubjectaccessreviews" && r.Method == http.MethodPost {
+			_ = json.NewEncoder(w).Encode(&authorizationv1.SelfSubjectAccessReview{Status: authorizationv1.SubjectAccessReviewStatus{Allowed: true}})
+			return
+		}
 		if r.Method != http.MethodGet {
 			t.Errorf("unexpected mutation %s %s", r.Method, r.URL.Path)
 			http.Error(w, "read only", http.StatusMethodNotAllowed)
@@ -321,9 +344,6 @@ func n3cRuntimeAdapterFixture(t *testing.T) (*n3cRuntimeAdapter, map[string]*uns
 		case "/api/v1/namespaces/" + desired.plan.Intent().Namespace + "/pods":
 			_ = json.NewEncoder(w).Encode(&corev1.PodList{ListMeta: metav1.ListMeta{ResourceVersion: "10"}, Items: f.pods})
 			return
-		case "/api/v1/namespaces/" + desired.plan.Intent().Namespace + "/pods/" + f.pods[0].Name:
-			_ = json.NewEncoder(w).Encode(f.pods[0])
-			return
 		case "/apis/svc.dpu.nvidia.com/v1alpha1", "/apis/nv-ipam.nvidia.com/v1alpha1":
 			groupVersion := strings.TrimPrefix(r.URL.Path, "/apis/")
 			served := []metav1.APIResource{}
@@ -334,6 +354,12 @@ func n3cRuntimeAdapterFixture(t *testing.T) (*n3cRuntimeAdapter, map[string]*uns
 			}
 			_ = json.NewEncoder(w).Encode(&metav1.APIResourceList{GroupVersion: groupVersion, APIResources: served})
 			return
+		}
+		for _, pod := range f.pods {
+			if r.URL.Path == "/api/v1/namespaces/"+pod.Namespace+"/pods/"+pod.Name {
+				_ = json.NewEncoder(w).Encode(pod)
+				return
+			}
 		}
 		for kind, resource := range resources {
 			group := "svc.dpu.nvidia.com"

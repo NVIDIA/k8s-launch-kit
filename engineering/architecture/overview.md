@@ -640,3 +640,12 @@ reuse current-state helpers; it does not give the validation runner lifecycle
 methods. Resource-only mode omits physical and runtime reads. Polling refreshes
 current observations against one immutable desired plan; runtime sessions retain
 one current cohort and invalidate measurements when its binding changes.
+
+Current management and tenant reads are grouped into finite validation capture
+scopes. Each scope verifies the frozen sources at entry and exit, collects fresh
+objects through narrower read-only ports, and accepts its result only after the
+closing checks succeed. Resource completions remain provisional until the source
+and semantic comparisons close. Identity results are not cached across captures;
+pre/post-measurement and final cohort checks remain separate. Deployment readers
+retain their individual guarded operations. This is a bounded consistency check,
+not an atomic Kubernetes snapshot or a guarantee to observe every transient change.

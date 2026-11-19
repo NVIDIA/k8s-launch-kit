@@ -15,6 +15,17 @@
 {{end}}
 {{define "body"}}
 
+{{- with .Diagnostic}}
+<section>
+  <h2>Observation failure</h2>
+  <div class="body">
+    <p>{{.Stage.Label}} · {{reasonText .Reason}}</p>
+    <p>{{.Summary}}</p>
+    {{- if .Action}}<p>Next: {{.Action}}</p>{{end}}
+  </div>
+</section>
+{{- end}}
+
 {{- if .AttentionRows}}
 <section>
   <h2>Needs attention</h2>

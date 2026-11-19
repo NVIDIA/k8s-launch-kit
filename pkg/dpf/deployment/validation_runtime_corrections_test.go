@@ -180,6 +180,10 @@ func (r *correctionHBNObjects) listRuntimeObjects(context.Context, string, strin
 	return r.daemonSets, r.pods, nil
 }
 
+func (r *correctionHBNManagement) currentValidationReads() validationCurrentManagementReader {
+	return r
+}
+
 func (r *correctionHBNManagement) getHBNRuntimeApplication(context.Context, string, string) (*unstructured.Unstructured, error) {
 	return r.app.DeepCopy(), nil
 }

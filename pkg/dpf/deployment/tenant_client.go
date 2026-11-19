@@ -104,16 +104,18 @@ func newTenantClient(ctx context.Context, rules *controllercontract.Rules, sourc
 
 func validateTenantSources(rules *controllercontract.Rules, expected controllercontract.TenantReadinessExpected, dcUID string, sources tenantSources) ([32]byte, string, []byte, error) {
 	var empty [32]byte
+	dc, tcp, svc := sources.observed.DPUCluster, sources.observed.TenantControlPlane, sources.observed.Service
+	// A measured replacement remains identity drift even if its old children
+	// cannot yet satisfy readiness/ownership or the replacement is deleting.
+	if dcUID != "" && dc != nil && dc.GetUID() != "" && string(dc.GetUID()) != dcUID {
+		return empty, "", nil, fmt.Errorf("selected DPUCluster was replaced: %w", errTenantIdentityChanged)
+	}
 	result := rules.TenantReadiness(expected, sources.observed)
 	if !result.Ready {
 		return empty, "", nil, fmt.Errorf("tenant source resources are not ready: %s", result.ReasonCode)
 	}
-	dc, tcp, svc := sources.observed.DPUCluster, sources.observed.TenantControlPlane, sources.observed.Service
-	if dcUID == "" || dc.GetUID() == "" {
+	if dcUID == "" || dc == nil || dc.GetUID() == "" {
 		return empty, "", nil, fmt.Errorf("selected DPUCluster identity is unavailable")
-	}
-	if string(dc.GetUID()) != dcUID {
-		return empty, "", nil, fmt.Errorf("selected DPUCluster was replaced: %w", errTenantIdentityChanged)
 	}
 	version, _, err := unstructured.NestedString(dc.Object, "status", "version")
 	if err != nil || strings.TrimPrefix(version, "v") != strings.TrimPrefix(expected.KubernetesVersion, "v") {

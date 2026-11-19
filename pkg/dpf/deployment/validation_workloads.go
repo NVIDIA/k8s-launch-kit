@@ -105,130 +105,188 @@ func (o *validationObserver) observeValidationRuntimeResourcesWithImage(ctx cont
 		}
 		return nil
 	}
-	// Device subjects remain visible even when a different selected DPU is bad.
-	allDevices := true
-	var deviceErr error
-	for _, item := range selected {
-		err := r.run(validation.CheckID("devices/"+item.retained.Serial), func() error {
-			_, err := observeCurrentRuntimeGraph(ctx, management, o.desired, []currentSelectedDevice{item})
-			return err
-		})
-		if err != nil {
-			allDevices = false
-			if deviceErr == nil {
-				deviceErr = err
-			}
-			if validationIdentityChanged(err) {
-				return validationRuntimeError(ctx, err, false)
-			}
-		}
-	}
-	if allDevices {
-		r.record("devices/coverage", validation.Passed, validation.ReasonNone, "Every retained selected device has a current settled owner-bound controller graph.", "")
-	} else {
-		r.recordError("devices/coverage", deviceErr)
-	}
-	graph, graphErr := observeCurrentRuntimeGraph(ctx, management, o.desired, selected)
-	if graphErr != nil {
-		r.recordError("hbn/coverage", graphErr)
-		r.recordError("workloads/coverage", graphErr)
-		recordRuntimePendingDependencies(r, graphErr)
-		return nil
-	}
-	// Retained immutable prerequisites are compared independently of runtime.
-	workloadErr := r.run("workloads/coverage", func() error { return o.observeRetainedWorkloads(ctx, management, tenant, graph) })
-	if validationIdentityChanged(workloadErr) {
-		return validationRuntimeError(ctx, workloadErr, false)
-	}
-	if tenant == nil {
-		return nil
-	}
-	snapshot, leases, leaseErr := observeCurrentAllocation(ctx, management, tenant, o.desired, graph)
-	if leaseErr != nil {
-		r.recordError("hbn/coverage", leaseErr)
-		recordRuntimePendingDependencies(r, leaseErr)
-		return nil
-	}
-	sfcBefore, sfcErr := currentSFCAnchors(ctx, tenant, o.desired, graph, snapshot)
-	for _, item := range selected {
-		err := r.run(validation.CheckID("workloads/"+item.retained.Serial), func() error { return o.observeTenantSFC(ctx, tenant, graph, snapshot, item.retained.Serial) })
-		if validationIdentityChanged(err) {
-			return validationRuntimeError(ctx, err, false)
-		}
-	}
-	imageCtx, cancelImage := context.WithTimeout(ctx, o.request.RequestTimeout)
-	image, imageErr := resolveImage(imageCtx, hbnImageReference(o.desired.plan.Intent().Generation), o.request.RequestTimeout, nil)
-	cancelImage()
-	if imageErr != nil {
-		image = hbnPodImageIdentity{}
-	}
-	var bindings validationHBNBindings
-	hbnErr := r.run("hbn/coverage", func() error {
-		var err error
-		bindings, err = observeCurrentHBNBindings(ctx, management, tenant, o.desired, graph, snapshot, leases, image, false)
-		if err == nil && len(bindings.unavailable) > 0 {
-			return validationFailure(validation.Unverified, validation.ReasonIncomplete, "The complete selected HBN workload or exact platform image is unavailable.")
-		}
-		return err
-	})
-	for _, item := range selected {
-		id := validation.CheckID("hbn/" + item.retained.Serial)
-		r.start(id)
-		if _, ok := bindings.anchors[item.retained.Serial]; ok {
-			r.record(id, validation.Passed, validation.ReasonNone, "Current HBN App, selected-node DaemonSet Pod and exact platform image are bound.", "")
-		} else if hbnErr != nil {
-			r.recordError(id, hbnErr)
-		} else {
-			r.record(id, validation.Unverified, validation.ReasonDependency, "The selected current HBN execution target or exact image is unavailable.", "Inspect this selected Pod, image and parent health.")
-		}
-	}
-	if o.mode == validation.ModeFull {
-		hosts, err := currentHostRequests(o.desired, graph, leases)
-		if err == nil {
-			for _, host := range hosts {
-				hostErr := r.run(validation.CheckID("physical/host-network/"+host.lease.Serial), func() error {
-					if host.selected.hostTarget.SSH == nil {
-						return validationFailure(validation.Unverified, validation.ReasonUnavailable, "Explicit selected-host SSH access is unavailable.")
-					}
-					observed, err := sshprobe.VerifyHostWorkloadNetwork(ctx, host.selected.hostTarget, host.request, o.request.RequestTimeout)
-					if err != nil {
-						return validationHostNetworkError(err)
-					}
-					if !observed.Qualified() {
-						return validationFailure(validation.Failed, validation.ReasonHealth, "Selected host runtime or persistent workload configuration differs.")
-					}
-					return nil
-				})
-				if validationIdentityChanged(hostErr) {
-					return validationRuntimeError(ctx, hostErr, false)
+	// Device-only observations have their own accepted management region; tenant
+	// failure must not erase independently collected device health.
+	deviceRows := r.bufferCompletions()
+	deviceScopeErr := withValidationCurrentReads(ctx, management, nil, func(management validationCurrentManagementReader, _ validationCurrentTenantReader) error {
+		r := deviceRows
+		// Device subjects remain visible even when a different selected DPU is bad.
+		allDevices := true
+		var deviceErr error
+		for _, item := range selected {
+			err := r.run(validation.CheckID("devices/"+item.retained.Serial), func() error {
+				_, err := observeCurrentRuntimeGraph(ctx, management, o.desired, []currentSelectedDevice{item})
+				return err
+			})
+			if err != nil {
+				allDevices = false
+				if deviceErr == nil {
+					deviceErr = err
+				}
+				if validationIdentityChanged(err) {
+					return err
 				}
 			}
 		}
+		if allDevices {
+			r.record("devices/coverage", validation.Passed, validation.ReasonNone, "Every retained selected device has a current settled owner-bound controller graph.", "")
+		} else {
+			r.recordError("devices/coverage", deviceErr)
+		}
+		return nil
+	})
+	r.acceptBuffered(deviceRows, deviceScopeErr)
+	if deviceScopeErr != nil {
+		return validationRuntimeError(ctx, deviceScopeErr, false)
 	}
-	if validationIdentityChanged(hbnErr) {
-		return validationRuntimeError(ctx, hbnErr, false)
+	var image hbnPodImageIdentity
+	if tenant != nil {
+		imageCtx, cancelImage := context.WithTimeout(ctx, o.request.RequestTimeout)
+		var imageErr error
+		image, imageErr = resolveImage(imageCtx, hbnImageReference(o.desired.plan.Intent().Generation), o.request.RequestTimeout, nil)
+		cancelImage()
+		if imageErr != nil {
+			image = hbnPodImageIdentity{}
+		}
 	}
-	graphAfter, err := observeCurrentRuntimeGraph(ctx, management, o.desired, selected)
-	if err != nil {
-		return validationRuntimeError(ctx, err, false)
+	rows := r.bufferCompletions()
+	var graph currentRuntimeGraph
+	var snapshot hostWorkloadLeaseSnapshot
+	var leases []hostWorkloadLease
+	var sfcBefore map[string]string
+	var sfcErr, hbnErr error
+	complete := false
+	var tenantSource validationTenantReadSource
+	if tenant != nil {
+		tenantSource = tenant
 	}
-	after, afterLeases, err := observeCurrentAllocation(ctx, management, tenant, o.desired, graphAfter)
-	if err != nil {
-		return validationRuntimeError(ctx, err, false)
-	}
-	if currentGraphDigest(graph) != currentGraphDigest(graphAfter) || !sameCurrentLeaseSnapshot(snapshot, after) || !reflect.DeepEqual(leases, afterLeases) {
-		return validationRuntimeError(ctx, errValidationResourceChanged, true)
-	}
-	if sfcErr == nil {
-		sfcAfter, err := currentSFCAnchors(ctx, tenant, o.desired, graphAfter, after)
+	err := withValidationCurrentReads(ctx, management, tenantSource, func(management validationCurrentManagementReader, tenant validationCurrentTenantReader) error {
+		r := rows
+		var graphErr error
+		graph, graphErr = observeCurrentRuntimeGraph(ctx, management, o.desired, selected)
+		if graphErr != nil {
+			r.recordError("hbn/coverage", graphErr)
+			r.recordError("workloads/coverage", graphErr)
+			recordRuntimePendingDependencies(r, graphErr)
+			return nil
+		}
+		// Retained immutable prerequisites are compared independently of runtime.
+		workloadErr := r.run("workloads/coverage", func() error { return o.observeRetainedWorkloads(ctx, management, tenant, graph) })
+		if validationIdentityChanged(workloadErr) {
+			return workloadErr
+		}
+		if tenant == nil {
+			return nil
+		}
+		var leaseErr error
+		snapshot, leases, leaseErr = observeCurrentAllocation(ctx, management, tenant, o.desired, graph)
+		if leaseErr != nil {
+			r.recordError("hbn/coverage", leaseErr)
+			recordRuntimePendingDependencies(r, leaseErr)
+			return nil
+		}
+		sfcBefore, sfcErr = currentSFCAnchors(ctx, tenant, o.desired, graph, snapshot)
+		for _, item := range selected {
+			err := r.run(validation.CheckID("workloads/"+item.retained.Serial), func() error { return o.observeTenantSFC(ctx, tenant, graph, snapshot, item.retained.Serial) })
+			if validationIdentityChanged(err) {
+				return err
+			}
+		}
+		var bindings validationHBNBindings
+		hbnErr = r.run("hbn/coverage", func() error {
+			var err error
+			bindings, err = observeCurrentHBNBindings(ctx, management, tenant, o.desired, graph, snapshot, leases, image, false)
+			if err == nil && len(bindings.unavailable) > 0 {
+				return validationFailure(validation.Unverified, validation.ReasonIncomplete, "The complete selected HBN workload or exact platform image is unavailable.")
+			}
+			return err
+		})
+		for _, item := range selected {
+			id := validation.CheckID("hbn/" + item.retained.Serial)
+			r.start(id)
+			if _, ok := bindings.anchors[item.retained.Serial]; ok {
+				r.record(id, validation.Passed, validation.ReasonNone, "Current HBN App, selected-node DaemonSet Pod and exact platform image are bound.", "")
+			} else if hbnErr != nil {
+				r.recordError(id, hbnErr)
+			} else {
+				r.record(id, validation.Unverified, validation.ReasonDependency, "The selected current HBN execution target or exact image is unavailable.", "Inspect this selected Pod, image and parent health.")
+			}
+		}
+		complete = true
+		return nil
+	})
+	if err != nil || !complete {
+		r.acceptBuffered(rows, err)
 		if err != nil {
 			return validationRuntimeError(ctx, err, false)
 		}
-		if !reflect.DeepEqual(sfcBefore, sfcAfter) {
-			return validationRuntimeError(ctx, errValidationResourceChanged, true)
+		return nil
+	}
+	// Slow host qualification runs between accepted current-data snapshots.
+	// Its outcomes remain provisional until the semantic comparison closes.
+	hostErr := func() error {
+		r := rows
+		if o.mode == validation.ModeFull {
+			hosts, err := currentHostRequests(o.desired, graph, leases)
+			if err == nil {
+				for _, host := range hosts {
+					hostErr := r.run(validation.CheckID("physical/host-network/"+host.lease.Serial), func() error {
+						if host.selected.hostTarget.SSH == nil {
+							return validationFailure(validation.Unverified, validation.ReasonUnavailable, "Explicit selected-host SSH access is unavailable.")
+						}
+						observed, err := sshprobe.VerifyHostWorkloadNetwork(ctx, host.selected.hostTarget, host.request, o.request.RequestTimeout)
+						if err != nil {
+							return validationHostNetworkError(err)
+						}
+						if !observed.Qualified() {
+							return validationFailure(validation.Failed, validation.ReasonHealth, "Selected host runtime or persistent workload configuration differs.")
+						}
+						return nil
+					})
+					if validationIdentityChanged(hostErr) {
+						return validationRuntimeError(ctx, hostErr, false)
+					}
+				}
+			}
 		}
-	} else {
-		r.recordError("workloads/coverage", sfcErr)
+		if validationIdentityChanged(hbnErr) {
+			return validationRuntimeError(ctx, hbnErr, false)
+		}
+		return nil
+	}()
+	if hostErr != nil {
+		r.acceptBuffered(rows, hostErr)
+		return hostErr
+	}
+	err = withValidationCurrentReads(ctx, management, tenantSource, func(management validationCurrentManagementReader, tenant validationCurrentTenantReader) error {
+		r := rows
+		graphAfter, err := observeCurrentRuntimeGraph(ctx, management, o.desired, selected)
+		if err != nil {
+			return err
+		}
+		after, afterLeases, err := observeCurrentAllocation(ctx, management, tenant, o.desired, graphAfter)
+		if err != nil {
+			return err
+		}
+		if currentGraphDigest(graph) != currentGraphDigest(graphAfter) || !sameCurrentLeaseSnapshot(snapshot, after) || !reflect.DeepEqual(leases, afterLeases) {
+			return errValidationResourceChanged
+		}
+		if sfcErr == nil {
+			sfcAfter, err := currentSFCAnchors(ctx, tenant, o.desired, graphAfter, after)
+			if err != nil {
+				return err
+			}
+			if !reflect.DeepEqual(sfcBefore, sfcAfter) {
+				return errValidationResourceChanged
+			}
+		} else {
+			r.recordError("workloads/coverage", sfcErr)
+		}
+		return nil
+	})
+	r.acceptBuffered(rows, err)
+	if err != nil {
+		return validationRuntimeError(ctx, err, false)
 	}
 	return nil
 }
@@ -251,7 +309,7 @@ func recordRuntimePendingDependencies(r *validationRecorder, cause error) {
 	}
 }
 
-func (o *validationObserver) observeRetainedWorkloads(ctx context.Context, management resourceReader, tenant validationRuntimeTenantReader, graph currentRuntimeGraph) error {
+func (o *validationObserver) observeRetainedWorkloads(ctx context.Context, management resourceReader, tenant validationCurrentTenantReader, graph currentRuntimeGraph) error {
 	objects, err := retainedPlanWorkloadObjects(o.desired.plan)
 	if err != nil {
 		return err
@@ -308,12 +366,31 @@ func (o *validationObserver) observeRetainedWorkloads(ctx context.Context, manag
 // tenantSFCObjects is a finite read-only collection on the already source-bound
 // tenant. Explicit kind/resource pairs cannot be widened to arbitrary exec/API.
 func (tenant *tenantClient) listValidationSFCObjects(ctx context.Context, kind, namespace, name, selector string) ([]unstructured.Unstructured, error) {
+	if _, err := tenant.validationSFCResource(kind, namespace, name); err != nil {
+		return nil, err
+	}
+	if err := tenant.VerifyIdentity(ctx); err != nil {
+		return nil, err
+	}
+	rows, err := tenant.listCurrentValidationSFCObjects(ctx, kind, namespace, name, selector)
+	if err != nil {
+		return nil, err
+	}
+	return rows, tenant.VerifyIdentity(ctx)
+}
+
+func (tenant *tenantClient) validationSFCResource(kind, namespace, name string) (string, error) {
 	resources := map[string]string{"ServiceChainSet": "servicechainsets", "ServiceChain": "servicechains", "ServiceInterfaceSet": "serviceinterfacesets", "NodeServiceInterfaces": "nodeserviceinterfaces"}
 	resource, ok := resources[kind]
 	if !ok || tenant == nil || tenant.api == nil || len(kvalidation.IsDNS1123Label(namespace)) != 0 || name != "" && len(kvalidation.IsDNS1123Subdomain(name)) != 0 {
-		return nil, fmt.Errorf("selected tenant child input invalid")
+		return "", fmt.Errorf("selected tenant child input invalid")
 	}
-	if err := tenant.VerifyIdentity(ctx); err != nil {
+	return resource, nil
+}
+
+func (tenant *tenantClient) listCurrentValidationSFCObjects(ctx context.Context, kind, namespace, name, selector string) ([]unstructured.Unstructured, error) {
+	resource, err := tenant.validationSFCResource(kind, namespace, name)
+	if err != nil {
 		return nil, err
 	}
 	served, err := discovery.ToServerResourcesInterfaceWithContext(tenant.api.Discovery()).ServerResourcesForGroupVersionWithContext(ctx, "svc.dpu.nvidia.com/v1alpha1")
@@ -341,7 +418,7 @@ func (tenant *tenantClient) listValidationSFCObjects(ctx context.Context, kind, 
 		if object.GetKind() != kind || object.GetAPIVersion() != "svc.dpu.nvidia.com/v1alpha1" || object.GetNamespace() != namespace || object.GetName() != name || object.GetUID() == "" || object.GetResourceVersion() == "" || object.GetDeletionTimestamp() != nil {
 			return nil, fmt.Errorf("selected tenant child identity invalid")
 		}
-		return []unstructured.Unstructured{object}, tenant.VerifyIdentity(ctx)
+		return []unstructured.Unstructured{object}, nil
 	}
 	rows := []unstructured.Unstructured{}
 	cursor, rv := "", ""
@@ -370,7 +447,7 @@ func (tenant *tenantClient) listValidationSFCObjects(ctx context.Context, kind, 
 		}
 		cursor = page.GetContinue()
 		if cursor == "" {
-			return rows, tenant.VerifyIdentity(ctx)
+			return rows, nil
 		}
 		if seenCursors[cursor] {
 			return nil, fmt.Errorf("selected tenant child list repeated page")
@@ -380,7 +457,7 @@ func (tenant *tenantClient) listValidationSFCObjects(ctx context.Context, kind, 
 	return nil, fmt.Errorf("selected tenant child list exceeds bound")
 }
 
-func (o *validationObserver) observeTenantSFC(ctx context.Context, tenant validationRuntimeTenantReader, graph currentRuntimeGraph, snapshot hostWorkloadLeaseSnapshot, serial string) error {
+func (o *validationObserver) observeTenantSFC(ctx context.Context, tenant validationCurrentTenantReader, graph currentRuntimeGraph, snapshot hostWorkloadLeaseSnapshot, serial string) error {
 	var node *unstructured.Unstructured
 	for _, item := range graph.selected {
 		if item.retained.Serial == serial {
@@ -538,7 +615,7 @@ func verifySelectedSetNodes(rules *controllercontract.Rules, set *unstructured.U
 
 // currentSFCAnchors captures only selected semantic identities from shared NSI
 // shards. Unrelated entries can change without becoming selected evidence.
-func currentSFCAnchors(ctx context.Context, tenant validationRuntimeTenantReader, desired *managementDesired, graph currentRuntimeGraph, snapshot hostWorkloadLeaseSnapshot) (map[string]string, error) {
+func currentSFCAnchors(ctx context.Context, tenant validationCurrentTenantReader, desired *managementDesired, graph currentRuntimeGraph, snapshot hostWorkloadLeaseSnapshot) (map[string]string, error) {
 	result := map[string]string{}
 	parent := graph.deployment.GetNamespace() + "_" + graph.deployment.GetName()
 	selectedSets := map[string]bool{}

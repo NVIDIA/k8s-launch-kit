@@ -204,8 +204,53 @@ const (
 // ObservationError keeps the cause available through errors.Is without exposing
 // it to formatting, JSON, progress or reports. Unknown errors become incomplete.
 type ObservationError struct {
-	Category FatalCategory
-	Cause    error
+	Category   FatalCategory
+	Cause      error `json:"-"`
+	Diagnostic *Diagnostic
+}
+
+// DiagnosticStage identifies a finite native observation boundary.
+type DiagnosticStage string
+
+const (
+	StageRuntimeHostNetwork  DiagnosticStage = "runtime-host-network"
+	StageRuntimeCurrentGraph DiagnosticStage = "runtime-current-graph"
+	StageRuntimeAllocation   DiagnosticStage = "runtime-allocation"
+	StageRuntimeHBN          DiagnosticStage = "runtime-hbn-binding"
+	StageRuntimeSFC          DiagnosticStage = "runtime-sfc-anchors"
+	StageRuntimeIdentity     DiagnosticStage = "runtime-identity"
+	StageRuntimeCohort       DiagnosticStage = "runtime-cohort-fence"
+)
+
+// Label is the shared human-facing stage name; JSON keeps the stable value.
+func (stage DiagnosticStage) Label() string {
+	switch stage {
+	case StageRuntimeHostNetwork:
+		return "Host network qualification"
+	case StageRuntimeCurrentGraph:
+		return "DPU controller state"
+	case StageRuntimeAllocation:
+		return "Workload allocation"
+	case StageRuntimeHBN:
+		return "HBN workload binding"
+	case StageRuntimeSFC:
+		return "Service chains and interfaces"
+	case StageRuntimeIdentity:
+		return "Management and tenant identity"
+	case StageRuntimeCohort:
+		return "Runtime cohort verification"
+	default:
+		return "Runtime observation"
+	}
+}
+
+// Diagnostic contains trusted, source-safe prose, never an error's raw text.
+// It explains an incomplete observation without changing measured outcomes.
+type Diagnostic struct {
+	Stage   DiagnosticStage `json:"stage"`
+	Reason  Reason          `json:"reason"`
+	Summary string          `json:"summary"`
+	Action  string          `json:"action,omitempty"`
 }
 
 func (e *ObservationError) Error() string {
@@ -268,22 +313,25 @@ type RuntimeCoverage struct {
 // Result is the one evaluation model for text, JSON, HTML and exit decisions.
 // Cause is library-only. Publication never changes the measured verdict.
 type Result struct {
-	Mode            Mode              `json:"mode"`
-	Scope           RuntimeScope      `json:"scope"`
-	DisabledRuntime *RuntimeCoverage  `json:"disabledRuntime,omitempty"`
-	Verdict         Verdict           `json:"verdict"`
-	Checks          []CheckResult     `json:"checks"`
-	RuntimeBudget   time.Duration     `json:"-"`
-	Fatal           FatalCategory     `json:"fatal,omitempty"`
-	Report          ReportDisposition `json:"report"`
-	OutputFailed    bool              `json:"outputFailed,omitempty"`
-	Cause           error             `json:"-"`
+	Mode               Mode              `json:"mode"`
+	Scope              RuntimeScope      `json:"scope"`
+	DisabledRuntime    *RuntimeCoverage  `json:"disabledRuntime,omitempty"`
+	Verdict            Verdict           `json:"verdict"`
+	Checks             []CheckResult     `json:"checks"`
+	RuntimeBudget      time.Duration     `json:"-"`
+	Fatal              FatalCategory     `json:"fatal,omitempty"`
+	Report             ReportDisposition `json:"report"`
+	OutputFailed       bool              `json:"outputFailed,omitempty"`
+	Cause              error             `json:"-"`
+	Diagnostic         *Diagnostic       `json:"diagnostic,omitempty"`
+	diagnosticPriority int
 }
 
 // MarshalJSON keeps the canonical duration useful to callers while presenting
 // an explicit human unit, rather than an unexplained nanosecond count.
 func (r Result) MarshalJSON() ([]byte, error) {
 	type fields Result
+	r.Diagnostic = NormalizeDiagnostic(r.Diagnostic)
 	return json.Marshal(struct {
 		fields
 		RuntimeBudget string `json:"runtimeBudget"`

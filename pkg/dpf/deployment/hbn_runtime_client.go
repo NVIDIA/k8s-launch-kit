@@ -302,15 +302,26 @@ func (c *APIClient) getHBNRuntimeApplication(ctx context.Context, namespace, nam
 	if err := c.VerifyIdentity(ctx); err != nil {
 		return nil, err
 	}
+	object, err := c.getCurrentHBNRuntimeApplication(ctx, namespace, name)
+	if err != nil {
+		return nil, err
+	}
+	if err := c.VerifyIdentity(ctx); err != nil {
+		return nil, err
+	}
+	return object, nil
+}
+
+func (c *APIClient) getCurrentHBNRuntimeApplication(ctx context.Context, namespace, name string) (*unstructured.Unstructured, error) {
+	if c == nil || c.dynamic == nil || ctx == nil || len(validation.IsDNS1123Label(namespace)) != 0 || len(validation.IsDNS1123Subdomain(name)) != 0 {
+		return nil, fmt.Errorf("HBN_RUNTIME_APPLICATION_INPUT_INVALID")
+	}
 	object, err := c.dynamic.Resource(schema.GroupVersionResource{Group: "argoproj.io", Version: "v1alpha1", Resource: "applications"}).Namespace(namespace).Get(ctx, name, metav1.GetOptions{})
 	if err != nil {
 		return nil, safeAPIError("read selected HBN Application", err)
 	}
 	if object == nil || object.GetNamespace() != namespace || object.GetName() != name || object.GetAPIVersion() != "argoproj.io/v1alpha1" || object.GetKind() != "Application" {
 		return nil, fmt.Errorf("HBN_RUNTIME_APPLICATION_INVALID")
-	}
-	if err := c.VerifyIdentity(ctx); err != nil {
-		return nil, err
 	}
 	return object, nil
 }

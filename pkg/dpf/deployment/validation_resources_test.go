@@ -41,6 +41,8 @@ type validationReadFake struct {
 	identity    func(context.Context) error
 }
 
+func (f *validationReadFake) currentValidationReads() validationCurrentManagementReader { return f }
+
 func (f *validationReadFake) Get(ctx context.Context, object *unstructured.Unstructured) (*unstructured.Unstructured, error) {
 	if f.get != nil {
 		return f.get(ctx, object)

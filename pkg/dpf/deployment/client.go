@@ -108,6 +108,19 @@ func (c *APIClient) Get(ctx context.Context, desired *unstructured.Unstructured)
 	if err := c.VerifyIdentity(ctx); err != nil {
 		return nil, err
 	}
+	object, err := c.getCurrentResource(ctx, desired)
+	if err != nil {
+		return nil, err
+	}
+	if err := c.VerifyIdentity(ctx); err != nil {
+		return nil, err
+	}
+	return object, nil
+}
+
+// getCurrentResource is shared by guarded deployment reads and finite validation
+// collections. The caller owns source identity verification.
+func (c *APIClient) getCurrentResource(ctx context.Context, desired *unstructured.Unstructured) (*unstructured.Unstructured, error) {
 	resource, err := c.resource(ctx, desired, true)
 	if err != nil {
 		return nil, err
@@ -115,9 +128,6 @@ func (c *APIClient) Get(ctx context.Context, desired *unstructured.Unstructured)
 	object, err := resource.Get(ctx, desired.GetName(), metav1.GetOptions{})
 	if err != nil {
 		return nil, safeAPIError("read resource", err)
-	}
-	if err := c.VerifyIdentity(ctx); err != nil {
-		return nil, err
 	}
 	return object, nil
 }
@@ -159,6 +169,17 @@ func (c *APIClient) List(ctx context.Context, template *unstructured.Unstructure
 	if err := c.VerifyIdentity(ctx); err != nil {
 		return nil, err
 	}
+	objects, err := c.listCurrentResources(ctx, template, selector)
+	if err != nil {
+		return nil, err
+	}
+	if err := c.VerifyIdentity(ctx); err != nil {
+		return nil, err
+	}
+	return objects, nil
+}
+
+func (c *APIClient) listCurrentResources(ctx context.Context, template *unstructured.Unstructured, selector string) ([]unstructured.Unstructured, error) {
 	resource, err := c.resource(ctx, template, false)
 	if err != nil {
 		return nil, err
@@ -177,9 +198,6 @@ func (c *APIClient) List(ctx context.Context, template *unstructured.Unstructure
 		objects = append(objects, page.Items...)
 		cursor = page.GetContinue()
 		if cursor == "" {
-			if err := c.VerifyIdentity(ctx); err != nil {
-				return nil, err
-			}
 			return objects, nil
 		}
 		if seen[cursor] {

@@ -27,6 +27,7 @@ import (
 // validationManagementReader deliberately excludes creation, SSAR, installation,
 // tunnel, journal and reset capabilities. Existing transports stay behind this port.
 type validationManagementReader interface {
+	validationManagementReadSource
 	resourceReader
 	resourceLister
 	tenantSourceReader
@@ -246,22 +247,27 @@ func (r *validationRecorder) record(id validation.CheckID, state validation.Stat
 	}
 }
 func (r *validationRecorder) recordError(id validation.CheckID, err error) {
+	state, reason, summary, action := validationErrorFields(err)
+	r.record(id, state, reason, summary, action)
+}
+
+func validationErrorFields(err error) (validation.State, validation.Reason, string, string) {
 	var check *validationCheckError
 	switch {
 	case errors.As(err, &check):
-		r.record(id, check.state, check.reason, check.summary, "Inspect the selected dependency and repeat validation.")
+		return check.state, check.reason, check.summary, "Inspect the selected dependency and repeat validation."
 	case validationIdentityChanged(err):
-		r.record(id, validation.Unverified, validation.ReasonIdentityDrift, "Bound resource identity changed during observation.", "Repeat discovery and generation after inspecting the replacement.")
+		return validation.Unverified, validation.ReasonIdentityDrift, "Bound resource identity changed during observation.", "Repeat discovery and generation after inspecting the replacement."
 	case apierrors.IsNotFound(err) || errors.Is(err, driver.ErrReleaseNotFound):
-		r.record(id, validation.Failed, validation.ReasonMissing, "A required selected resource is absent.", "Inspect the responsible controller and selected resource.")
+		return validation.Failed, validation.ReasonMissing, "A required selected resource is absent.", "Inspect the responsible controller and selected resource."
 	case apierrors.IsForbidden(err) || apierrors.IsUnauthorized(err):
-		r.record(id, validation.Unverified, validation.ReasonDenied, "Read access to this required resource was denied.", "Grant read access to the selected source and repeat validation.")
+		return validation.Unverified, validation.ReasonDenied, "Read access to this required resource was denied.", "Grant read access to the selected source and repeat validation."
 	case errors.Is(err, context.Canceled):
-		r.record(id, validation.Unverified, validation.ReasonCanceled, "Observation was canceled.", "Repeat validation.")
+		return validation.Unverified, validation.ReasonCanceled, "Observation was canceled.", "Repeat validation."
 	case errors.Is(err, context.DeadlineExceeded):
-		r.record(id, validation.Unverified, validation.ReasonTimedOut, "A bounded observation request timed out.", "Inspect source reachability and repeat validation.")
+		return validation.Unverified, validation.ReasonTimedOut, "A bounded observation request timed out.", "Inspect source reachability and repeat validation."
 	default:
-		r.record(id, validation.Unverified, validation.ReasonUnavailable, "The current state of this required resource could not be inspected.", "Inspect the selected source and repeat validation.")
+		return validation.Unverified, validation.ReasonUnavailable, "The current state of this required resource could not be inspected.", "Inspect the selected source and repeat validation."
 	}
 }
 func (r *validationRecorder) run(id validation.CheckID, check func() error) error {
@@ -289,4 +295,39 @@ func (r *validationRecorder) snapshot() validation.ResourceSnapshot {
 		}
 	}
 	return result
+}
+
+// bufferCompletions keeps finite current-data results provisional. Running
+// progress remains live; acceptance or explicit invalidation owns completion.
+func (r *validationRecorder) bufferCompletions() *validationRecorder {
+	return &validationRecorder{specs: r.specs, order: r.order, outcomes: map[validation.CheckID]validation.Outcome{}, progress: func(event validation.ProgressEvent) {
+		if event.Phase == validation.Running && r.progress != nil {
+			r.progress(event)
+		}
+	}}
+}
+
+func (r *validationRecorder) acceptBuffered(buffered *validationRecorder, cause error) {
+	for _, id := range buffered.order {
+		out, ok := buffered.outcomes[id]
+		if !ok {
+			continue
+		}
+		if cause != nil {
+			// A closing read/access/cancellation failure invalidates provisional
+			// evidence as well as measured drift. No provisional pass escapes.
+			state, reason, summary, action := validationErrorFields(cause)
+			if validationIdentityChanged(cause) {
+				state, reason = validation.Unverified, validation.ReasonIdentityDrift
+				summary = "Bound resource identity changed during observation."
+			}
+			if state != validation.Unverified {
+				state, reason = validation.Unverified, validation.ReasonIncomplete
+				summary = "The enclosing current-data collection could not be accepted."
+			}
+			r.record(id, state, reason, summary, action)
+			continue
+		}
+		r.record(id, out.State, out.Reason, out.Summary, out.Action)
+	}
 }

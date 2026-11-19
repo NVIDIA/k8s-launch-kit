@@ -201,6 +201,12 @@ func validationText(result validation.Result) []byte {
 		counts[check.Outcome.State]++
 	}
 	fmt.Fprintf(&b, "Checks: %d passed, %d failed, %d pending, %d unverified, %d skipped\n", counts[validation.Passed], counts[validation.Failed], counts[validation.Pending], counts[validation.Unverified], counts[validation.Skipped])
+	if diagnostic := validation.NormalizeDiagnostic(result.Diagnostic); diagnostic != nil {
+		fmt.Fprintf(&b, "Observation failure: %s\nStage: %s · %s\n", diagnostic.Summary, diagnostic.Stage.Label(), diagnostic.Reason)
+		if diagnostic.Action != "" {
+			fmt.Fprintf(&b, "Next: %s\n", diagnostic.Action)
+		}
+	}
 	if result.RuntimeBudget > 0 {
 		fmt.Fprintf(&b, "Runtime budget: %s\n", result.RuntimeBudget)
 	}

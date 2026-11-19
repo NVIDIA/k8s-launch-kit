@@ -29,6 +29,20 @@ func (tenant *tenantClient) getWorkloadChild(ctx context.Context, parent *unstru
 	if err := tenant.VerifyIdentity(ctx); err != nil {
 		return nil, err
 	}
+	child, err := tenant.getCurrentWorkloadChild(ctx, parent)
+	if err != nil {
+		return nil, err
+	}
+	if err := tenant.VerifyIdentity(ctx); err != nil {
+		return nil, err
+	}
+	return child, nil
+}
+
+func (tenant *tenantClient) getCurrentWorkloadChild(ctx context.Context, parent *unstructured.Unstructured) (*unstructured.Unstructured, error) {
+	if tenant == nil || tenant.api == nil || parent == nil || ctx == nil {
+		return nil, fmt.Errorf("bound management and tenant clients and workload parent are required")
+	}
 	group, version, resource, kind, err := workloadChildIdentity(parent)
 	if err != nil {
 		return nil, err
@@ -67,9 +81,6 @@ func (tenant *tenantClient) getWorkloadChild(ctx context.Context, parent *unstru
 	}
 	if child.GroupVersionKind() != (schema.GroupVersionKind{Group: group, Version: version, Kind: kind}) {
 		return nil, fmt.Errorf("selected tenant returned the wrong workload child API identity")
-	}
-	if err := tenant.VerifyIdentity(ctx); err != nil {
-		return nil, err
 	}
 	return &child, nil
 }
