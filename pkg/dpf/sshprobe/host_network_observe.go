@@ -241,15 +241,7 @@ func (s *hostNetworkSession) configureAction(ctx context.Context, request HostNe
 		return HostNetworkReceipt{}, err
 	}
 	defer clear(observation.merged)
-	if request.MTU < observation.MinMTU || request.MTU > observation.MaxMTU {
-		return HostNetworkReceipt{}, networkError("HOST_NETWORK_MTU_UNSUPPORTED", false)
-	}
-	plan, err := hostnetwork.PlanNetplan(hostnetwork.Desired{InterfaceName: request.Identity.InterfaceName, PermanentMAC: request.Identity.PermanentMAC,
-		MTU: request.MTU, HostAddressPrefix: request.HostAddressPrefix, Gateway: request.Gateway, WorkloadCIDR: request.WorkloadCIDR, MergedNetplanYAML: observation.merged})
-	if err != nil || !hostNetworkLogicalID.MatchString(plan.LogicalID) || observation.raw.NetworkFile != "/run/systemd/network/10-netplan-"+plan.LogicalID+".network" {
-		return HostNetworkReceipt{}, networkError("HOST_NETWORK_NETPLAN_CONFLICT", false)
-	}
-	addressExists, routeExists, err := inspectHostNetworkRuntime(request, observation)
+	plan, addressExists, routeExists, err := inspectHostNetworkConfiguration(request, observation)
 	if err != nil {
 		return HostNetworkReceipt{}, err
 	}
@@ -294,6 +286,24 @@ func (s *hostNetworkSession) configureAction(ctx context.Context, request HostNe
 		return unknownHostNetworkReceipt(id, payload.Key, "HOST_NETWORK_READBACK_FAILED"), networkError("HOST_NETWORK_READBACK_FAILED", true)
 	}
 	return receipt, nil
+}
+
+// inspectHostNetworkConfiguration is shared by transaction preparation and
+// standalone current-state verification. It proposes no remote operations.
+func inspectHostNetworkConfiguration(request HostNetworkRequest, observation HostNetworkObservation) (hostnetwork.Plan, bool, bool, error) {
+	if err := validateHostNetworkDesired(request); err != nil {
+		return hostnetwork.Plan{}, false, false, err
+	}
+	if request.MTU < observation.MinMTU || request.MTU > observation.MaxMTU {
+		return hostnetwork.Plan{}, false, false, networkError("HOST_NETWORK_MTU_UNSUPPORTED", false)
+	}
+	plan, err := hostnetwork.PlanNetplan(hostnetwork.Desired{InterfaceName: request.Identity.InterfaceName, PermanentMAC: request.Identity.PermanentMAC,
+		MTU: request.MTU, HostAddressPrefix: request.HostAddressPrefix, Gateway: request.Gateway, WorkloadCIDR: request.WorkloadCIDR, MergedNetplanYAML: observation.merged})
+	if err != nil || !hostNetworkLogicalID.MatchString(plan.LogicalID) || observation.raw.NetworkFile != "/run/systemd/network/10-netplan-"+plan.LogicalID+".network" {
+		return hostnetwork.Plan{}, false, false, networkError("HOST_NETWORK_NETPLAN_CONFLICT", false)
+	}
+	address, route, err := inspectHostNetworkRuntime(request, observation)
+	return plan, address, route, err
 }
 
 func inspectHostNetworkRuntime(request HostNetworkRequest, observation HostNetworkObservation) (bool, bool, error) {

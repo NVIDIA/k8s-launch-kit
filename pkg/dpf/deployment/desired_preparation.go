@@ -38,6 +38,14 @@ func prepareManagementDesired(retained *bundle.Bundle) (*managementDesired, erro
 	if err != nil {
 		return nil, fmt.Errorf("validate retained DPF plan before management access: %w", err)
 	}
+	return prepareManagementDesiredFromPlan(retained, plan)
+}
+
+// prepareManagementDesiredFromPlan reuses the caller-isolated validated snapshot.
+func prepareManagementDesiredFromPlan(retained *bundle.Bundle, plan *generation.Plan) (*managementDesired, error) {
+	if retained == nil || plan == nil || plan.Digest() == "" || plan.Digest() != retained.Index().BundleDigest {
+		return nil, fmt.Errorf("validated plan does not identify the retained bundle")
+	}
 	inputs, archive := plan.Operator()
 	operator, err := prepareOperatorDesired(archive, inputs)
 	if err != nil {

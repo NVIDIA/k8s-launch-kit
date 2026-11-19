@@ -10,6 +10,8 @@ import (
 	"reflect"
 	"sort"
 
+	"github.com/nvidia/k8s-launch-kit/pkg/dpf/deployment/internal/controllercontract"
+	"github.com/nvidia/k8s-launch-kit/pkg/dpf/generation"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/apimachinery/pkg/util/validation"
@@ -109,10 +111,18 @@ func activationVersionRequestors(ctx context.Context, client resourceLister, exe
 // compileActivationVersionGraph has explicit immutable source/snapshot inputs;
 // it does not call APIs, change inputs or authorize an effect by itself.
 func compileActivationVersionGraph(execution *managementVerificationInputs, deployment *unstructured.Unstructured, sets map[string]*unstructured.Unstructured, services, chains []unstructured.Unstructured) (activationVersionGraph, bool, error) {
+	if execution == nil || execution.plan == nil || execution.reconciler == nil || execution.rules == nil {
+		return activationVersionGraph{}, false, activationCoordinationError(activationParticipantGraph)
+	}
+	return compileCurrentVersionGraph(execution.plan, execution.rules, deployment, sets, services, chains)
+}
+
+// compileCurrentVersionGraph qualifies current controller children without lifecycle history.
+func compileCurrentVersionGraph(plan *generation.Plan, rules *controllercontract.Rules, deployment *unstructured.Unstructured, sets map[string]*unstructured.Unstructured, services, chains []unstructured.Unstructured) (activationVersionGraph, bool, error) {
 	bad := func() (activationVersionGraph, bool, error) {
 		return activationVersionGraph{}, false, activationCoordinationError(activationParticipantGraph)
 	}
-	if execution == nil || execution.plan == nil || execution.reconciler == nil || execution.rules == nil || deployment == nil {
+	if plan == nil || rules == nil || deployment == nil {
 		return bad()
 	}
 
@@ -147,7 +157,7 @@ func compileActivationVersionGraph(execution *managementVerificationInputs, depl
 	if service.GetKind() != "DPUService" || chain.GetKind() != "DPUServiceChain" || !activationVersionOwner(service, deployment) || !activationVersionOwner(chain, deployment) || service.GetLabels()[hbnServiceReferenceLabel] != hbnContainerName {
 		return activationVersionGraph{}, false, activationCoordinationError(activationParticipantOwner)
 	}
-	objects, e := retainedWorkloadObjects(execution)
+	objects, e := retainedPlanWorkloadObjects(plan)
 	if e != nil {
 		return bad()
 	}
@@ -163,11 +173,11 @@ func compileActivationVersionGraph(execution *managementVerificationInputs, depl
 	if template == nil || configuration == nil {
 		return bad()
 	}
-	template, e = execution.rules.DefaultedCopy(template)
+	template, e = rules.DefaultedCopy(template)
 	if e != nil {
 		return bad()
 	}
-	configuration, e = execution.rules.DefaultedCopy(configuration)
+	configuration, e = rules.DefaultedCopy(configuration)
 	if e != nil {
 		return bad()
 	}
@@ -200,7 +210,7 @@ func compileActivationVersionGraph(execution *managementVerificationInputs, depl
 	expressions := []any{map[string]any{"key": serviceKey, "operator": "In", "values": []any{versionLabels[serviceKey]}}, map[string]any{"key": activationParentLabel, "operator": "In", "values": []any{parent}}}
 	nodeSelector := map[string]any{"nodeSelectorTerms": []any{map[string]any{"matchExpressions": expressions}}}
 	clusterExpressions := []any{}
-	labels := execution.plan.Intent().Bootstrap.Tenant.Labels
+	labels := plan.Intent().Bootstrap.Tenant.Labels
 	keys := make([]string, 0, len(labels))
 	for key := range labels {
 		keys = append(keys, key)
@@ -218,7 +228,7 @@ func compileActivationVersionGraph(execution *managementVerificationInputs, depl
 	if selectorErr != nil || clusterErr != nil || chainSelectorErr != nil || chainClusterErr != nil || !jsonEqual(observedSelector, nodeSelector) || !jsonEqual(observedCluster, clusterSelector) || !jsonEqual(chainCluster, clusterSelector) || !jsonEqual(chainSelector, map[string]any{"matchExpressions": chainExpressions}) {
 		return activationVersionGraph{}, false, activationCoordinationError(activationParticipantSelector)
 	}
-	expected, e := execution.rules.HBNServiceSpec(template, configuration, service.GetName(), service.GetNamespace(), hbnContainerName, id, nodeSelector, clusterSelector, opaque)
+	expected, e := rules.HBNServiceSpec(template, configuration, service.GetName(), service.GetNamespace(), hbnContainerName, id, nodeSelector, clusterSelector, opaque)
 	if e != nil || !jsonEqual(service.Object["spec"], expected.Spec) {
 		return activationVersionGraph{}, false, activationCoordinationError(activationParticipantServiceSpec)
 	}
@@ -226,7 +236,7 @@ func compileActivationVersionGraph(execution *managementVerificationInputs, depl
 	if e != nil {
 		return activationVersionGraph{}, false, activationCoordinationError(activationParticipantChainSpec)
 	}
-	normalized, e := execution.rules.DefaultedCopy(runtimeObject("DPUServiceChain", chain.GetName(), chain.GetNamespace(), expectedChain))
+	normalized, e := rules.DefaultedCopy(runtimeObject("DPUServiceChain", chain.GetName(), chain.GetNamespace(), expectedChain))
 	if e != nil || !jsonEqual(chain.Object["spec"], normalized.Object["spec"]) || chain.GetAnnotations()[activationChainVersionKey] == "" {
 		return activationVersionGraph{}, false, activationCoordinationError(activationParticipantChainSpec)
 	}

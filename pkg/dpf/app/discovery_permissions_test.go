@@ -6,6 +6,7 @@ package app
 import (
 	"context"
 	"errors"
+	"github.com/nvidia/k8s-launch-kit/pkg/dpf/chartfetch"
 	"net"
 	"net/http"
 	"net/http/httptest"
@@ -140,7 +141,7 @@ var _ = Describe("HBN discovery caller permission composition", func() {
 		}))
 		defer server.Close()
 		observer.fetchChart = func(ctx context.Context, _ string) ([]byte, error) {
-			return downloadChart(ctx, server.URL, server.Client().Transport)
+			return (chartfetch.Downloader{Transport: server.Client().Transport}).Fetch(ctx, server.URL)
 		}
 		checks := observer.Observe(context.Background(), request, current)
 		Expect(checks).To(HaveLen(1))
@@ -158,7 +159,7 @@ var _ = Describe("HBN discovery caller permission composition", func() {
 			if fetchCount == 1 {
 				return operatorArchive, nil
 			}
-			return downloadChart(ctx, server.URL, server.Client().Transport)
+			return (chartfetch.Downloader{Transport: server.Client().Transport}).Fetch(ctx, server.URL)
 		}
 		checks = observer.Observe(context.Background(), request, current)
 		Expect(checks).To(HaveLen(1))
@@ -172,7 +173,7 @@ var _ = Describe("HBN discovery caller permission composition", func() {
 			transport := chartTestTransport(func(*http.Request) (*http.Response, error) {
 				return nil, &net.DNSError{Err: "private-signature", IsTimeout: true}
 			})
-			return downloadChart(ctx, address, transport)
+			return (chartfetch.Downloader{Transport: transport}).Fetch(ctx, address)
 		}
 		checks = observer.Observe(context.Background(), request, current)
 		Expect(checks).To(HaveLen(1))
@@ -233,3 +234,7 @@ var _ = Describe("HBN discovery caller permission composition", func() {
 		Expect(checks[0].ReasonCode).To(Equal("CALLER_RBAC_MANAGEMENT_UNAVAILABLE"))
 	})
 })
+
+type chartTestTransport func(*http.Request) (*http.Response, error)
+
+func (f chartTestTransport) RoundTrip(r *http.Request) (*http.Response, error) { return f(r) }

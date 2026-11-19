@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	"github.com/nvidia/k8s-launch-kit/pkg/dpf/deployment/internal/controllercontract"
+	"github.com/nvidia/k8s-launch-kit/pkg/dpf/generation"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 )
 
@@ -20,9 +21,13 @@ const enrollmentDeviceAPIVersion = "provisioning.dpu.nvidia.com/v1alpha1"
 // DPUDiscovery. Status fields are optional during reconciliation; when present
 // they must agree. requireStatus is used only after readiness has been reported.
 func validateEnrolledDevice(rules *controllercontract.Rules, object *unstructured.Unstructured, item enrollmentBMC, namespace string, requireStatus bool) error {
-	serial := item.device.Serial
-	ip, ipErr := netip.ParseAddr(item.device.BMCIP)
-	if object == nil || ipErr != nil || !ip.Is4() || ip.Is4In6() || !ip.IsGlobalUnicast() || item.device.BMCPort < 1 || item.device.BMCPort > 65535 || item.device.PSID == "" || namespace == "" || serial == "" {
+	return validateCurrentEnrolledDevice(rules, object, item.device, namespace, requireStatus)
+}
+
+func validateCurrentEnrolledDevice(rules *controllercontract.Rules, object *unstructured.Unstructured, device generation.ResolvedDevice, namespace string, requireStatus bool) error {
+	serial := device.Serial
+	ip, ipErr := netip.ParseAddr(device.BMCIP)
+	if object == nil || ipErr != nil || !ip.Is4() || ip.Is4In6() || !ip.IsGlobalUnicast() || device.BMCPort < 1 || device.BMCPort > 65535 || device.PSID == "" || namespace == "" || serial == "" {
 		return fmt.Errorf("selected DPU identity is incomplete")
 	}
 	if object.GetAPIVersion() != enrollmentDeviceAPIVersion || object.GetKind() != "DPUDevice" || object.GetName() != strings.ToLower(serial) || object.GetNamespace() != namespace || object.GetUID() == "" || object.GetResourceVersion() == "" || object.GetDeletionTimestamp() != nil {
@@ -36,10 +41,10 @@ func validateEnrolledDevice(rules *controllercontract.Rules, object *unstructure
 	specPort, portFound, portErr := unstructured.NestedInt64(object.Object, "spec", "bmcPort")
 	policy, policyFound, policyErr := unstructured.NestedString(object.Object, "spec", "bmcFactoryResetPolicy")
 	credential, credentialFound, credentialErr := unstructured.NestedString(object.Object, "spec", "bmcCredentialSecretName")
-	if serialErr != nil || ipErr != nil || portErr != nil || policyErr != nil || credentialErr != nil || !serialFound || !ipFound || !portFound || !policyFound || specSerial != serial || specIP != ip.String() || specPort != int64(item.device.BMCPort) || policy != "Never" || credentialFound && credential != "" {
+	if serialErr != nil || ipErr != nil || portErr != nil || policyErr != nil || credentialErr != nil || !serialFound || !ipFound || !portFound || !policyFound || specSerial != serial || specIP != ip.String() || specPort != int64(device.BMCPort) || policy != "Never" || credentialFound && credential != "" {
 		return fmt.Errorf("DPUDevice spec does not match the selected endpoint, serial and Never shared-credential contract")
 	}
-	if specPSID, found, err := unstructured.NestedString(object.Object, "spec", "psid"); err != nil || found && !strings.EqualFold(specPSID, item.device.PSID) {
+	if specPSID, found, err := unstructured.NestedString(object.Object, "spec", "psid"); err != nil || found && !strings.EqualFold(specPSID, device.PSID) {
 		return fmt.Errorf("DPUDevice spec PSID conflicts with the selected hardware")
 	}
 	for _, field := range []struct {
@@ -53,11 +58,11 @@ func validateEnrolledDevice(rules *controllercontract.Rules, object *unstructure
 		}
 	}
 	statusPort, portFound, portErr := unstructured.NestedInt64(object.Object, "status", "bmcPort")
-	if portErr != nil || portFound && statusPort != int64(item.device.BMCPort) || requireStatus && !portFound {
+	if portErr != nil || portFound && statusPort != int64(device.BMCPort) || requireStatus && !portFound {
 		return fmt.Errorf("DPUDevice status BMC port does not match the selected endpoint")
 	}
 	statusPSID, psidFound, psidErr := unstructured.NestedString(object.Object, "status", "psid")
-	if psidErr != nil || psidFound && !strings.EqualFold(statusPSID, item.device.PSID) || requireStatus && (!psidFound || !strings.EqualFold(statusPSID, item.device.PSID)) {
+	if psidErr != nil || psidFound && !strings.EqualFold(statusPSID, device.PSID) || requireStatus && (!psidFound || !strings.EqualFold(statusPSID, device.PSID)) {
 		return fmt.Errorf("DPUDevice status PSID does not match the selected hardware")
 	}
 	dpuType, typeFound, typeErr := unstructured.NestedString(object.Object, "status", "dpuType")
@@ -71,10 +76,14 @@ func validateEnrolledDevice(rules *controllercontract.Rules, object *unstructure
 // DPUDevice. The pinned Ready condition has no observedGeneration field, so
 // freshness is established from UID/spec identity plus the controller report.
 func validateEnrolledNode(object *unstructured.Unstructured, item enrollmentBMC, namespace string) error {
-	if object == nil || namespace == "" || item.device.Serial == "" {
+	return validateCurrentEnrolledNode(object, item.device, namespace)
+}
+
+func validateCurrentEnrolledNode(object *unstructured.Unstructured, device generation.ResolvedDevice, namespace string) error {
+	if object == nil || namespace == "" || device.Serial == "" {
 		return fmt.Errorf("selected DPUNode identity is incomplete")
 	}
-	wantName := "dpu-node-" + strings.ToLower(item.device.Serial)
+	wantName := "dpu-node-" + strings.ToLower(device.Serial)
 	if object.GetAPIVersion() != enrollmentDeviceAPIVersion || object.GetKind() != "DPUNode" || object.GetName() != wantName || object.GetNamespace() != namespace || object.GetUID() == "" || object.GetResourceVersion() == "" || object.GetDeletionTimestamp() != nil {
 		return fmt.Errorf("DPUNode identity is missing, deleting or differs from the selected device")
 	}
@@ -83,7 +92,7 @@ func validateEnrolledNode(object *unstructured.Unstructured, item enrollmentBMC,
 		return fmt.Errorf("DPUNode device association is missing or ambiguous")
 	}
 	ref, ok := refs[0].(map[string]any)
-	if !ok || ref["name"] != strings.ToLower(item.device.Serial) {
+	if !ok || ref["name"] != strings.ToLower(device.Serial) {
 		return fmt.Errorf("DPUNode does not refer to the selected DPUDevice")
 	}
 	method, found, err := unstructured.NestedMap(object.Object, "spec", "nodeRebootMethod")

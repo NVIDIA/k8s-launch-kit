@@ -53,7 +53,7 @@ var _ = Describe("DPF deployment input binding", func() {
 					t.Fatal(err)
 				}
 				test.change(&current)
-				if err := verifyDeploymentPhysicalBindings(before, &current); (err == nil) != test.valid {
+				if err := config.VerifyRetainedPhysicalBindings(before, &current); (err == nil) != test.valid {
 					t.Fatalf("valid=%v, got %v", test.valid, err)
 				}
 			}

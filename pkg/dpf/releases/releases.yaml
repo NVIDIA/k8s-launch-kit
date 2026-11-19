@@ -143,6 +143,13 @@ releases:
       chartDigest: sha256:0252d473beaf473e93a09b23a39b7b78fff931c9a801f4e60ef93bface5e28c8
       image: nvcr.io/nvidia/doca/dpf-system:v26.8.0
       sourceRef: published-chart
+    systemNetworking:
+      chart: dpu-networking
+      chartRepository: https://helm.ngc.nvidia.com/nvidia/doca
+      chartVersion: v26.8.0
+      chartDigest: sha256:c41c685380536ce5f2502ab9bc011cb99b3d869ed60aa9136d7eb8cf366fe090
+      cniInstallerImage: nvcr.io/nvidia/doca/dpf-cni-installer:v26.8.0
+      sourceRef: published-system-networking-chart
     components:
       - {name: argocd, version: v3.3.0, repository: quay.io/argoproj/argocd, applicability: base, sourceRef: platform-support}
       - {name: cert-manager-controller, version: v1.19.3, repository: quay.io/jetstack/cert-manager-controller, applicability: base, sourceRef: platform-support}
@@ -253,6 +260,9 @@ releases:
       - id: published-chart
         url: https://helm.ngc.nvidia.com/nvidia/doca/charts/dpf-operator-v26.8.0.tgz
         revision: 1751dc679f702fdf91c2641d925e69908ae4921f
+      - id: published-system-networking-chart
+        url: https://helm.ngc.nvidia.com/nvidia/doca/charts/dpu-networking-v26.8.0.tgz
+        revision: sha256:c41c685380536ce5f2502ab9bc011cb99b3d869ed60aa9136d7eb8cf366fe090
       - id: kamaji-controller
         url: https://github.com/NVIDIA/doca-platform/blob/fc4974ed3bc026ae27634673c2fdf818a2972235/internal/clustermanager/kamaji/handler.go
         revision: fc4974ed3bc026ae27634673c2fdf818a2972235

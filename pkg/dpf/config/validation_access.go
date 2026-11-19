@@ -84,3 +84,43 @@ func (a *accessAvailability) record(inputRef, role string, err error) bool {
 	a.issues = append(a.issues, AccessIssue{InputRef: inputRef, Role: role, Message: material.message})
 	return true
 }
+
+// SnapshotRequestForValidation isolates resolved scope without resolving access
+// again. Private access bytes have no mutation API; SSH's public sudo flag and
+// every caller-owned public tree are copied before observers retain them.
+func SnapshotRequestForValidation(request Request) (Request, error) {
+	input, err := validationInputSnapshot(request.Input)
+	if err != nil {
+		return Request{}, err
+	}
+	// copystructure cannot preserve private resolved access fields. Exclude the
+	// access containers, clone the public configuration, then restore value copies.
+	targets, switches := request.Targets, request.Switches
+	request.Input = Input{}
+	request.Targets = nil
+	request.Switches = nil
+	cloned, err := copystructure.Copy(request)
+	if err != nil {
+		return Request{}, fmt.Errorf("cannot snapshot validation request")
+	}
+	result := cloned.(Request)
+	result.Input = input
+	result.Targets = make([]Target, len(targets))
+	for i, target := range targets {
+		result.Targets[i] = target
+		if target.SSH != nil {
+			ssh := *target.SSH
+			result.Targets[i].SSH = &ssh
+		}
+	}
+	result.Switches = make([]SwitchTarget, len(switches))
+	for i, sw := range switches {
+		result.Switches[i] = sw
+		result.Switches[i].Ports = append([]SwitchPort(nil), sw.Ports...)
+		if sw.Access != nil {
+			ssh := *sw.Access
+			result.Switches[i].Access = &ssh
+		}
+	}
+	return result, nil
+}

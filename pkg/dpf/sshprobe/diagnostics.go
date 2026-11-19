@@ -77,6 +77,14 @@ func Reason(err error) string {
 		return "A required host networking tool is not installed; the reason code identifies the missing tool."
 	}
 	switch code {
+	case "HOST_NETWORK_RUNTIME_MISMATCH":
+		return "The selected interface's current address, route or MTU differs from the allocated workload configuration."
+	case "HOST_NETWORK_PERSISTENT_MISMATCH":
+		return "The merged persistent Netplan configuration does not contain the selected workload address, route and MTU."
+	case "HOST_NETWORK_OBSERVATION_CHANGED":
+		return "The host boot identity, network source or runtime configuration changed during inspection."
+	case "HOST_NETWORK_SSH_CLEANUP_UNCONFIRMED":
+		return "The host networking SSH connection could not be closed cleanly."
 	case "HOST_NETWORK_DEADLINE_REQUIRED":
 		return "The host networking observer requires a caller context with a deadline; no SSH read was started."
 	case "HOST_NETWORK_TOOL_MISSING":

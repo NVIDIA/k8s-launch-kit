@@ -55,15 +55,29 @@ func newAPIClient(ctx context.Context, request config.Request, expected generati
 	if err != nil {
 		return nil, err
 	}
-	d, err := dynamic.NewForConfig(access.REST)
+	c, err := apiClientForAccess(access, expected, version, collector, tenantDial, limiter)
 	if err != nil {
-		return nil, fmt.Errorf("cannot construct bound management resource client")
+		return nil, err
 	}
-	c := &APIClient{access: access, dynamic: d, expected: expected, version: version, enrollmentCollector: collector, tenantDial: tenantDial, requestLimiter: limiter}
 	if err := c.VerifyIdentity(ctx); err != nil {
 		return nil, err
 	}
 	return c, nil
+}
+
+// apiClientForAccess assembles transports from one already frozen explicit
+// access snapshot. It performs no remote reads or lifecycle effects.
+func apiClientForAccess(access managementaccess.Client, expected generation.ManagementIdentity, version string,
+	collector enrollmentBMCCollector, tenantDial tenantDialContext, limiter flowcontrol.RateLimiter,
+) (*APIClient, error) {
+	if access.REST == nil || access.Client == nil || expected.APIEndpoint == "" || expected.SystemNamespaceUID == "" || expected.TrustDigest == "" || version == "" {
+		return nil, fmt.Errorf("bound access and complete generated management identity are required")
+	}
+	d, err := dynamic.NewForConfig(access.REST)
+	if err != nil {
+		return nil, fmt.Errorf("cannot construct bound management resource client")
+	}
+	return &APIClient{access: access, dynamic: d, expected: expected, version: version, enrollmentCollector: collector, tenantDial: tenantDial, requestLimiter: limiter}, nil
 }
 
 // VerifyIdentity refreshes the cluster UID and server version through the same

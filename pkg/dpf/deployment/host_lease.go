@@ -262,7 +262,16 @@ func hostLeaseForSelected(rules *controllercontract.Rules, item activationSelect
 	if err := validateActivationDPUNode(node, item, cohort); err != nil || !rules.EnrolledNodeReadiness(node).Ready {
 		return hostWorkloadLease{}, fmt.Errorf("selected DPUNode identity or readiness differs from activation")
 	}
-	tenantNode, err := uniqueTenantNode(rules, tenantNodes, item.nodeName, node.GetNamespace())
+	return currentHostLease(rules, item.item.device.Serial, dpu, node, tenantNodes, pool, allocations, reservations, hostIndex)
+}
+
+// currentHostLease is the history-free allocation join used by both deployment
+// (after its receipt checks) and standalone current-state observation.
+func currentHostLease(rules *controllercontract.Rules, serial string, dpu, node *unstructured.Unstructured, tenantNodes []unstructured.Unstructured, pool *unstructured.Unstructured, allocations map[string]hostLeaseAllocation, reservations []hbn.AddressRange, hostIndex int) (hostWorkloadLease, error) {
+	if dpu == nil || node == nil || pool == nil || hostIndex <= 0 {
+		return hostWorkloadLease{}, fmt.Errorf("current allocation identity incomplete")
+	}
+	tenantNode, err := uniqueTenantNode(rules, tenantNodes, node.GetName(), node.GetNamespace())
 	if err != nil {
 		return hostWorkloadLease{}, err
 	}
@@ -274,7 +283,7 @@ func hostLeaseForSelected(rules *controllercontract.Rules, item activationSelect
 	if err != nil || address == allocation.gateway || !hostAddressReserved(address, reservations) {
 		return hostWorkloadLease{}, fmt.Errorf("selected tenant Node host address is invalid or not reserved")
 	}
-	return hostWorkloadLease{Serial: item.item.device.Serial, DPUName: dpu.GetName(), DPUUID: dpu.GetUID(), DPUNodeName: node.GetName(), DPUNodeUID: node.GetUID(),
+	return hostWorkloadLease{Serial: serial, DPUName: dpu.GetName(), DPUUID: dpu.GetUID(), DPUNodeName: node.GetName(), DPUNodeUID: node.GetUID(),
 		TenantNodeName: tenantNode.GetName(), NodeUID: tenantNode.GetUID(), PoolName: pool.GetName(), PoolUID: pool.GetUID(),
 		Prefix: allocation.prefix.String(), Gateway: allocation.gateway.String(), ReservedHostAddress: address.String()}, nil
 }

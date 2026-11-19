@@ -12,6 +12,7 @@ import (
 	"os/signal"
 
 	"github.com/nvidia/k8s-launch-kit/pkg/dpf/app"
+	"github.com/nvidia/k8s-launch-kit/pkg/dpf/chartfetch"
 	apperrors "github.com/nvidia/k8s-launch-kit/pkg/errors"
 	"github.com/nvidia/k8s-launch-kit/pkg/target"
 	"github.com/nvidia/k8s-launch-kit/pkg/ui"
@@ -39,7 +40,7 @@ func NewGenerateAdapter(request GenerateRequest) target.Driver {
 		value := *request.UseCase
 		request.UseCase = &value
 	}
-	return generateDriver{request: request, fetchChart: app.DownloadChart}
+	return generateDriver{request: request, fetchChart: (chartfetch.Downloader{}).Fetch}
 }
 func (d generateDriver) Descriptor() target.Descriptor { return Descriptor() }
 func (d generateDriver) Bind(inv target.Invocation) (target.Operation, error) {

@@ -421,19 +421,30 @@ func Canonicalize(inv *inventory.Inventory) {
 	if inv.RequestedScope == nil && inv.ScopeDigest != "" {
 		return
 	}
-	inv.ScopeDigest = inventory.Digest("dpf-infrastructure-scope-v1", struct {
+	inv.ScopeDigest = ScopeDigest(inv)
+}
+
+// ScopeDigest computes the same access and intent binding used at discovery.
+// The caller supplies the complete, canonically ordered scope. It does not
+// change the inventory or inspect credentials and returns no access material.
+func ScopeDigest(inv *inventory.Inventory) string {
+	if inv == nil {
+		return ""
+	}
+	digest := inventory.Digest("dpf-infrastructure-scope-v1", struct {
 		Mode      string
 		Endpoints []inventory.ScopeEndpoint
 	}{inv.Collection.Mode, inv.RequestedScope})
 	if inv.Management != nil {
-		inv.ScopeDigest = inventory.Digest("dpf-scope-v1", struct {
+		digest = inventory.Digest("dpf-scope-v1", struct {
 			API, UID, Trust, Mode string
 			Endpoints             []inventory.ScopeEndpoint
 		}{inv.Management.APIEndpoint, inv.Management.SystemNamespaceUID, inv.Management.TrustDigest, inv.Collection.Mode, inv.RequestedScope})
 	}
 	if inv.HBN != nil {
-		inv.ScopeDigest = inventory.Digest("dpf-hbn-scope-v1", []string{inv.ScopeDigest, hbnScope(inv.HBN)})
+		digest = inventory.Digest("dpf-hbn-scope-v1", []string{digest, hbnScope(inv.HBN)})
 	}
+	return digest
 }
 
 // Dedicated material projection excludes timestamps, readiness, credentials and aliases.
