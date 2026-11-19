@@ -167,7 +167,7 @@ func (o *validationObserver) ObserveResources(ctx context.Context, progress vali
 
 	r.blockRemaining()
 	if fatal == nil && ctx.Err() != nil {
-		fatal = &validation.ObservationError{Category: validation.FatalCanceled, Cause: ctx.Err()}
+		fatal = validationRuntimeError(ctx, ctx.Err(), false)
 	}
 	return r.snapshot(), fatal
 }

@@ -23,7 +23,6 @@ import (
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
-	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/apimachinery/pkg/types"
 )
 
@@ -261,7 +260,10 @@ func observeCurrentHBNBindings(ctx context.Context, management validationCurrent
 	if app == nil {
 		return empty, fmt.Errorf("current HBN application unavailable")
 	}
-	daemonSets, pods, err := tenant.listRuntimeObjects(ctx, intent.TargetNamespace, labels.Set{hbnServiceIDLabel: intent.ServiceID}.AsSelector().String())
+	// Membership includes Pods owned by a participating DaemonSet even when
+	// their service label has changed, and DaemonSets selected by template labels.
+	// Collect the complete bounded namespace before applying those predicates.
+	daemonSets, pods, err := tenant.listRuntimeObjects(ctx, intent.TargetNamespace, "")
 	if err != nil {
 		return empty, err
 	}
