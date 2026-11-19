@@ -75,6 +75,23 @@ ambiguous or unavailable evidence fails measurement. An unanswered echo does
 not independently diagnose ARP/ND failure. Gateway rows do not require pod pairs;
 existing pair-family coverage remains independently enforced.
 
+### Requirement: Standalone DPF runtime coverage binds current selected hosts and DPUs
+
+Full DPF validation SHALL observe current selected HBN BGP peers, installed remote
+routes and every directed physical-host ordinary/MTU-sized DF IPv4 ICMP pair.
+Resource polling and runtime diagnostics SHALL have separate bounded deadlines.
+
+#### Scenario: Selected runtime cohort changes
+
+- **WHEN** a selected identity, allocation, container or host workload configuration changes during diagnostics
+- **THEN** subsequent measurements cannot re-anchor a smaller or replacement cohort; affected earlier success is revoked while original measurements remain distinguishable.
+
+#### Scenario: Independent diagnostics after packet loss
+
+- **WHEN** ordinary traffic shows packet loss but current identity and routing fences still hold
+- **THEN** the independent DF measurement remains eligible; loss is not converted to a pass or silently substituted with a different source interface.
+- **AND** a single-host full run reports missing cross-host coverage; resource-only mode excludes runtime explicitly.
+
 ## Baseline and limits
 
 The current seams are enums, functions and branches, not a plugin registry. ICMP cross-rail checks are observation-only in quick/full; strict source-based routing requires connectivity and strict destination-based routing forbids it. Generic forbidden-result finalization currently negates observed success and can clear execution errors; ICMP route errors have special handling. Existing planners may omit missing interface/RDMA mappings. The stronger classification/coverage decisions above require evidence when those paths change. [Outcomes](../outcomes-evidence/spec.md) owns aggregate acceptance, [profiles](../profile-planning/spec.md) workload capabilities and [effects](../managed-effects/spec.md) teardown policy.

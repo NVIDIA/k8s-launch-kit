@@ -627,6 +627,36 @@ func Saved(in Input, inv *inventory.Inventory, destination string) ([]byte, erro
 	return yamlinput.Encode(doc)
 }
 func rebase(n *yaml.Node, oldBase, newBase, p string) error {
+	return visitFileReferences(n, p, func(value *yaml.Node) error {
+		abs := resolvePath(oldBase, value.Value)
+		rel, err := filepath.Rel(newBase, abs)
+		if err != nil {
+			return err
+		}
+		value.Value = rel
+		return nil
+	})
+}
+
+// ReferencedFiles returns local input/access paths without opening credentials.
+// It uses the same field rules as inventory publication and includes unused
+// declared credentials, which remain user-owned files.
+func ReferencedFiles(in Input) ([]string, error) {
+	if in.Document == nil || len(in.Document.Content) != 1 || in.Path == "" {
+		return nil, fmt.Errorf("a decoded input document is required to enumerate file references")
+	}
+	files := []string{in.Path}
+	if in.OverridesPath != "" {
+		files = append(files, in.OverridesPath)
+	}
+	err := visitFileReferences(in.Document.Content[0], "", func(value *yaml.Node) error {
+		files = append(files, resolvePath(filepath.Dir(in.Path), value.Value))
+		return nil
+	})
+	return files, err
+}
+
+func visitFileReferences(n *yaml.Node, p string, visit func(*yaml.Node) error) error {
 	if n.Kind == yaml.MappingNode {
 		for i := 0; i < len(n.Content); i += 2 {
 			key := n.Content[i].Value
@@ -637,19 +667,16 @@ func rebase(n *yaml.Node, oldBase, newBase, p string) error {
 			}
 			isFile := key == "caFile" || key == "knownHostsFile" || key == "file" && (p == "/discovery/addressLookup/sources" || strings.HasSuffix(p, "kubeconfigRef") || strings.HasSuffix(p, "passwordRef") || strings.HasSuffix(p, "privateKeyRef"))
 			if isFile && value.Kind == yaml.ScalarNode && value.Tag == "!!str" && value.Value != "" {
-				abs := resolvePath(oldBase, value.Value)
-				rel, err := filepath.Rel(newBase, abs)
-				if err != nil {
+				if err := visit(value); err != nil {
 					return err
 				}
-				value.Value = rel
-			} else if err := rebase(value, oldBase, newBase, next); err != nil {
+			} else if err := visitFileReferences(value, next, visit); err != nil {
 				return err
 			}
 		}
 	} else if n.Kind == yaml.SequenceNode {
 		for _, v := range n.Content {
-			if err := rebase(v, oldBase, newBase, p); err != nil {
+			if err := visitFileReferences(v, p, visit); err != nil {
 				return err
 			}
 		}

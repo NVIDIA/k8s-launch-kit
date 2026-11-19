@@ -5,9 +5,9 @@ SPDX-License-Identifier: Apache-2.0
 
 # Procedural documentation sources
 
-`dpf-discovery.json` owns the user steps and flow transitions for seven DPF
+`dpf-discovery.json` owns the user steps and flow transitions for eight DPF
 procedures: inventory, address-candidate lookup, refresh, management-network
-checks, HBN-BGP preflight, generation and deployment. Its generated page is
+checks, HBN-BGP preflight, generation, deployment and standalone validation. Its generated page is
 `docs/user/dpf-workflows.md`; edit the JSON, not the generated Markdown.
 
 This is a **repository-owned documentation extension**, not a native executable

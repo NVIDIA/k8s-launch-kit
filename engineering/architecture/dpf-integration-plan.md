@@ -1052,7 +1052,11 @@ bundle paths. It never constructs the Host deploy operation. The DPF operation
 owns fresh prerequisite observations, retained management/tenant resources,
 selected enrollment and software, service declarations, supported external
 activation, host PF configuration and the complete directed traffic matrix.
-`validate` and composed `pipeline` remain unavailable for this target. JSON mode
+Standalone `validate` now observes the retained deployment through
+`pkg/dpf/app` and `pkg/dpf/validation`, using read-oriented native adapters and
+shared HTML page components. It does not require deployment history or acquire
+repair authority. The composed `pipeline` remains unavailable for this target.
+Deployment JSON mode
 emits one result on failure as well as success; a failed operation retains a
 nonzero process exit and the safe reason for its last stage.
 

@@ -34,10 +34,11 @@ with a source filename and document number where applicable.
 
 Omitting `--target` selects `host`. `dpf` supports standalone
 [discovery](../user/dpf-discovery.md), [HBN-BGP manifest generation](../user/dpf-generation.md),
-and [deployment](../user/dpf-deployment.md) with provisioning and runtime checks.
+[deployment](../user/dpf-deployment.md) with provisioning and runtime checks,
+and [standalone validation](../user/dpf-validation.md) with HTML reporting.
 The current BF4/HBN-BGP cohort remains beta; command availability does not
-qualify every hardware and release combination. DPF standalone validation and
-the root pipeline remain unavailable and return exit `2`.
+qualify every hardware and release combination. The DPF root pipeline remains
+unavailable and returns exit `2`.
 Management probes cover every observed node that meets the existing readiness and
 platform checks; node count alone does not establish control-plane HA or production
 qualification.
@@ -49,20 +50,20 @@ flag groups and `l8k schema` for each flag's `targets` list.
 
 | Flag | Applies to | Target scope | Description |
 | --- | --- | --- | --- |
-| `--inventory` | discover, generate, deploy | dpf | Required environment/access inventory. Pass discovery output to later phases. |
+| `--inventory` | discover, generate, deploy, validate | dpf | Required environment/access inventory. Pass discovery output to later phases. |
 | `--resume` | deploy | dpf | Resume the reported `namespace/name/UID` initial-deployment operation with the same explicit site and retained bundle; uncertain effects are observed, never blindly replayed. |
 | `--use-case` | discover, generate | dpf | Select `hbn-bgp` readiness checks; overrides `useCase` in optional DPF overrides or retained discovery settings. |
 | `--target` | discover, generate, deploy, validate, root pipeline | target-agnostic | Target name. Defaults to `host`. |
 | `--kubeconfig` | root, discover, generate with deploy, deploy, clean, validate, sosreport | host | Path to kubeconfig. Falls back to `$KUBECONFIG` and then `~/.kube/config`. It represents the host workload cluster, not a universal multi-context input. |
-| `--user-config` | root, discover, generate, deploy, clean, validate | host; DPF standalone discover/generate/deploy | Host configuration, or optional supported DPF overrides alongside required `--inventory`. |
+| `--user-config` | root, discover, generate, deploy, clean, validate | host; DPF standalone discover/generate/deploy/validate | Host configuration, or optional supported DPF overrides alongside required `--inventory`. |
 | `--config-dir` | all | host | Directory containing optional `l8k-config.yaml` and `presets/` overrides. |
 | `--network-operator-release` | root, discover, generate | host | Catalogued release line such as `26.1`, `26.4`, `26.7`, or `26.10`. |
 | `--network-operator-namespace` | root, discover, generate, deploy, clean, validate | host | Override the Network Operator namespace. It is a no-op for discovery. |
 | `--skip-network-operator-helm` | generate, deploy, validate, root pipeline | host | Skip `values.yaml` generation, Network Operator chart installation, and Helm-specific validation. Custom-resource handling remains enabled. |
 | `--flavor` | root, discover, generate, deploy, validate, clean | host | `k8s` or `ocp`, overriding config. Clean accepts the flag to reject OpenShift cleanup explicitly. |
-| `--output json` | all (inherited) | target-agnostic | Command-specific output; validation emits a stream, preset/sosreport success remains text, and standalone deploy has no success envelope. See [Automation](../integrator/automation.md#json-mode). |
+| `--output json` | all (inherited) | target-agnostic | Command-specific output; Host validation emits a stream, DPF validation emits one terminal result, and preset/sosreport success remains text. See [Automation](../integrator/automation.md#json-mode). |
 | `--yes`, `-y` | root pipeline only | target-agnostic | Auto-confirm root prompts. Subcommands reject this flag; lifecycle JSON mode auto-confirms. |
-| `--quiet` | root pipeline, discover | target-agnostic | Suppress informational output; discovery keeps the final result and errors. |
+| `--quiet` | root pipeline, discover, validate | target-agnostic | Suppress informational progress; keep the terminal result and errors. |
 | `--log-level` | all | target-agnostic | Enable `trace`, `debug`, `info`, `warn`, or `error` logging. `debug` shows structured progress; `trace` also shows bounded command output. |
 | `--log-file` | all | target-agnostic | Write logs to a file instead of `stderr`. |
 
@@ -99,7 +100,7 @@ available throughout the command tree.
 | `--skip-network-operator-helm` | yes | — | yes | yes | yes | — |
 | `--deployment-files` | — | — | — | yes | yes | — |
 | `--yes` | yes | — | — | — | — | — |
-| `--quiet` | yes | yes | — | — | — | — |
+| `--quiet` | yes | yes | — | — | yes | — |
 | Validation flags below | — | — | — | — | yes | — |
 | `--keep-helm-chart` | — | — | — | — | — | yes |
 
@@ -211,7 +212,28 @@ non-interactive and auto-confirms, so use `--output json` only after verifying
 the kubeconfig and resolved namespace. See [Cleanup](../user/cleanup.md) for the
 full deletion boundary.
 
-## Validate Flags
+## DPF Validate Flags
+
+DPF requires explicit `--inventory` and `--deployment-files`. It uses the inventory's
+management access and the bundle's retained desired configuration. See
+[DPF validation](../user/dpf-validation.md) for checks, budgets and acceptance.
+
+| Flag | Meaning |
+| --- | --- |
+| `--inventory` | Discovery inventory and environment/access inputs. |
+| `--deployment-files` | Complete retained HBN-BGP deployment directory. |
+| `--user-config` | Optional supported overrides matching retained desired settings. |
+| `--connectivity` | Full validation by default; `false` selects API resource checks only. |
+| `--wait` | Zero takes one resource snapshot; a positive duration permits pending-resource convergence. |
+| `--connectivity-timeout` | Full-mode runtime budget; omitted/zero uses the selected-host formula. Invalid with `--connectivity=false`, including explicit zero. |
+| `--report-path` | Private adjacent HTML by default, an explicit safe path outside inputs/bundle, or `-` to disable. |
+| `--output json` | One terminal result with checks, coverage and report disposition. |
+| `--quiet` | Suppress progress while retaining the terminal result. |
+
+Host kubeconfig/flavor, test-workload retention, JUnit and RDMA selectors do not
+apply to DPF.
+
+## Host Validate Flags
 
 When `--deployment-files` contains only user-provided `*example*.yaml` test
 DaemonSets, `validate` runs connectivity only. Adding `values.yaml` or any

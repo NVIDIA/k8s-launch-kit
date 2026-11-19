@@ -30,11 +30,11 @@ var _ = Describe("target boundary", func() {
 		Expect(result["target"]).To(Equal("dpf"))
 		Expect(result["execution"]).To(Equal("failed"))
 	})
-	It("advertises standalone discovery, generation and deployment with separate adapters", func() {
+	It("advertises standalone discovery, generation, deployment and validation with separate adapters", func() {
 		for _, p := range []target.Phase{target.Generate, target.Deploy, target.Validate, target.Pipeline} {
 			_, e := NewDiscoverAdapter(Request{}).Bind(target.Invocation{Target: target.DPF, Phase: p})
 			Expect(e).To(HaveOccurred())
-			Expect(Descriptor().Capability(p).Available).To(Equal(p == target.Generate || p == target.Deploy))
+			Expect(Descriptor().Capability(p).Available).To(Equal(p == target.Generate || p == target.Deploy || p == target.Validate))
 		}
 	})
 	It("keeps live preparation status on stderr and suppresses it with quiet without changing JSON", func() {

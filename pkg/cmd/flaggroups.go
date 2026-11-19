@@ -68,7 +68,7 @@ var groupTitles = map[string]string{
 	GroupExecution:     "Target-Agnostic Execution Flags",
 	GroupDeploy:        "Host Target Deploy Flags",
 	GroupClean:         "Host Target Clean Flags",
-	GroupValidation:    "Host Target Validation Flags",
+	GroupValidation:    "Validation Flags",
 	GroupOutputLogging: "Target-Agnostic Output & Logging Flags",
 }
 

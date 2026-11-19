@@ -23,12 +23,13 @@ import (
 func Descriptor() target.Descriptor {
 	phases := map[target.Phase]target.Capability{}
 	for _, p := range append(target.PublicPhases(), target.Pipeline) {
-		phases[p] = target.Capability{Available: false, Reason: "DPF validation and the composite pipeline are not implemented; use the standalone discover, generate and deploy commands"}
+		phases[p] = target.Capability{Available: false, Reason: "The DPF composite pipeline is not implemented; use the standalone discover, generate, deploy and validate commands"}
 	}
 	phases[target.Deploy] = target.Capability{Available: true, Reason: "HBN-BGP provisioning and runtime validation for the explicitly selected hosts and DPUs"}
 	phases[target.Generate] = target.Capability{Available: true, Reason: "HBN-BGP artifact generation; deployment readiness requires fresh checks"}
 	phases[target.Discover] = target.Capability{Available: true, Reason: "inventory discovery and management-network diagnostics; deployment eligibility is evaluated by the selected use case"}
-	return target.Descriptor{Name: target.DPF, Description: "Independent DPF discovery and HBN-BGP generation and deployment", Phases: phases}
+	phases[target.Validate] = target.Capability{Available: true, Reason: "Standalone current-state HBN-BGP resource and runtime validation from explicit inventory and a retained bundle"}
+	return target.Descriptor{Name: target.DPF, Description: "Independent DPF discovery and HBN-BGP generation, deployment and validation", Phases: phases}
 }
 
 type Request struct {

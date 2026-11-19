@@ -55,6 +55,12 @@ requirements are checked after the effective configuration is resolved.
 
 ## DPF discovery configuration
 
+DPF discover, generate, deploy and validate use inventory plus optional supported
+overrides. Validation also requires the complete generated bundle; supplied
+overrides must preserve its desired settings. Management access comes from the
+inventory, and relative access references stay relative to that file. See
+[DPF validation](../user/dpf-validation.md) for current checks and scope.
+
 DPF has two user inputs. `--inventory` identifies the environment to inspect and
 use. `--user-config` is optional and changes supported defaults. Host-target
 configuration is separate and retains its existing `--user-config` behavior.
@@ -158,7 +164,7 @@ settings to an existing bundle.
 
 ## Deploy And Validate Config Lookup
 
-Standalone deploy and validate choose the first existing candidate in this order:
+Standalone Host deploy and validate choose the first existing candidate in this order:
 
 1. Explicit `--user-config` (selected even when unreadable; no lower path is tried).
 2. `<deployment-files>/.l8k/resolved-config.yaml`.

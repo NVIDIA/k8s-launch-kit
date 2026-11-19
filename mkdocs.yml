@@ -91,6 +91,7 @@ nav:
       - DPF discovery preview: user/dpf-discovery.md
       - DPF HBN-BGP generation: user/dpf-generation.md
       - DPF HBN-BGP deployment: user/dpf-deployment.md
+      - DPF HBN-BGP validation: user/dpf-validation.md
       - Generate and review manifests: advanced/generation.md
       - Deploy manifests: advanced/deployment.md
       - Deploy on OpenShift: user/openshift.md

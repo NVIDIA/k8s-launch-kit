@@ -152,7 +152,7 @@ func TestImportantFlagScopes(t *testing.T) {
 		{command: deployCmd, flag: "dry-run", expected: []target.Name{target.Host, target.DPF}},
 		{command: deployCmd, flag: "user-config", expected: []target.Name{target.Host, target.DPF}},
 		{command: deployCmd, flag: "deployment-files", expected: []target.Name{target.Host, target.DPF}},
-		{command: validateCmd, flag: "connectivity", expected: []target.Name{target.Host}},
+		{command: validateCmd, flag: "connectivity", expected: []target.Name{target.Host, target.DPF}},
 		{command: generateCmd, flag: "skip-network-operator-helm", expected: []target.Name{target.Host}},
 		{command: deployCmd, flag: "skip-network-operator-helm", expected: []target.Name{target.Host}},
 		{command: validateCmd, flag: "skip-network-operator-helm", expected: []target.Name{target.Host}},
@@ -257,7 +257,7 @@ func TestTargetDescriptors(t *testing.T) {
 	assert.Equal(t, target.DPF, descriptors[1].Name)
 	for _, phase := range target.PublicPhases() {
 		assert.True(t, descriptors[0].Capability(phase).Available)
-		assert.Equal(t, phase == target.Discover || phase == target.Generate || phase == target.Deploy, descriptors[1].Capability(phase).Available)
+		assert.Equal(t, phase == target.Discover || phase == target.Generate || phase == target.Deploy || phase == target.Validate, descriptors[1].Capability(phase).Available)
 		assert.NotEmpty(t, descriptors[1].Capability(phase).Reason)
 	}
 }
@@ -280,7 +280,7 @@ func TestTargetCLIProcess(t *testing.T) {
 		assert.Equal(t, "host", actual.Targets[0].Name)
 		assert.Equal(t, "dpf", actual.Targets[1].Name)
 		assert.True(t, actual.Targets[0].Phases["validate"].Available)
-		assert.False(t, actual.Targets[1].Phases["validate"].Available)
+		assert.True(t, actual.Targets[1].Phases["validate"].Available)
 		assert.Equal(t, []string{"host", "dpf"}, actual.Flags["--output"].Targets)
 		assert.Equal(t, []string{"host"}, actual.Flags["--fabric"].Targets)
 		assert.Equal(t, []string{"dpf"}, actual.Flags["--use-case"].Targets)
@@ -323,18 +323,6 @@ func TestTargetCLIProcess(t *testing.T) {
 		assert.Contains(t, output, "--use-case must be hbn-bgp")
 		assert.Contains(t, output, "INVALID_CONFIGURATION")
 	})
-
-	for _, phase := range target.PublicPhases() {
-		if phase == target.Discover || phase == target.Generate || phase == target.Deploy {
-			continue
-		}
-		t.Run("dpf "+string(phase)+" capability error", func(t *testing.T) {
-			output, exitCode := runCLIHelper(t, string(phase), "--target", "dpf")
-			assert.Equal(t, 2, exitCode)
-			assert.Contains(t, output, `invalid target invocation`)
-			assert.Contains(t, output, `target "dpf" does not implement phase "`+string(phase)+`"`)
-		})
-	}
 
 	t.Run("DPF deploy requires inventory and bundle while site overrides are optional", func(t *testing.T) {
 		for _, args := range [][]string{
@@ -391,9 +379,9 @@ func TestTargetCLIProcess(t *testing.T) {
 	})
 
 	t.Run("explicit false host flag is rejected for dpf", func(t *testing.T) {
-		output, exitCode := runCLIHelper(t, "validate", "--target", "dpf", "--connectivity=false")
+		output, exitCode := runCLIHelper(t, "validate", "--target", "dpf", "--keep=false")
 		assert.Equal(t, 2, exitCode)
-		assert.Contains(t, output, `--connectivity (targets: host)`)
+		assert.Contains(t, output, `--keep (targets: host)`)
 	})
 
 	t.Run("dpf capability errors preserve json output mode", func(t *testing.T) {

@@ -11,7 +11,21 @@ metadata:
 
 > **PREREQUISITE:** Read `../k8s-launch-kit-shared/SKILL.md` for install paths, global flags, and exit codes.
 
-This workflow uses the default `host` target; `--target host` is equivalent.
+## DPF target
+
+For explicitly requested DPF validation, follow the [standalone procedure](../../docs/user/dpf-workflows.md#hbn-bgp-validation)
+and [DPF validation guide](../../docs/user/dpf-validation.md). Supply the caller's
+explicit discovery inventory and complete retained HBN-BGP bundle. Default full
+validation adds physical, BGP, route and directed host traffic checks;
+`--connectivity=false` requests resource checks only. Preserve stdout, stderr,
+exit status and actual HTML report disposition. DPF emits one terminal JSON
+result after validation starts. Missing observations are not passes. Do not
+install, reset, change hosts/switches or create a deployment operation to make
+validation run or pass.
+
+## Host target
+
+The remaining workflow uses the default `host` target; `--target host` is equivalent.
 The CLI snapshots validation arguments and runs the standalone Host validation
 and report service through the target registry; checks and report semantics
 are unchanged.

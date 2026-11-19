@@ -53,7 +53,7 @@ func TestSchemaDescribesTargetsAdditively(t *testing.T) {
 
 	for _, phase := range target.PublicPhases() {
 		assert.Truef(t, host.Phases[string(phase)].Available, "host phase %s", phase)
-		assert.Equalf(t, phase == target.Discover || phase == target.Generate || phase == target.Deploy, dpf.Phases[string(phase)].Available, "dpf phase %s", phase)
+		assert.Equalf(t, phase == target.Discover || phase == target.Generate || phase == target.Deploy || phase == target.Validate, dpf.Phases[string(phase)].Available, "dpf phase %s", phase)
 		assert.NotEmptyf(t, dpf.Phases[string(phase)].Reason, "dpf phase %s reason", phase)
 	}
 

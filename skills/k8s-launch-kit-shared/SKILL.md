@@ -81,8 +81,10 @@ Generation needs explicit `--inventory` and `--save-deployment-files`; review
 its bundle before running the separate deploy command. Standalone DPF deploy
 applies that retained HBN-BGP bundle and checks provisioning, BGP, routes and
 cross-host traffic. It requires explicit site and bundle paths; use the deploy
-skill and DPF deployment guide. DPF standalone validate and the root pipeline
-remain unavailable. Use `l8k schema` to inspect phase availability before selecting
+skill and DPF deployment guide. Standalone DPF validate accepts the same explicit
+inventory and bundle, observes current state without repair, and writes HTML;
+follow the [DPF validation guide](../../docs/user/dpf-validation.md). The DPF root
+pipeline remains unavailable. Use `l8k schema` to inspect phase availability before selecting
 any non-host target. Host-only flags such as
 `--fabric`, `--kubeconfig`, and the Network Operator/Spectrum-X flags are
 rejected when explicitly combined with another target.
@@ -137,8 +139,10 @@ it instead of maintaining a separate CLI-to-YAML mapping.
 
 Use `--output json` for lifecycle commands. Root/discover/generate produce a
 single result envelope; clean produces a cleanup result. Standalone deploy
-has no finalized success envelope: use its exit status. Validate emits a stream
-of result objects, including a separate `reportPath` object when written.
+for Host has no finalized success envelope: use its exit status. Host validate
+emits a stream of result objects, including a separate `reportPath` object when
+written. DPF validate emits one terminal result with actual HTML report
+disposition; see [DPF automation](../../docs/user/dpf-validation.md#automate-without-losing-the-result).
 `schema` and `version --output json` each return one object. Preset commands
 and sosreport emit text on success even with the inherited output flag.
 

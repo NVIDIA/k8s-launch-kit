@@ -223,12 +223,32 @@ New and changed workflow checks SHALL persist a stable reason code and safe expl
 - **AND** only the known pending configuration state can enter this wait; replacement, conflicting intent, denied/unmeasured reads, incompatible reported versions, terminal failures and cancellation do not authorize work.
 - **AND** restoration never resubmits a claimed physical action or replaces the original operation.
 
+### Requirement: Standalone DPF validation has observation authority only
+
+Standalone DPF validation SHALL bind explicit inventory and a complete retained
+HBN-BGP bundle through its target adapter. It SHALL reuse pure desired-state
+preparation and current read/diagnostic components without invoking deployment,
+reset, remediation, host configuration or operation-record creation.
+
+#### Scenario: Current inputs differ from the retained deployment
+
+- **WHEN** supplied selection, desired configuration or trust policy differs from the retained handoff
+- **THEN** validation stops with an actionable preparation result before remote probes; unavailable physical credentials alone do not discard independent API coverage.
+
+#### Scenario: Resource-only scope and bounded waiting
+
+- **WHEN** the caller selects `--connectivity=false`
+- **THEN** management/tenant resources and selected workloads remain required, while physical/BGP/routes/traffic are explicitly excluded; any explicit connectivity timeout is invalid.
+- **AND** positive `--wait` retries known progressing snapshots only while no terminal blocker exists; malformed/future state, access failure and drift cannot be relabeled Pending.
+
 ## Baseline and limits
 
 Standalone DPF HBN-BGP deploy composes the retained management, tenant, enrollment,
 software, service, activation, host-network and runtime stages. Its explicit site
-and bundle inputs do not enable a Host fallback. DPF standalone validate, the
-composite pipeline and generate-with-deploy remain unavailable.
+and bundle inputs do not enable a Host fallback. Standalone DPF validation uses
+the same retained selection through read/diagnostic interfaces and does not
+require or alter deployment operation history. The composite pipeline and
+generate-with-deploy remain unavailable.
 
 External reset handling requires independent current shutdown/task/copy checks
 before a one-time host action, followed by a changed host boot and fresh selected

@@ -4,7 +4,7 @@ Kubernetes Launch Kit (`l8k`) helps platform teams deploy NVIDIA networking on K
 Standard SR-IOV, RDMA-shared and host-device profiles enable NIC tuning by default; opt out with `--deploy-nic-configuration-template=false`. See [NIC configuration](docs/reference/configuration.md#nic-configuration-and-naming) for fabric-specific settings and operator ownership.
 
 
-The current lifecycle uses the `host` target by default. For a separate DPU estate, the `dpf` target supports standalone discovery, HBN-BGP artifact generation, and deployment with provisioning and runtime checks. The current BF4/HBN-BGP cohort remains beta; command availability does not qualify every hardware and release combination. DPF standalone validation and the root pipeline remain unavailable. DPF deployment stops for unusable bootstrap credentials when the expected tenant Node is absent; see [credential recovery](docs/user/dpf-deployment.md#recover-from-unavailable-bootstrap-credentials). DPF deploy can resume its recorded initial operation with `--resume`, binding saved ownership before assessing fresh prerequisites; see [recovery](docs/user/dpf-deployment.md#read-the-result-and-recover-from-a-stop).
+The current lifecycle uses the `host` target by default. For a separate DPU estate, the `dpf` target supports standalone discovery, HBN-BGP artifact generation, and deployment with provisioning and runtime checks. The current BF4/HBN-BGP cohort remains beta; command availability does not qualify every hardware and release combination. Standalone [DPF validation](docs/user/dpf-validation.md) checks the retained deployment with a self-contained HTML report. The DPF root pipeline remains unavailable. DPF deployment stops for unusable bootstrap credentials when the expected tenant Node is absent; see [credential recovery](docs/user/dpf-deployment.md#recover-from-unavailable-bootstrap-credentials). DPF deploy can resume its recorded initial operation with `--resume`, binding saved ownership before assessing fresh prerequisites; see [recovery](docs/user/dpf-deployment.md#read-the-result-and-recover-from-a-stop).
 DPF inventory can use explicit host/ARM SSH or BMC Redfish sources without an existing
 management cluster. Inventory success is separate from provisioning readiness.
 HBN-BGP ASIC readiness requires the [qualified Cumulus reader](docs/user/dpf-discovery.md#check-hbn-bgp-prerequisites);
@@ -129,7 +129,7 @@ Apply the generated deployment files to your Kubernetes cluster by using --deplo
 
 ### AI Agent / Automation Support
 Use --output json for a structured result from this root pipeline.
-Subcommands have their own output contracts; validate emits a JSON stream.
+Subcommands have their own output contracts: Host validation emits a JSON stream; DPF validation emits one terminal result document.
 Use `l8k validate --junit-path ./reports/validation.xml` to also produce
 [JUnit results](docs/user/validation.md#junit-xml), with a suite per connectivity
 family and a testcase per directional pod/rail probe.

@@ -21,7 +21,10 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/nvidia/k8s-launch-kit/pkg/dpf/app"
+	"github.com/nvidia/k8s-launch-kit/pkg/dpf/validation"
 	"github.com/nvidia/k8s-launch-kit/pkg/target"
+	dpftarget "github.com/nvidia/k8s-launch-kit/pkg/target/dpf"
 	hosttarget "github.com/nvidia/k8s-launch-kit/pkg/target/host"
 )
 
@@ -43,11 +46,21 @@ var (
 
 var validateCmd = &cobra.Command{
 	Use:   "validate",
-	Short: "Verify a deployment matches the selected Network Operator release",
+	Short: "Verify the selected target's deployment state and connectivity",
 	Long: `Validate that a previously generated deployment is correctly applied to
 the cluster.
 
-When generated deployment inputs are present, three checks are run:
+With --target dpf, validate the retained HBN-BGP deployment using explicitly
+provided --inventory and --deployment-files. DPF defaults to full resource and
+runtime checks. --connectivity=false selects resource checks only, excluding
+physical, host networking, switch, BGP, route and traffic probes. Validation
+does not install or repair the deployment. Management access comes from the
+inventory, without an ambient kubeconfig fallback. The default HTML report is
+written into a new private directory beside the bundle. JSON is one final DPF
+result, including preparation failures and partial validation results.
+
+For the default Host target, when generated deployment inputs are present,
+three checks are run:
 
   1. Network Operator version: on Kubernetes, the Helm chart's appVersion
      is compared with networkOperator.selectedRelease; on OpenShift, the
@@ -86,7 +99,13 @@ matrix also fails; every selected check family must produce a gating test, and
 non-gating cross-rail observations do not count. A gateway check with verified
 absence of a configured gateway is explicitly skipped and does not require
 a successful probe; zero endpoints still fails coverage.`,
-	Example: `  # Full validate (manifest state + connectivity matrix)
+	Example: `  # Full DPF resource and runtime validation from retained inputs
+  l8k validate --target dpf --inventory dpf-discovered.yaml --deployment-files ./hbn-bgp
+
+  # DPF resource checks only; no physical or network probes
+  l8k validate --target dpf --inventory dpf-discovered.yaml --deployment-files ./hbn-bgp --connectivity=false
+
+  # Full Host validate (manifest state + connectivity matrix)
   l8k validate
 
   # Connectivity only using a user-provided test DaemonSet in this directory
@@ -107,11 +126,38 @@ a successful probe; zero endpoints still fails coverage.`,
   # Agent mode (JSON output)
   l8k validate --output json 2>/dev/null`,
 	Run: func(cmd *cobra.Command, _ []string) {
+		if targetName == string(target.DPF) {
+			runTargetCommand(cmd, target.Validate, dpftarget.NewValidateAdapter(newDPFValidateRequest(cmd), dpftarget.NewValidateRunner()))
+			return
+		}
 		runTargetCommand(cmd, target.Validate, hosttarget.NewValidateAdapter(
 			newHostValidateRequest(cmd),
 			hosttarget.NewValidateRunner(),
 		))
 	},
+}
+
+func newDPFValidateRequest(cmd *cobra.Command) dpftarget.ValidateRequest {
+	mode := validation.ModeFull
+	if !validateConnectivity {
+		mode = validation.ModeResources
+	}
+	request := dpftarget.ValidateRequest{
+		ValidationRequest: app.ValidationRequest{
+			Inventory: dpfInventoryPath, UserConfig: userConfig, DeploymentFiles: deploymentFiles,
+			Mode: mode, Wait: validateWait, ConnectivityTimeout: validateConnectivityTimeout,
+			ConnectivityTimeoutSet: cmd.Flags().Changed("connectivity-timeout"),
+			ReportPath:             validateReportPath, Version: Version,
+		},
+		Stdout: cmd.OutOrStdout(), Stderr: cmd.ErrOrStderr(),
+	}
+	if !cmd.Flags().Changed("deployment-files") {
+		request.DeploymentFiles = ""
+	}
+	if !cmd.Flags().Changed("user-config") {
+		request.UserConfig = ""
+	}
+	return request
 }
 
 func newHostValidateRequest(cmd *cobra.Command) hosttarget.ValidateRequest {
@@ -162,23 +208,27 @@ func newHostValidateRequest(cmd *cobra.Command) hosttarget.ValidateRequest {
 func init() {
 	rootCmd.AddCommand(validateCmd)
 	addTargetFlag(validateCmd)
+	validateCmd.Flags().StringVar(&dpfInventoryPath, "inventory", "", "DPF inventory YAML input (required for --target dpf)")
+	setFlagGroup(validateCmd, "inventory", GroupCommon)
+	validateCmd.Flags().BoolVarP(&quietFlag, "quiet", "q", false, "Suppress validation progress (final result and errors still shown)")
+	setFlagGroup(validateCmd, "quiet", GroupOutputLogging)
 
 	validateCmd.Flags().StringVar(&kubeconfig, "kubeconfig", "", "Path to kubeconfig file (falls back to $KUBECONFIG, then ~/.kube/config)")
-	validateCmd.Flags().StringVar(&deploymentFiles, "deployment-files", DefaultDeploymentDir, "Directory containing generated manifests and *example*.yaml connectivity test DaemonSets. A test-only directory selects connectivity-only validation.")
-	validateCmd.Flags().StringVar(&userConfig, "user-config", "", "Cluster config file (auto-detected from ./cluster-config.yaml). Connectivity requires a user-owned file with profile.routing and validation.gpuDirect.enabled.")
+	validateCmd.Flags().StringVar(&deploymentFiles, "deployment-files", DefaultDeploymentDir, "Generated deployment directory. DPF requires this flag explicitly and a complete retained HBN-BGP bundle. Host accepts manifests and *example*.yaml connectivity DaemonSets; a test-only directory selects connectivity-only validation.")
+	validateCmd.Flags().StringVar(&userConfig, "user-config", "", "Host: cluster config (auto-detected from ./cluster-config.yaml); connectivity requires explicit profile.routing and validation.gpuDirect.enabled. DPF: optional supported access overrides alongside required inventory.")
 	validateCmd.Flags().StringVar(&flavor, "flavor", "", "Cluster flavor: k8s or ocp (overrides config)")
 	validateCmd.Flags().StringVar(&networkOperatorNamespace, "network-operator-namespace", "", "Override the network operator namespace from cluster-config.yaml")
 	validateCmd.Flags().BoolVar(&skipNetworkOperatorHelm, "skip-network-operator-helm", false, "Skip Network Operator Helm release version and values validation")
-	validateCmd.Flags().BoolVar(&validateConnectivity, "connectivity", true, "Run a source-bound connectivity matrix (gateway + icmp + rping + ib_write_bw) between pods of the example DaemonSet. Default true. Pass --connectivity=false to skip when only the static manifest checks are wanted.")
+	validateCmd.Flags().BoolVar(&validateConnectivity, "connectivity", true, "Run runtime connectivity checks (default true). Host: source-bound gateway, icmp, rping and ib_write_bw pod matrix. DPF: physical and host/switch network checks, BGP, routes and directed host ICMP. False selects resource checks only.")
 	validateCmd.Flags().BoolVar(&validateKeep, "keep", false, "Leave the example DaemonSet running after --connectivity completes (useful for debugging).")
-	validateCmd.Flags().DurationVar(&validateConnectivityTimeout, "connectivity-timeout", 0, "Maximum wall-clock budget for connectivity workload setup and test execution. 0 (default) calculates the budget from the generated matrix plan.")
+	validateCmd.Flags().DurationVar(&validateConnectivityTimeout, "connectivity-timeout", 0, "Total runtime-check budget. Zero calculates the budget from the selected matrix. DPF rejects this flag with --connectivity=false, including explicit zero.")
 	validateCmd.Flags().StringVar(&validateMode, "validation-mode", "", "Connectivity validation mode: quick, full, or strict. Overrides validation.mode from cluster-config.yaml.")
 	validateCmd.Flags().StringSliceVar(&validateChecks, "validation-checks", nil, "Comma-separated checks to run during connectivity validation. Supported: gateway, icmp, rping, ib_write_bw. Overrides validation.checks from cluster-config.yaml.")
 	validateCmd.Flags().IntVar(&validateRDMAIterations, "rdma-rping-iterations", 0, "Number of rping client iterations. Overrides validation.rdma.rpingIterations from cluster-config.yaml.")
 	validateCmd.Flags().IntVar(&validateRDMAIBWriteSize, "rdma-ib-write-size", 0, "Message size for ib_write_bw -s. Overrides validation.rdma.ibWriteSize from cluster-config.yaml.")
 	validateCmd.Flags().Float64Var(&validateRDMAIBWriteMinGbps, "rdma-ib-write-min-bandwidth-gbps", 0, "Minimum observed ib_write_bw peak bandwidth in Gbps required for a test to pass. Use 0 to disable bandwidth gating. Overrides validation.rdma.ibWriteMinBandwidthGbps from cluster-config.yaml.")
 	validateCmd.Flags().DurationVar(&validateWait, "wait", 0, "Block validate up to this duration waiting for in-progress manifests to reach a terminal state. 0 (default) returns immediately on the first snapshot.")
-	validateCmd.Flags().StringVar(&validateReportPath, "report-path", "", "Write the HTML validation report to this path. When empty (default), writes to <deployment-files>/k8s-launch-kit-validation-report.html. Pass '-' to skip the report file entirely.")
+	validateCmd.Flags().StringVar(&validateReportPath, "report-path", "", "HTML validation report path. Host default: <deployment-files>/k8s-launch-kit-validation-report.html. DPF default: validation.html in a new private directory beside the retained bundle. Pass '-' to skip HTML.")
 
 	validateCmd.Flags().StringVar(&validateJUnitPath, "junit-path", "", "Write JUnit XML to this file alongside text/JSON output (disabled when omitted).")
 	setFlagGroup(validateCmd, "kubeconfig", GroupCommon)
