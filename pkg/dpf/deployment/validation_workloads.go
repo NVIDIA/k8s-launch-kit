@@ -167,7 +167,7 @@ func (o *validationObserver) observeValidationRuntimeResourcesWithImage(ctx cont
 		if graphErr != nil {
 			r.recordError("hbn/coverage", graphErr)
 			r.recordError("workloads/coverage", graphErr)
-			recordRuntimePendingDependencies(r, graphErr)
+			recordRuntimeIncompleteDependencies(r, graphErr)
 			return nil
 		}
 		// Retained immutable prerequisites are compared independently of runtime.
@@ -182,7 +182,7 @@ func (o *validationObserver) observeValidationRuntimeResourcesWithImage(ctx cont
 		snapshot, leases, leaseErr = observeCurrentAllocation(ctx, management, tenant, o.desired, graph)
 		if leaseErr != nil {
 			r.recordError("hbn/coverage", leaseErr)
-			recordRuntimePendingDependencies(r, leaseErr)
+			recordRuntimeIncompleteDependencies(r, leaseErr)
 			return nil
 		}
 		sfcBefore, sfcErr = currentSFCAnchors(ctx, tenant, o.desired, graph, snapshot)
@@ -289,6 +289,29 @@ func (o *validationObserver) observeValidationRuntimeResourcesWithImage(ctx cont
 		return validationRuntimeError(ctx, err, false)
 	}
 	return nil
+}
+
+// An incomplete semantic collection cannot accept provisional passes. Keep
+// measured failures/pending evidence; a known progressing cause must also keep
+// dependent rows Pending so the resource runner can observe convergence.
+func recordRuntimeIncompleteDependencies(r *validationRecorder, cause error) {
+	var check *validationCheckError
+	pending := errors.As(cause, &check) && check.state == validation.Pending
+	for id, out := range r.outcomes {
+		if out.State != validation.Passed {
+			continue
+		}
+		spec := r.specs[id]
+		if spec.Area != validation.AreaHBN && spec.Area != validation.AreaWorkloads && !strings.HasPrefix(string(id), "physical/host-network/") {
+			continue
+		}
+		if pending {
+			r.record(id, validation.Pending, validation.ReasonProgressing, "Waiting for the selected current controller prerequisite before this collection can be accepted.", "Allow the selected controller to settle and repeat the observation.")
+		} else {
+			r.record(id, validation.Unverified, validation.ReasonDependency, "The current collection could not complete the semantic comparison required for this check.", "Resolve the reported dependency and repeat validation.")
+		}
+	}
+	recordRuntimePendingDependencies(r, cause)
 }
 
 // Only a proven progressing prerequisite makes unperformed dependent rows

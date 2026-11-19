@@ -496,19 +496,19 @@ func (o *validationObserver) OpenRuntime(ctx context.Context, _ validation.Progr
 	}
 	physicalFence, err := o.openValidationPhysicalFence(ctx)
 	if err != nil {
-		return nil, err
+		return nil, validationRuntimeStageError(ctx, validation.StageRuntimePhysical, err)
 	}
 	management, err := o.newManagement(ctx)
 	if err != nil {
-		return nil, validationRuntimeError(ctx, err, false)
+		return nil, validationRuntimeStageError(ctx, validation.StageRuntimeIdentity, err)
 	}
 	tenant, err := o.openValidationTenant(ctx, management)
 	if err != nil {
-		return nil, validationRuntimeError(ctx, err, false)
+		return nil, validationRuntimeStageError(ctx, validation.StageRuntimeIdentity, err)
 	}
 	selected, err := validationSelectedHosts(o.desired, o.request, o.physicalScope.expected)
 	if err != nil {
-		return nil, validationRuntimeError(ctx, err, false)
+		return nil, validationRuntimeStageError(ctx, validation.StageRuntimeHostNetwork, err)
 	}
 	image, imageErr := resolveHBNRuntimeImage(ctx, hbnImageReference(o.desired.plan.Intent().Generation), o.request.RequestTimeout, nil)
 	if imageErr != nil {
@@ -519,15 +519,15 @@ func (o *validationObserver) OpenRuntime(ctx context.Context, _ validation.Progr
 	}
 	anchor, err := observe(ctx)
 	if err != nil {
-		return nil, validationRuntimeError(ctx, err, false)
+		return nil, validationRuntimeStageError(ctx, validation.StageRuntimeCohort, err)
 	}
 	hosts, err := currentHostRequests(o.desired, anchor.graph, anchor.leases)
 	if err != nil {
-		return nil, validationRuntimeError(ctx, err, false)
+		return nil, validationRuntimeStageError(ctx, validation.StageRuntimeHostNetwork, err)
 	}
 	hostNetworkFence, err := openCurrentHostNetworkFence(ctx, hosts, o.request.RequestTimeout, sshprobe.VerifyHostWorkloadNetwork)
 	if err != nil {
-		return nil, validationRuntimeError(ctx, err, false)
+		return nil, validationRuntimeStageError(ctx, validation.StageRuntimeHostNetwork, err)
 	}
 	session := &validationRuntimeSession{scope: o.runtimeScope, anchor: anchor, observe: observe, read: tenant.readValidationHBN, probe: sshprobe.ProbeHostWorkloadTraffic, hosts: map[validation.HostID]validationHostRequest{}, asns: map[validation.DeviceID]uint32{}, fabricASN: o.desired.plan.Intent().Networking.FabricASN, timeout: o.request.RequestTimeout, verifyPhysical: physicalFence, verifyHostNetwork: hostNetworkFence}
 	for _, host := range hosts {
@@ -629,8 +629,8 @@ func (s *validationRuntimeSession) VerifyCohort(ctx context.Context) error {
 	}
 	if s.verifyPhysical != nil {
 		if err := s.verifyPhysical(ctx); err != nil {
-			s.poisoned = err
-			return err
+			s.poisoned = validationRuntimeStageError(ctx, validation.StageRuntimePhysical, err)
+			return s.poisoned
 		}
 	}
 	return s.fence(ctx)

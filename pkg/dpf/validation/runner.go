@@ -540,7 +540,7 @@ func NormalizeDiagnostic(d *Diagnostic) *Diagnostic {
 		return nil
 	}
 	switch d.Stage {
-	case StageRuntimeHostNetwork, StageRuntimeCurrentGraph, StageRuntimeAllocation, StageRuntimeHBN, StageRuntimeSFC, StageRuntimeIdentity, StageRuntimeCohort:
+	case StageRuntimePhysical, StageRuntimeHostNetwork, StageRuntimeCurrentGraph, StageRuntimeAllocation, StageRuntimeHBN, StageRuntimeSFC, StageRuntimeIdentity, StageRuntimeCohort:
 	default:
 		return nil
 	}

@@ -95,7 +95,16 @@ func (r currentReadTransport) RoundTrip(request *http.Request) (*http.Response, 
 // plus every real graph/allocation/HBN/SFC HTTP read for two selected DPUs.
 func newCurrentReadHTTPFixture(t *testing.T, paced bool) *currentReadHTTPFixture {
 	t.Helper()
-	adapter, _ := n3cRuntimeAdapterFixture(t, "SERIAL-A", "SERIAL-B")
+	adapter, children := n3cRuntimeAdapterFixture(t, "SERIAL-A", "SERIAL-B")
+	// The shared one-node fixture defaults numberApplied to one. This HTTP
+	// fixture realizes both selected nodes, including complete set status.
+	for _, child := range children {
+		if child.GetKind() == "ServiceInterfaceSet" || child.GetKind() == "ServiceChainSet" {
+			if err := unstructured.SetNestedField(child.Object, int64(2), "status", "numberApplied"); err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
 	f := &currentReadHTTPFixture{adapter: adapter, paths: map[string]int{}}
 	tenant := adapter.tenant
 	var err error
@@ -107,6 +116,7 @@ func newCurrentReadHTTPFixture(t *testing.T, paced bool) *currentReadHTTPFixture
 		"DPUDeployment": "dpudeployments", "DPUSet": "dpusets", "DPU": "dpus", "DPUNode": "dpunodes", "DPUDevice": "dpudevices", "DPUNodeMaintenance": "dpunodemaintenances",
 		"DPUService": "dpuservices", "DPUServiceChain": "dpuservicechains", "DPUServiceInterface": "dpuserviceinterfaces", "DPUServiceIPAM": "dpuserviceipams", "DPUServiceTemplate": "dpuservicetemplates", "DPUServiceConfiguration": "dpuserviceconfigurations", "DPUFlavor": "dpuflavors", "BlueFieldSoftware": "bluefieldsoftwares",
 	}
+	application := adapter.management.(*correctionHBNManagement).app
 	f.api = newAPIFixture(t, func(w http.ResponseWriter, r *http.Request) {
 		f.record(r)
 		if r.Method != http.MethodGet {
@@ -136,9 +146,8 @@ func newCurrentReadHTTPFixture(t *testing.T, paced bool) *currentReadHTTPFixture
 			_ = json.NewEncoder(w).Encode(secret)
 			return
 		}
-		app := adapter.management.(*correctionHBNManagement).app
-		if r.URL.Path == "/prefix/apis/argoproj.io/v1alpha1/namespaces/"+app.GetNamespace()+"/applications/"+app.GetName() {
-			_ = json.NewEncoder(w).Encode(app)
+		if r.URL.Path == "/prefix/apis/argoproj.io/v1alpha1/namespaces/"+application.GetNamespace()+"/applications/"+application.GetName() {
+			_ = json.NewEncoder(w).Encode(application)
 			return
 		}
 		for _, gv := range []string{"provisioning.dpu.nvidia.com/v1alpha1", "svc.dpu.nvidia.com/v1alpha1"} {
@@ -681,5 +690,154 @@ func TestValidationCurrentReadExtractionKeepsDeploymentWrapperFences(t *testing.
 	}
 	if object, err := f.management.Get(ctx, parent); !errors.Is(err, errManagementIdentityChanged) || object != nil {
 		t.Fatalf("deployment post-read drift fence bypassed: %v", err)
+	}
+}
+
+// Lose the allocation after retained prerequisites passed, while changing the
+// selected deployment. No after-side graph is available to accept those passes.
+func TestValidationCurrentReadIncompleteAllocationDiscardsProvisionalPasses(t *testing.T) {
+	for _, scenario := range []string{"denied", "pending"} {
+		t.Run(scenario, func(t *testing.T) {
+			f := newCurrentReadHTTPFixture(t, false)
+			ipamReads := 0
+			f.hook = func(request *http.Request) {
+				if !strings.Contains(request.URL.Path, "/dpuserviceipams/") {
+					return
+				}
+				ipamReads++
+				if ipamReads != 3 {
+					return
+				}
+				for _, object := range f.adapter.objects {
+					if object.GetKind() == "DPUDeployment" {
+						object.SetUID("replacement")
+					}
+					if object.GetKind() == "DPUServiceIPAM" && strings.HasSuffix(request.URL.Path, "/"+object.GetName()) && scenario == "pending" {
+						_ = unstructured.SetNestedSlice(object.Object, []any{conditionMap("Ready", "False", "Pending", object.GetGeneration())}, "status", "conditions")
+					}
+				}
+				if scenario == "denied" {
+					f.deny = request.URL.Path
+				}
+			}
+			completed := []validation.Outcome{}
+			r := newValidationRecorder(f.adapter.checks, func(event validation.ProgressEvent) {
+				if event.Phase == validation.Completed {
+					completed = append(completed, event.Outcome)
+				}
+			})
+			ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
+			defer cancel()
+			err := f.adapter.native.observeValidationRuntimeResourcesWithImage(ctx, f.management, f.adapter.tenant, r, func(context.Context, string, time.Duration, http.RoundTripper) (hbnPodImageIdentity, error) {
+				return f.adapter.image, nil
+			})
+			if err != nil {
+				t.Fatalf("incomplete allocation became fatal: %v", err)
+			}
+			if ipamReads < 3 {
+				t.Fatal("allocation failure was not reached after retained prerequisites")
+			}
+			r.blockRemaining()
+			for _, out := range completed {
+				if (strings.HasPrefix(string(out.ID), "hbn/") || strings.HasPrefix(string(out.ID), "workloads/")) && out.State == validation.Passed {
+					t.Fatalf("incomplete semantic collection emitted pass: %+v", out)
+				}
+			}
+			for _, id := range []validation.CheckID{"devices/coverage", "devices/SERIAL-A", "devices/SERIAL-B"} {
+				if r.outcomes[id].State != validation.Passed {
+					t.Fatalf("independent device evidence lost: %+v", r.outcomes[id])
+				}
+			}
+			if scenario == "pending" {
+				for id, out := range r.outcomes {
+					if strings.HasPrefix(string(id), "hbn/") || strings.HasPrefix(string(id), "workloads/") {
+						if out.State != validation.Pending || out.Reason != validation.ReasonProgressing {
+							t.Fatalf("progressing allocation left retry blocker: %+v", out)
+						}
+					}
+				}
+			} else {
+				if r.outcomes["hbn/coverage"].Reason != validation.ReasonDenied || r.outcomes["workloads/coverage"].State != validation.Unverified || r.outcomes["workloads/coverage"].Reason != validation.ReasonDependency {
+					t.Fatalf("denial/dependency evidence changed: %+v", r.outcomes)
+				}
+			}
+		})
+	}
+}
+
+func TestValidationCurrentReadIncompleteAllocationConvergesThroughRunner(t *testing.T) {
+	f := newCurrentReadHTTPFixture(t, false)
+	f.adapter.management = f.management
+	original := map[string]*unstructured.Unstructured{}
+	for key, object := range f.adapter.objects {
+		original[key] = object.DeepCopy()
+	}
+	ipamReads := 0
+	f.adapter.before = func(call int) {
+		ipamReads = 0
+		if call > 1 {
+			for key, object := range f.adapter.objects {
+				object.Object = original[key].DeepCopy().Object
+			}
+		}
+	}
+	f.hook = func(request *http.Request) {
+		if f.adapter.calls != 1 || !strings.Contains(request.URL.Path, "/dpuserviceipams/") {
+			return
+		}
+		ipamReads++
+		if ipamReads != 3 {
+			return
+		}
+		for _, object := range f.adapter.objects {
+			if object.GetKind() == "DPUDeployment" {
+				object.SetUID("replacement")
+			}
+			if object.GetKind() == "DPUServiceIPAM" && strings.HasSuffix(request.URL.Path, "/"+object.GetName()) {
+				_ = unstructured.SetNestedSlice(object.Object, []any{conditionMap("Ready", "False", "Pending", object.GetGeneration())}, "status", "conditions")
+			}
+		}
+	}
+	checks, scope, err := validationRuntimeChecks(f.adapter.native.desired.plan)
+	if err != nil {
+		t.Fatal(err)
+	}
+	boundary := &n3cRunnerBoundary{n3cRuntimeAdapter: f.adapter, independent: []validation.Outcome{}}
+	for _, area := range []validation.Area{validation.AreaManagement, validation.AreaOperator, validation.AreaDefinitions, validation.AreaSystem, validation.AreaTenant, validation.AreaSoftware, validation.AreaPhysical} {
+		spec := validation.CheckSpec{ID: validation.CheckID("fixture/" + string(area)), Area: area, Subject: "Independent " + string(area), Required: true, Coverage: true, FullOnly: area == validation.AreaPhysical}
+		checks = append(checks, spec)
+		if !spec.FullOnly {
+			boundary.independent = append(boundary.independent, validation.Outcome{ID: spec.ID, State: validation.Passed})
+		}
+	}
+	plan, err := validation.NewPlan(validation.PlanInput{Mode: validation.ModeResources, Checks: checks, Runtime: scope})
+	if err != nil {
+		t.Fatal(err)
+	}
+	runner, err := validation.NewRunner(plan, boundary, validation.Options{Wait: 30 * time.Second, PollInterval: time.Millisecond})
+	if err != nil {
+		t.Fatal(err)
+	}
+	result := runner.Run(context.Background())
+	if f.adapter.calls != 2 || result.Verdict != validation.VerdictResourcesPassed {
+		current, captureErr := f.capture(context.Background())
+		if captureErr == nil {
+			for _, item := range current.graph.selected {
+				t.Logf("selected SFC %s: %v", item.retained.Serial, f.adapter.native.observeTenantSFC(context.Background(), f.adapter.tenant, current.graph, current.snapshot, item.retained.Serial))
+			}
+		}
+		t.Fatalf("native allocation convergence failed: calls=%d verdict=%s snapshots=%+v", f.adapter.calls, result.Verdict, f.adapter.snapshots)
+	}
+	for _, out := range f.adapter.snapshots[0].Checks {
+		if strings.HasPrefix(string(out.ID), "hbn/") || strings.HasPrefix(string(out.ID), "workloads/") {
+			if out.State != validation.Pending {
+				t.Fatalf("first incomplete collection was accepted or blocked retry: %+v", out)
+			}
+		}
+	}
+	for _, out := range f.adapter.snapshots[1].Checks {
+		if out.State != validation.Passed {
+			t.Fatalf("settled collection did not pass: %+v", out)
+		}
 	}
 }

@@ -26,6 +26,8 @@ func validationRuntimeStageError(ctx context.Context, stage validation.Diagnosti
 		Summary: "The runtime observation could not complete at this stage.",
 		Action:  "Inspect the selected source for this stage and repeat validation."}
 	switch stage {
+	case validation.StageRuntimePhysical:
+		diagnostic.Summary = "Current selected physical identity and host prerequisite inspection could not complete."
 	case validation.StageRuntimeHostNetwork:
 		diagnostic.Summary = "Current selected-host network qualification could not complete."
 	case validation.StageRuntimeCurrentGraph:

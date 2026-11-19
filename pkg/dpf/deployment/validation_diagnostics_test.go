@@ -95,7 +95,7 @@ func TestValidationDiagnosticExplainsPassedRoutePostFenceFailure(t *testing.T) {
 				if command == hbnReadBGPSummary {
 					asn := uint32(65101)
 					if pod == "hbn-b" {
-						asn = 65201
+						asn = 65102
 					}
 					return runtimeBGPJSON(asn, 65000), nil
 				}

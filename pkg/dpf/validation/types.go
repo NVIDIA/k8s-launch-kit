@@ -214,6 +214,7 @@ type DiagnosticStage string
 
 const (
 	StageRuntimeHostNetwork  DiagnosticStage = "runtime-host-network"
+	StageRuntimePhysical     DiagnosticStage = "runtime-physical"
 	StageRuntimeCurrentGraph DiagnosticStage = "runtime-current-graph"
 	StageRuntimeAllocation   DiagnosticStage = "runtime-allocation"
 	StageRuntimeHBN          DiagnosticStage = "runtime-hbn-binding"
@@ -225,6 +226,8 @@ const (
 // Label is the shared human-facing stage name; JSON keeps the stable value.
 func (stage DiagnosticStage) Label() string {
 	switch stage {
+	case StageRuntimePhysical:
+		return "Physical identity and host prerequisites"
 	case StageRuntimeHostNetwork:
 		return "Host network qualification"
 	case StageRuntimeCurrentGraph:
