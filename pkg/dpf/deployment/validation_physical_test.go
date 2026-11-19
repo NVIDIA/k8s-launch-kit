@@ -84,7 +84,7 @@ func TestValidationPhysicalUnavailableFactsDoNotProveReplacement(t *testing.T) {
 }
 
 func TestValidationPhysicalKnownReplacementStillPoisonsCohort(t *testing.T) {
-	for _, kind := range []string{"dpu", "host", "bmc-during-read", "host-during-read", "psid-during-read", "mac-binding-during-read", "changed-mac-with-partial-links"} {
+	for _, kind := range []string{"dpu", "host", "bmc-during-read", "host-during-read", "psid-during-read", "mac-binding-during-read", "changed-mac-with-partial-links", "renamed-interface-without-mac"} {
 		t.Run(kind, func(t *testing.T) {
 			o, bmcs, hosts := physicalValidationFixture(t)
 			switch kind {
@@ -115,17 +115,22 @@ func TestValidationPhysicalKnownReplacementStillPoisonsCohort(t *testing.T) {
 					d.Observations["psid"] = inventory.Observation{State: "unavailable", ReasonCode: "PSID_CHANGED"}
 					bmcs[endpoint] = d
 				}
-			case "mac-binding-during-read", "changed-mac-with-partial-links":
+			case "mac-binding-during-read", "changed-mac-with-partial-links", "renamed-interface-without-mac":
 				for endpoint, d := range hosts {
 					d = cloneValidationDevice(t, d)
 					for i := range d.Runtime.Network.Links {
 						link := &d.Runtime.Network.Links[i]
 						switch link.PhysicalPortName {
 						case "p0":
-							if kind == "mac-binding-during-read" {
+							switch kind {
+							case "renamed-interface-without-mac":
+								link.Name = "renamed-p0"
 								link.PermanentMAC = ""
 								d.Runtime.Observations["host-interface:"+link.Name+":permanent-mac"] = inventory.Observation{State: "unavailable", ReasonCode: "INVENTORY_CHANGED"}
-							} else {
+							case "mac-binding-during-read":
+								link.PermanentMAC = ""
+								d.Runtime.Observations["host-interface:"+link.Name+":permanent-mac"] = inventory.Observation{State: "unavailable", ReasonCode: "INVENTORY_CHANGED"}
+							default:
 								link.PermanentMAC = "02:aa:bb:cc:dd:ee"
 							}
 						case "p1":

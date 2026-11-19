@@ -99,7 +99,10 @@ func (o *validationObserver) observeManagementResources(ctx context.Context, man
 		if !managerDeploymentIntentMatches(o.desired.manager, current) {
 			return validationFailure(validation.Failed, validation.ReasonHealth, "Operator manager specification differs from the retained chart.")
 		}
-		return validationReady(o.desired.rules.ResourceReadiness(current))
+		if err := validationReady(o.desired.rules.ResourceReadiness(current)); err != nil {
+			return err
+		}
+		return verifyValidationDeploymentPods(ctx, management, current)
 	}); err != nil {
 		return err
 	}

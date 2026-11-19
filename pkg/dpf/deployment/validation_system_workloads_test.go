@@ -91,6 +91,13 @@ func TestValidationDaemonSetGenerationsAndCounts(t *testing.T) {
 		{"future observed generation", func(s *appsv1.DaemonSet) { s.Status.ObservedGeneration = 2 }, validation.Failed},
 		{"negative observed generation", func(s *appsv1.DaemonSet) { s.Status.ObservedGeneration = -1 }, validation.Failed},
 		{"invalid generation", func(s *appsv1.DaemonSet) { s.Generation = 0 }, validation.Failed},
+		{"current node count exceeds desired", func(s *appsv1.DaemonSet) {
+			s.Status.CurrentNumberScheduled = 2
+			s.Status.UpdatedNumberScheduled = 2
+			s.Status.NumberReady = 2
+			s.Status.NumberAvailable = 1
+			s.Status.NumberUnavailable = 0
+		}, validation.Failed},
 		{"contradictory unavailable count", func(s *appsv1.DaemonSet) { s.Status.NumberUnavailable = 1 }, validation.Failed},
 		{"contradictory available count", func(s *appsv1.DaemonSet) { s.Status.NumberAvailable = 2 }, validation.Failed},
 		{"negative ready count", func(s *appsv1.DaemonSet) { s.Status.NumberReady = -1 }, validation.Failed},

@@ -179,7 +179,13 @@ func validationDaemonSetReady(set *appsv1.DaemonSet, count int) error {
 			return validationFailure(validation.Failed, validation.ReasonIncomplete, "System DaemonSet reports an invalid negative rollout count.")
 		}
 	}
-	if set.Status.NumberReady > set.Status.CurrentNumberScheduled || set.Status.NumberAvailable > set.Status.NumberReady || set.Status.UpdatedNumberScheduled > set.Status.CurrentNumberScheduled || int64(set.Status.NumberAvailable)+int64(set.Status.NumberUnavailable) > int64(set.Status.DesiredNumberScheduled) {
+	// The daemon controller increments current only within the desired-Node
+	// branch, once per Node, even when multiple surge Pods exist on that Node.
+	if set.Status.CurrentNumberScheduled > set.Status.DesiredNumberScheduled ||
+		set.Status.NumberReady > set.Status.CurrentNumberScheduled ||
+		set.Status.NumberAvailable > set.Status.NumberReady ||
+		set.Status.UpdatedNumberScheduled > set.Status.CurrentNumberScheduled ||
+		int64(set.Status.NumberAvailable)+int64(set.Status.NumberUnavailable) > int64(set.Status.DesiredNumberScheduled) {
 		return validationFailure(validation.Failed, validation.ReasonIncomplete, "System DaemonSet reports contradictory rollout counts.")
 	}
 	n := int32(count)

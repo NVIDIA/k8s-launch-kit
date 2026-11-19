@@ -76,6 +76,17 @@ func (r *Rules) ValidationNSIEntryReady(shard *unstructured.Unstructured, name s
 		if !validName || entryName == "" {
 			return result("RESOURCE_STATUS_INVALID", "NSI entry status name is malformed.")
 		}
+		// Check collection shape before selecting an entry. A Pending parent
+		// must not hide malformed status later in the same observed collection.
+		if raw, found := row["conditions"]; found {
+			conditions, valid := raw.([]any)
+			if !valid {
+				return result("RESOURCE_STATUS_INVALID", "NSI entry conditions are malformed.")
+			}
+			if _, check := parseConditions(conditions); !check.Ready {
+				return check
+			}
+		}
 		if entryName != name {
 			continue
 		}
@@ -88,7 +99,11 @@ func (r *Rules) ValidationNSIEntryReady(shard *unstructured.Unstructured, name s
 	if matched == 0 {
 		return result("RESOURCE_STATUS_STALE", "Selected NSI entry status has not been reported.")
 	}
-	entry := &unstructured.Unstructured{Object: map[string]any{"metadata": map[string]any{"generation": shard.GetGeneration()}, "status": map[string]any{"conditions": selected["conditions"]}}}
+	status := map[string]any{}
+	if conditions, found := selected["conditions"]; found {
+		status["conditions"] = conditions
+	}
+	entry := &unstructured.Unstructured{Object: map[string]any{"metadata": map[string]any{"generation": shard.GetGeneration()}, "status": status}}
 	if check := validationWorkloadCondition(entry, "Ready", shard.GetGeneration()); !check.Ready {
 		return check
 	}
@@ -123,7 +138,7 @@ func validationWorkloadCondition(object *unstructured.Unstructured, kind string,
 
 func validationWorkloadProgressing(check Readiness) bool {
 	switch check.ReasonCode {
-	case "RESOURCE_STATUS_STALE", "RESOURCE_PROGRESSING", "CONDITION_STATUS_STALE", "CONDITION_GENERATION_MISSING", "READINESS_CONDITION_MISSING":
+	case "RESOURCE_STATUS_STALE", "RESOURCE_PROGRESSING", "CONDITION_STATUS_STALE", "CONDITION_GENERATION_MISSING", "READINESS_CONDITION_MISSING", "RESOURCE_CONDITIONS_MISSING":
 		return true
 	default:
 		return false

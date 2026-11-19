@@ -355,6 +355,11 @@ func validationHostIdentityConflict(current, expected inventory.Device, adapter 
 			if !strings.EqualFold(link.PCIAddress, selected.PCIAddress) || link.PhysicalPortName != selected.PhysicalPort {
 				continue
 			}
+			// The retained interface name is part of the selected binding. A
+			// renamed physical function is drift even when its MAC read failed.
+			if link.Name != "" && link.Name != selected.InterfaceName {
+				return true
+			}
 			// A valid measurement for the selected physical function remains a
 			// contradiction even if another link's optional fields are missing.
 			mac, err := net.ParseMAC(link.PermanentMAC)
