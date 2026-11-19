@@ -161,7 +161,10 @@ func validate(ctx context.Context, request ValidationRequest, newObserver valida
 	} else {
 		progress.Info("Resource-only scope excludes physical, switch, BGP, route and traffic checks.")
 	}
-	return runner.Run(ctx)
+	// Native collectors also serve discovery, whose optional-detail messages
+	// do not describe this validation report. Keep the captured typed validation
+	// progress callback, and silence only their inherited informational UI.
+	return runner.Run(ui.WithOutput(ctx, ui.NewSilent()))
 }
 
 func validationProtectedFiles(input config.Input) ([]string, error) {

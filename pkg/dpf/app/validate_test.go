@@ -4,6 +4,7 @@
 package app
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"os"
@@ -16,6 +17,7 @@ import (
 	"github.com/nvidia/k8s-launch-kit/pkg/dpf/deployment"
 	"github.com/nvidia/k8s-launch-kit/pkg/dpf/generation"
 	"github.com/nvidia/k8s-launch-kit/pkg/dpf/validation"
+	"github.com/nvidia/k8s-launch-kit/pkg/ui"
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 )
@@ -44,6 +46,15 @@ func (o appValidationObserver) ObserveResources(context.Context, validation.Prog
 func (o appValidationObserver) OpenRuntime(context.Context, validation.Progress) (validation.RuntimeSession, error) {
 	Fail("resource-only application invoked runtime")
 	return nil, nil
+}
+
+// Discovery collectors use contextual UI; their optional-detail diagnostics
+// must not claim contents absent from the standalone validation report.
+type appLegacyUIObserver struct{ validation.Observer }
+
+func (o appLegacyUIObserver) ObserveResources(ctx context.Context, progress validation.Progress) (validation.ResourceSnapshot, error) {
+	ui.FromContext(ctx).Info("discovery-only-canary: inspect optional details")
+	return o.Observer.ObserveResources(ctx, progress)
 }
 
 func validationAppFixture() ValidationRequest {
@@ -112,6 +123,31 @@ var _ = Describe("standalone DPF validation application", func() {
 		after, err := bundle.Load(r.DeploymentFiles)
 		Expect(err).NotTo(HaveOccurred())
 		Expect(after.Index().BundleDigest).To(Equal(before.Index().BundleDigest))
+	})
+
+	It("keeps preparation and canonical progress without discovery-only collector messages", func() {
+		r := validationAppFixture()
+		var output bytes.Buffer
+		presenter := ui.NewWithWriter(&output)
+		ctx := ui.WithOutput(context.Background(), presenter)
+		completed := 0
+		r.Progress = func(event validation.ProgressEvent) {
+			if event.Phase == validation.Completed && event.Outcome.State == validation.Passed {
+				completed++
+				presenter.Info("canonical-validation-progress")
+			}
+		}
+		calls := 0
+		factory := validationAppFactory(validation.Passed, validation.ReasonNone, &calls, nil)
+		result := validate(ctx, r, func(retained *bundle.Bundle, plan *generation.Plan, access config.Request, issues []config.AccessIssue, mode validation.Mode) (validation.Plan, validation.Observer, error) {
+			compiled, observer, err := factory(retained, plan, access, issues, mode)
+			return compiled, appLegacyUIObserver{Observer: observer}, err
+		})
+		Expect(result.ExitCode()).To(BeZero())
+		Expect(completed).To(BeNumerically(">", 0))
+		Expect(output.String()).To(ContainSubstring("Validation preparation"))
+		Expect(output.String()).To(ContainSubstring("canonical-validation-progress"))
+		Expect(output.String()).NotTo(ContainSubstring("discovery-only-canary"))
 	})
 
 	It("publishes a partial private report for malformed inputs without exposing raw error data", func() {
