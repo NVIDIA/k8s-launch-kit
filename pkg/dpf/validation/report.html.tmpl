@@ -5,6 +5,13 @@
 {{define "target-style"}}
 .dpf-checks { overflow-x: auto; }
 .dpf-checks td { overflow-wrap: anywhere; }
+.dpf-check-table { table-layout: fixed; min-width: 56rem; }
+.dpf-check-table th:nth-child(1) { width: 23%; }
+.dpf-check-table th:nth-child(2) { width: 14%; }
+.dpf-check-table th:nth-child(3) { width: 43%; }
+.dpf-check-table th:nth-child(4) { width: 20%; }
+.dpf-checks td.dpf-status { white-space: nowrap; overflow-wrap: normal; }
+.dpf-status .badge { white-space: nowrap; }
 {{end}}
 {{define "body"}}
 
@@ -26,8 +33,8 @@
   {{- if or .Hosts .Devices}}
     <dl class="kv">
       {{- if .Hosts}}
-      <dt>Hosts ({{len .Hosts}})</dt>
-      <dd>{{range $i, $host := .Hosts}}{{if $i}}, {{end}}<code>{{$host}}</code>{{end}}</dd>
+      <dt>Hosts attached to DPUs ({{len .Hosts}})</dt>
+      <dd>Identified by the attached DPU serial: {{range $i, $host := .Hosts}}{{if $i}}, {{end}}<code>{{$host}}</code>{{end}}</dd>
       {{- end}}
       {{- if .Devices}}
       <dt>DPUs ({{len .Devices}})</dt>
@@ -78,7 +85,7 @@
 {{end}}
 
 {{define "check-table"}}
-<table>
+<table class="dpf-check-table">
   <thead><tr><th>Subject</th><th>Status</th><th>Details</th><th>Action</th></tr></thead>
   <tbody>
     {{- range .}}{{template "check-row" .}}{{end}}
@@ -89,10 +96,10 @@
 {{define "check-row"}}
 <tr>
   <td>
-    <code>{{.Subject}}</code>
+    {{.Subject}}
     {{- with .Group}}<br><span class="muted">{{.}}</span>{{end}}
   </td>
-  <td>
+  <td class="dpf-status">
     <span class="badge {{stateClass .Outcome.State}}">{{or .Outcome.State "unverified"}}</span>
     {{- with .Outcome.Reason}}<br><span class="muted">{{reasonText .}}</span>{{end}}
   </td>

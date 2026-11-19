@@ -20,6 +20,8 @@ import (
 	"github.com/nvidia/k8s-launch-kit/pkg/dpf/validation"
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/apimachinery/pkg/types"
@@ -544,16 +546,52 @@ func (o *validationObserver) OpenRuntime(ctx context.Context, _ validation.Progr
 
 func validationRuntimeError(ctx context.Context, err error, drift bool) error {
 	category := validation.FatalObservation
+	var contextErr error
+	if ctx != nil {
+		contextErr = ctx.Err()
+	}
+	if errors.Is(err, context.DeadlineExceeded) || contextErr == context.DeadlineExceeded {
+		category = validation.FatalTimeout
+	}
+	if errors.Is(err, context.Canceled) || contextErr == context.Canceled {
+		category = validation.FatalCanceled
+	}
+	// Measured source classifications take precedence over context fallback.
+	// The original cause tree keeps higher-priority typed input errors available
+	// to Runner, while this wrapper publishes native identity/access evidence.
+	if validationRuntimeAccessFailure(err) {
+		category = validation.FatalAccess
+	}
 	if drift || validationIdentityChanged(err) {
 		category = validation.FatalIdentity
 	}
-	if errors.Is(err, context.Canceled) || ctx.Err() == context.Canceled {
-		category = validation.FatalCanceled
-	}
-	if errors.Is(err, context.DeadlineExceeded) || ctx.Err() == context.DeadlineExceeded {
-		category = validation.FatalTimeout
-	}
 	return &validation.ObservationError{Category: category, Cause: err}
+}
+
+func validationRuntimeAccessFailure(err error) bool {
+	var check *validationCheckError
+	if errors.As(err, &check) && check != nil && check.state == validation.Unverified && (check.reason == validation.ReasonDenied || check.reason == validation.ReasonUnavailable) {
+		return true
+	}
+	var status apierrors.APIStatus
+	if errors.As(err, &status) {
+		if reason := status.Status().Reason; reason == metav1.StatusReasonForbidden || reason == metav1.StatusReasonUnauthorized {
+			return true
+		}
+	}
+	// Is/As select the first matching typed cause. Inspect remaining joined
+	// branches too, so an earlier health or unknown API status cannot hide access.
+	switch cause := err.(type) {
+	case interface{ Unwrap() []error }:
+		for _, child := range cause.Unwrap() {
+			if validationRuntimeAccessFailure(child) {
+				return true
+			}
+		}
+	case interface{ Unwrap() error }:
+		return validationRuntimeAccessFailure(cause.Unwrap())
+	}
+	return false
 }
 
 func (s *validationRuntimeSession) Scope() validation.RuntimeScope {

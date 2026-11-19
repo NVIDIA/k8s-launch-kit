@@ -73,7 +73,7 @@ var _ = Describe("DPF report HTML", func() {
 		for _, want := range []string{
 			"VALIDATION INCOMPLETE", "Selected identities changed or could not be verified.",
 			"24.&lt;release&gt;", "Management &lt;region&gt;", "2026-11-19 10:00:00 UTC",
-			"Hosts (2)", "DPUs (2)", "10m0s", "<code>host-a</code>", "<code>dpu-a</code>",
+			"Hosts attached to DPUs (2)", "Identified by the attached DPU serial:", "DPUs (2)", "10m0s", "<code>host-a</code>", "<code>dpu-a</code>",
 			"BGP peers established 2 of 2 · local ASN 65101",
 			"Installed routes by directed DPU pair", "Route <code>192.0.2.0/24</code> installed",
 			"Ordinary ICMP by directed host pair", "ICMP packets transmitted 3 · received 3 · payload 56 bytes",
