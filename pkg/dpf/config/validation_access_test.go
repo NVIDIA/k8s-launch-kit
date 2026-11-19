@@ -119,4 +119,75 @@ var _ = Describe("validation access resolution", func() {
 			}
 		}
 	})
+
+	It("rejects malformed authentication selection instead of calling it unavailable material", func() {
+		missing, empty, env := "missing-password", "", "DPF_TEST_PASSWORD"
+		cases := []Credential{
+			{Username: "reader", PrivateKeyRef: &FileRef{File: "key"}},
+			{Username: "reader", PasswordRef: PasswordRef{}},
+			{Username: "reader", PasswordRef: PasswordRef{Env: &env, File: &missing}},
+			{Username: "reader", PasswordRef: PasswordRef{File: &empty}},
+			{Username: "reader", PasswordRef: PasswordRef{Env: &empty}},
+		}
+		for _, credential := range cases {
+			in, err := Decode([]byte(seed), "/site/input.yaml")
+			Expect(err).NotTo(HaveOccurred())
+			in.Site.Credentials["read"] = credential
+			request, issues, err := ResolveForValidation(in)
+			Expect(err).To(HaveOccurred())
+			Expect(request).To(Equal(Request{}))
+			Expect(issues).To(BeNil())
+		}
+	})
+
+	It("does not let unavailable SSH material mask an invalid username, selector or trust reference", func() {
+		missing := "missing-password"
+		for _, edit := range []func(*Input){
+			func(in *Input) { in.Site.Discovery.Hosts[0].SSH.KnownHostsFile = "" },
+			func(in *Input) { c := in.Site.Credentials["read"]; c.Username = ""; in.Site.Credentials["read"] = c },
+			func(in *Input) {
+				c := in.Site.Credentials["read"]
+				c.Username = "bad\nuser"
+				in.Site.Credentials["read"] = c
+			},
+			func(in *Input) {
+				c := in.Site.Credentials["read"]
+				c.PrivateKeyRef = &FileRef{File: "key"}
+				in.Site.Credentials["read"] = c
+			},
+		} {
+			document := strings.Replace(seed, "hosts: [{bmcEndpoint: 'https://192.0.2.2', credentialRef: read}]", "hosts: [{ssh: {address: host.example, knownHostsFile: known_hosts}, credentialRef: read}]", 1)
+			in, err := Decode([]byte(document), "/site/input.yaml")
+			Expect(err).NotTo(HaveOccurred())
+			in.Site.Discovery.DPUs = nil
+			in.Site.Credentials["read"] = Credential{Username: "reader", PasswordRef: PasswordRef{File: &missing}}
+			edit(&in)
+			request, issues, err := ResolveForValidation(in)
+			Expect(err).To(HaveOccurred())
+			Expect(request).To(Equal(Request{}))
+			Expect(issues).To(BeNil())
+		}
+	})
+
+	It("detaches unavailable endpoint, security choices and source documents from caller mutation", func() {
+		missing := "missing-password"
+		in, err := Decode([]byte(seed), "/site/input.yaml")
+		Expect(err).NotTo(HaveOccurred())
+		in.Site.Credentials["read"] = Credential{Username: "reader", PasswordRef: PasswordRef{File: &missing}}
+		insecure := true
+		in.Site.Discovery.TLS = &TLS{InsecureSkipVerify: &insecure}
+		request, issues, err := ResolveForValidation(in)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(issues).To(HaveLen(2))
+		in.Site.Discovery.DPUs[0].BMCEndpoint = "https://replacement.example"
+		in.Site.Credentials["read"] = Credential{Username: "replacement"}
+		*in.Site.Discovery.TLS.InsecureSkipVerify = false
+		in.Source[0] = '!'
+		in.Document.Content[0].Content[0].Value = "replacement"
+		Expect(request.Input.Site.Discovery.DPUs[0].BMCEndpoint).To(Equal("https://192.0.2.1"))
+		Expect(request.Input.Site.Credentials["read"].Username).To(Equal("reader"))
+		Expect(*request.Input.Site.Discovery.TLS.InsecureSkipVerify).To(BeTrue())
+		Expect(request.Input.Source[0]).To(Equal(byte('#')))
+		Expect(request.Input.Document.Content[0].Content[0].Value).To(Equal("management"))
+	})
 })

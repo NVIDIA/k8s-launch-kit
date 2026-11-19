@@ -486,6 +486,9 @@ func resolveAccess(c Credential, caPath, base string, insecure bool) (Access, er
 	if c.PrivateKeyRef != nil {
 		return Access{}, fmt.Errorf("redfish requires passwordRef, not privateKeyRef")
 	}
+	if err := validatePasswordRef(c.PasswordRef); err != nil {
+		return Access{}, err
+	}
 	password, err := resolvePassword(c.PasswordRef, base)
 	if err != nil {
 		return Access{}, err
@@ -498,31 +501,25 @@ func resolveAccess(c Credential, caPath, base string, insecure bool) (Access, er
 	if caPath != "" {
 		ca, err = regularFile(caPath, 1<<20)
 		if err != nil || !roots.AppendCertsFromPEM(ca) {
-			return Access{}, fmt.Errorf("invalid CA file")
+			return Access{}, &accessMaterialError{message: "invalid CA file"}
 		}
 	}
 	return Access{username: c.Username, password: password, tls: &tls.Config{MinVersion: tls.VersionTLS12, RootCAs: roots, InsecureSkipVerify: insecure}, ca: ca}, nil
 }
 func resolvePassword(p PasswordRef, base string) (string, error) {
-	if (p.Env == nil) == (p.File == nil) {
-		return "", fmt.Errorf("passwordRef requires exactly one env or file")
+	if err := validatePasswordRef(p); err != nil {
+		return "", err
 	}
 	var password string
 	if p.Env != nil {
-		if *p.Env == "" {
-			return "", fmt.Errorf("empty passwordRef.env")
-		}
 		password = os.Getenv(*p.Env)
 	} else {
-		if *p.File == "" {
-			return "", fmt.Errorf("empty passwordRef.file")
-		}
 		b, err := regularFile(resolvePath(base, *p.File), 64<<10)
 		if err != nil {
-			return "", fmt.Errorf("cannot resolve password file")
+			return "", &accessMaterialError{message: "cannot resolve password file"}
 		}
 		if !utf8.Valid(b) {
-			return "", fmt.Errorf("password file must be UTF-8")
+			return "", &accessMaterialError{message: "password file must be UTF-8"}
 		}
 		password = string(b)
 		if strings.HasSuffix(password, "\n") {
@@ -530,9 +527,27 @@ func resolvePassword(p PasswordRef, base string) (string, error) {
 		}
 	}
 	if password == "" || len(password) > 64<<10 {
-		return "", fmt.Errorf("password reference is missing, empty or too large")
+		return "", &accessMaterialError{message: "password reference is missing, empty or too large"}
 	}
 	return password, nil
+}
+
+// Validate source selection before looking up material, so an unavailable file
+// cannot hide malformed or ambiguous authentication configuration.
+func validatePasswordRef(p PasswordRef) error {
+	if (p.Env == nil) == (p.File == nil) {
+		return fmt.Errorf("passwordRef requires exactly one env or file")
+	}
+	if p.Env != nil {
+		if *p.Env == "" {
+			return fmt.Errorf("empty passwordRef.env")
+		}
+	} else {
+		if *p.File == "" {
+			return fmt.Errorf("empty passwordRef.file")
+		}
+	}
+	return nil
 }
 func Origin(s string) (string, error) {
 	u, err := url.Parse(s)
