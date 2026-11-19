@@ -28,6 +28,8 @@ import (
 // assert equivalence with the unavailable private fork reconciliation source.
 func (o *validationObserver) observeValidationKubeProxy(ctx context.Context, management validationManagementReader, tenant *tenantClient, r *validationRecorder) error {
 	if tenant == nil {
+		r.recordError("tenant/kube-proxy", r.tenantDependencyError())
+		r.pendingDependents("tenant/kube-proxy/device/", "tenant/kube-proxy")
 		return nil
 	}
 	returnErr := r.run("tenant/kube-proxy", func() error {

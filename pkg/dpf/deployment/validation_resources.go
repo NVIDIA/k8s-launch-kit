@@ -290,12 +290,35 @@ func (o *validationObserver) openValidationTenant(ctx context.Context, managemen
 	if err := o.desired.verifier.Verify(desired, sources.observed.DPUCluster); err != nil {
 		return nil, validationFailure(validation.Failed, validation.ReasonHealth, "Tenant source DPUCluster differs from retained intent.")
 	}
-	if !o.desired.rules.TenantReadiness(expected, sources.observed).Ready {
-		return nil, validationFailure(validation.Pending, validation.ReasonProgressing, "Selected tenant control plane or its owned service/keepalived sources are not current and ready.")
+	if err := validationTenantReady(o.desired.rules.TenantReadiness(expected, sources.observed)); err != nil {
+		return nil, err
 	}
 	return newTenantClient(ctx, o.desired.rules, management, expected, string(current.GetUID()), o.request.RequestTimeout, nil, nil)
 }
+
+// Tenant source convergence has its own classifier. Conflicts and malformed
+// observations must not acquire the runner's retry policy through a dependent.
+func validationTenantReady(ready controllercontract.TenantReadiness) error {
+	if ready.Ready {
+		return nil
+	}
+	switch ready.State {
+	case controllercontract.TenantReadinessPending:
+		return validationFailure(validation.Pending, validation.ReasonProgressing, "Selected tenant source chain has not reached current owned readiness.")
+	case controllercontract.TenantReadinessConflict:
+		return validationFailure(validation.Failed, validation.ReasonHealth, "Selected tenant source chain conflicts with retained intent or reports terminal failure.")
+	default:
+		return validationFailure(validation.Unverified, validation.ReasonIncomplete, "Selected tenant source evidence is malformed or unsupported.")
+	}
+}
+
 func (o *validationObserver) observeTenantResources(ctx context.Context, management validationManagementReader, r *validationRecorder) (*tenantClient, error) {
+	return o.observeTenantResourcesWithOpener(ctx, management, r, o.openValidationTenant)
+}
+
+// Keep source classification and node coverage in the native observation path
+// when substituting only the connection to an already source-bound tenant.
+func (o *validationObserver) observeTenantResourcesWithOpener(ctx context.Context, management validationManagementReader, r *validationRecorder, open func(context.Context, validationManagementReader) (*tenantClient, error)) (*tenantClient, error) {
 	r.run("tenant/storage", func() error {
 		return validationTenantStorageResult(management.observeValidationTenantStorage(ctx, o.desired.operatorNamespace))
 	})
@@ -311,10 +334,7 @@ func (o *validationObserver) observeTenantResources(ctx context.Context, managem
 		if err := o.desired.verifier.Verify(desired, sources.observed.DPUCluster); err != nil {
 			return validationFailure(validation.Failed, validation.ReasonHealth, "Selected tenant source root differs from retained intent.")
 		}
-		if !o.desired.rules.TenantReadiness(expected, sources.observed).Ready {
-			return validationFailure(validation.Pending, validation.ReasonProgressing, "Selected tenant source chain has not reached current owned readiness.")
-		}
-		return nil
+		return validationTenantReady(o.desired.rules.TenantReadiness(expected, sources.observed))
 	})
 	if err != nil {
 		r.pendingDependents("tenant/api", "tenant/sources")
@@ -324,7 +344,7 @@ func (o *validationObserver) observeTenantResources(ctx context.Context, managem
 	var tenant *tenantClient
 	err = r.run("tenant/api", func() error {
 		var openErr error
-		tenant, openErr = o.openValidationTenant(ctx, management)
+		tenant, openErr = open(ctx, management)
 		return openErr
 	})
 	if err != nil {

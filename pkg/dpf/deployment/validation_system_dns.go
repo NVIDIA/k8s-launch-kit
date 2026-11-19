@@ -119,6 +119,8 @@ func validationDNSNodePorts(service *corev1.Service) (int32, int32, error) {
 }
 func (o *validationObserver) observeValidationTenantDNS(ctx context.Context, management resourceReader, tenant *tenantClient, hostDNS *corev1.Service, r *validationRecorder) error {
 	if tenant == nil {
+		r.recordError("tenant/dns/service", r.tenantDependencyError())
+		r.pendingDependents("tenant/dns/endpoints", "tenant/dns/service")
 		return nil
 	}
 	reader := validationTenantResources{tenant: tenant}

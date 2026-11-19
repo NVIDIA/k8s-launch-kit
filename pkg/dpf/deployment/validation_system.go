@@ -170,7 +170,7 @@ func (o *validationObserver) observeSystemResources(ctx context.Context, managem
 			return &validation.ObservationError{Category: validation.FatalIdentity, Cause: serviceErr}
 		}
 		if service == nil {
-			r.pendingDependents(prefix+"/", validation.CheckID(prefix+"/service"))
+			r.pendingSystemRoleDependents(role, validation.CheckID(prefix+"/service"))
 			continue
 		}
 		appErr := r.run(validation.CheckID(prefix+"/application"), func() error {
@@ -189,7 +189,7 @@ func (o *validationObserver) observeSystemResources(ctx context.Context, managem
 			return &validation.ObservationError{Category: validation.FatalIdentity, Cause: appErr}
 		}
 		if appErr != nil {
-			r.pendingDependents(prefix+"/", validation.CheckID(prefix+"/application"))
+			r.pendingSystemRoleDependents(role, validation.CheckID(prefix+"/application"))
 			continue
 		}
 		if artifacts != nil {
@@ -553,6 +553,15 @@ func (r *validationRecorder) aggregate(id validation.CheckID, prefix string, exc
 
 // Compile-time guards keep the tenant observation adapter read-only.
 var _ operatorCRDReader = validationTenantDefinitionReader{}
+
+// The management DNS Service is a separate system obligation whose retained
+// provenance still depends on the selected CoreDNS service and Application.
+func (r *validationRecorder) pendingSystemRoleDependents(role systemArtifactRole, parent validation.CheckID) {
+	r.pendingDependents(systemRoleID(role)+"/", parent)
+	if role.Component == "coredns" && role.Management {
+		r.pendingDependents("system/dns/management-service", parent)
+	}
+}
 
 // pendingDependents keeps ordinary controller convergence eligible for the
 // runner's wait policy. Permission failures and absent evidence remain unverified.

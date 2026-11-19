@@ -149,6 +149,10 @@ func (o *validationObserver) observeValidationRuntimeResourcesWithImage(ctx cont
 			image = hbnPodImageIdentity{}
 		}
 	}
+	var tenantDependencyErr error
+	if tenant == nil {
+		tenantDependencyErr = r.tenantDependencyError()
+	}
 	rows := r.bufferCompletions()
 	var graph currentRuntimeGraph
 	var snapshot hostWorkloadLeaseSnapshot
@@ -171,11 +175,21 @@ func (o *validationObserver) observeValidationRuntimeResourcesWithImage(ctx cont
 			return nil
 		}
 		// Retained immutable prerequisites are compared independently of runtime.
-		workloadErr := r.run("workloads/coverage", func() error { return o.observeRetainedWorkloads(ctx, management, tenant, graph) })
+		workloadErr := r.run("workloads/coverage", func() error {
+			err := o.observeRetainedWorkloads(ctx, management, tenant, graph)
+			if errors.Is(err, errValidationTenantDependency) {
+				return tenantDependencyErr
+			}
+			return err
+		})
 		if validationIdentityChanged(workloadErr) {
 			return workloadErr
 		}
 		if tenant == nil {
+			// Only the absent tenant boundary supplies this dependency. Actual
+			// device/declaration failures above retain their measured outcomes.
+			r.recordError("hbn/coverage", tenantDependencyErr)
+			recordRuntimePendingDependencies(r, tenantDependencyErr)
 			return nil
 		}
 		var leaseErr error
@@ -332,11 +346,14 @@ func recordRuntimePendingDependencies(r *validationRecorder, cause error) {
 	}
 }
 
+var errValidationTenantDependency = errors.New("selected tenant children are not available")
+
 func (o *validationObserver) observeRetainedWorkloads(ctx context.Context, management resourceReader, tenant validationCurrentTenantReader, graph currentRuntimeGraph) error {
 	objects, err := retainedPlanWorkloadObjects(o.desired.plan)
 	if err != nil {
 		return err
 	}
+	tenantMissing := false
 	for _, expected := range objects {
 		current, err := management.Get(ctx, expected.DeepCopy())
 		if err != nil {
@@ -357,18 +374,19 @@ func (o *validationObserver) observeRetainedWorkloads(ctx context.Context, manag
 			}
 		case "DPUServiceIPAM":
 			if tenant == nil {
-				return fmt.Errorf("tenant allocation child unavailable")
-			}
-			child, err := tenant.getWorkloadChild(ctx, current)
-			if err != nil {
-				return err
-			}
-			expectedTenant, _, err := tenantPlanInputs(o.desired.plan)
-			if err != nil {
-				return err
-			}
-			if err := verifyWorkloadChild(current, child, expectedTenant); err != nil {
-				return err
+				tenantMissing = true // Keep inspecting independent declarations.
+			} else {
+				child, err := tenant.getWorkloadChild(ctx, current)
+				if err != nil {
+					return err
+				}
+				expectedTenant, _, err := tenantPlanInputs(o.desired.plan)
+				if err != nil {
+					return err
+				}
+				if err := verifyWorkloadChild(current, child, expectedTenant); err != nil {
+					return err
+				}
 			}
 			if err := validationRuntimeReadiness(o.desired.rules.WorkloadReadiness(current, controllercontract.WorkloadIPAM), "Retained workload IPAM has not reconciled its current generation."); err != nil {
 				return err
@@ -382,6 +400,9 @@ func (o *validationObserver) observeRetainedWorkloads(ctx context.Context, manag
 	// Graph compilation independently proves actual Flavor/Configuration use.
 	if len(graph.sets) != len(graph.selected) {
 		return fmt.Errorf("selected prerequisite consumption incomplete")
+	}
+	if tenantMissing {
+		return errValidationTenantDependency
 	}
 	return nil
 }
