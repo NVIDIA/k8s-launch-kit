@@ -59,6 +59,12 @@ func reconcileKey(object *unstructured.Unstructured) string {
 
 func newReconcileFixture(t *testing.T) (*Reconciler, *unstructured.Unstructured) {
 	t.Helper()
+	verifier, desired := newDesiredVerifierFixture(t)
+	return &Reconciler{desiredVerifier: verifier}, desired
+}
+
+func newDesiredVerifierFixture(t *testing.T) (*desiredVerifier, *unstructured.Unstructured) {
+	t.Helper()
 	archive, err := os.ReadFile(filepath.Join("..", "bootstrap", "testdata", "operator", "dpf-operator-v26.8.0.tgz"))
 	if err != nil {
 		t.Fatal(err)
@@ -76,7 +82,7 @@ func newReconcileFixture(t *testing.T) (*Reconciler, *unstructured.Unstructured)
 	if err != nil {
 		t.Fatal(err)
 	}
-	reconciler, err := newReconciler(testRulesForManifest(t, rendered.Manifest), "sha256:"+strings.Repeat("a", 64), controllercontract.MetadataPolicy{})
+	verifier, err := newDesiredVerifier(testRulesForManifest(t, rendered.Manifest), "sha256:"+strings.Repeat("a", 64), controllercontract.MetadataPolicy{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -98,7 +104,7 @@ func newReconcileFixture(t *testing.T) (*Reconciler, *unstructured.Unstructured)
 	if cluster == nil {
 		t.Fatal("bootstrap renderer did not emit DPUCluster")
 	}
-	return reconciler, cluster
+	return verifier, cluster
 }
 
 func TestReconcilerCreateThenExactVerifyAllowsSchemaDefaultsAndStatus(t *testing.T) {

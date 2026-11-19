@@ -292,10 +292,14 @@ func validateKeys(n *yaml.Node, active, visited map[*yaml.Node]bool, depth int) 
 	return nil
 }
 func Resolve(in Input) (Request, error) {
+	return resolve(in, nil)
+}
+
+func resolve(in Input, unavailable *accessAvailability) (Request, error) {
 	r := Request{Input: in, Timeout: 10 * time.Minute, RequestTimeout: 15 * time.Second, MaxConcurrentBMCs: 4, Mode: "inventory"}
 	s := in.Site
 	base := filepath.Dir(in.Path)
-	if err := resolveUseCase(&r); err != nil {
+	if err := resolveUseCase(&r, unavailable); err != nil {
 		return r, err
 	}
 	if s.Discovery.AddressLookup != nil {
@@ -412,6 +416,9 @@ func Resolve(in Input) (Request, error) {
 				}
 				access, err := resolveSSHAccess(c, *e.SSH, base)
 				if err != nil {
+					if unavailable.record(ptr, group.role, err) {
+						continue
+					}
 					return r, fmt.Errorf("%s/ssh: %w", ptr, err)
 				}
 				r.Targets = append(r.Targets, Target{Name: name, Endpoint: origin, InputRef: ptr, Role: group.role, SSH: access})
@@ -456,6 +463,9 @@ func Resolve(in Input) (Request, error) {
 			if !ok {
 				a, err = resolveAccess(c, caPath, base, insecure)
 				if err != nil {
+					if unavailable.record(ptr, group.role, err) {
+						continue
+					}
 					return r, fmt.Errorf("%s: %w", ptr, err)
 				}
 				accesses[cacheKey] = a

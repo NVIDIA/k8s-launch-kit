@@ -26,7 +26,6 @@ import (
 	"github.com/nvidia/k8s-launch-kit/pkg/helmclient"
 	"helm.sh/helm/v3/pkg/action"
 	"helm.sh/helm/v3/pkg/chart"
-	"helm.sh/helm/v3/pkg/chart/loader"
 	"helm.sh/helm/v3/pkg/kube"
 	"helm.sh/helm/v3/pkg/postrender"
 	"helm.sh/helm/v3/pkg/release"
@@ -49,17 +48,9 @@ type OperatorRequest struct {
 }
 
 type operatorPlan struct {
-	releaseName        string
-	namespace          string
-	timeout            time.Duration
-	archive            []byte
-	chart              *chart.Chart
-	chartFingerprint   string
-	expectedValuesJSON []byte
-	valuesYAML         []byte
-	expectedManifest   []byte
-	renderedManifest   []byte
-	postRenderer       postrender.PostRenderer
+	*operatorDesired
+	timeout      time.Duration
+	postRenderer postrender.PostRenderer
 }
 
 type operatorInstall struct {
@@ -117,53 +108,23 @@ func EnsureOperator(ctx context.Context, request OperatorRequest) error {
 }
 
 func prepareOperator(request OperatorRequest) (*operatorPlan, error) {
-	archive := bytes.Clone(request.Archive)
-	rendered, err := bootstrap.RenderOperator(archive, request.Inputs)
+	desired, err := prepareOperatorDesired(request.Archive, request.Inputs)
 	if err != nil {
-		return nil, fmt.Errorf("validate retained DPF operator chart and inputs: %w", err)
-	}
-	operatorChart, err := loader.LoadArchive(bytes.NewReader(archive))
-	if err != nil {
-		return nil, fmt.Errorf("load retained DPF operator chart: %w", err)
-	}
-	if operatorChart.Metadata == nil || operatorChart.Metadata.Name == "" || operatorChart.Metadata.Version == "" {
-		return nil, fmt.Errorf("retained DPF operator chart has incomplete metadata")
-	}
-	if len(operatorChart.Dependencies()) != 0 {
-		return nil, fmt.Errorf("retained DPF operator chart has subcharts that Helm does not preserve in release metadata")
-	}
-	if err := validateInstallableChartShape(operatorChart); err != nil {
 		return nil, err
 	}
-	fingerprint, err := chartFingerprint(operatorChart)
-	if err != nil {
-		return nil, fmt.Errorf("fingerprint retained DPF operator chart: %w", err)
+	return prepareOperatorExecution(desired, request.Timeout)
+}
+
+// Only deployment composition adds the install callback and timeout.
+func prepareOperatorExecution(desired *operatorDesired, timeout time.Duration) (*operatorPlan, error) {
+	if desired == nil {
+		return nil, fmt.Errorf("retained operator projection is required")
 	}
-	values, err := sharedbundle.ParseValues(rendered.HelmValues)
+	postRenderer, err := bootstrap.NewOperatorPostRenderer(bootstrap.Inputs{OperatorNamespace: desired.namespace, OperatorConfigName: desired.configName})
 	if err != nil {
-		return nil, fmt.Errorf("decode rendered DPF Helm values: %w", err)
+		return nil, err
 	}
-	valuesJSON, err := canonicalHelmValues(values)
-	if err != nil {
-		return nil, fmt.Errorf("canonicalize rendered DPF Helm values: %w", err)
-	}
-	manifest, err := canonicalManifest(rendered.Manifest)
-	if err != nil {
-		return nil, fmt.Errorf("canonicalize rendered DPF operator manifest: %w", err)
-	}
-	return &operatorPlan{
-		releaseName:        request.Inputs.ReleaseName,
-		namespace:          request.Inputs.Bootstrap.OperatorNamespace,
-		timeout:            request.Timeout,
-		archive:            archive,
-		chart:              operatorChart,
-		chartFingerprint:   fingerprint,
-		expectedValuesJSON: valuesJSON,
-		valuesYAML:         bytes.Clone(rendered.HelmValues),
-		expectedManifest:   manifest,
-		renderedManifest:   bytes.Clone(rendered.Manifest),
-		postRenderer:       rendered.PostRenderer,
-	}, nil
+	return &operatorPlan{operatorDesired: desired, timeout: timeout, postRenderer: postRenderer}, nil
 }
 
 func ensureOperator(ctx context.Context, plan *operatorPlan, actions operatorActions) error {
@@ -269,6 +230,13 @@ func verifyOperatorRelease(installed *release.Release, plan *operatorPlan) error
 }
 
 func operatorReleaseMismatchReason(installed *release.Release, plan *operatorPlan) operatorReleaseMismatch {
+	if plan == nil {
+		return "HELM_RELEASE_UNVERIFIED"
+	}
+	return operatorDesiredReleaseMismatchReason(installed, plan.operatorDesired)
+}
+
+func operatorDesiredReleaseMismatchReason(installed *release.Release, plan *operatorDesired) operatorReleaseMismatch {
 	if plan == nil {
 		return "HELM_RELEASE_UNVERIFIED"
 	}

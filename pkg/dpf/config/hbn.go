@@ -85,7 +85,7 @@ func WithUseCase(in Input, selection *string) (Input, error) {
 var switchName = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9_.-]{0,62}$`)
 var switchPortName = regexp.MustCompile(`^swp[0-9]+(s[0-9]+)?$`)
 
-func resolveUseCase(r *Request) error {
+func resolveUseCase(r *Request, unavailable *accessAvailability) error {
 	s := r.Input.Site
 	intent, err := ResolveIntent(s)
 	if err != nil {
@@ -123,10 +123,6 @@ func resolveUseCase(r *Request) error {
 		if !ok {
 			return fmt.Errorf("%s/credentialRef is unknown", where)
 		}
-		access, err := resolveSSHAccess(credential, sw.SSH, filepath.Dir(r.Input.Path))
-		if err != nil {
-			return fmt.Errorf("%s/ssh: %w", where, err)
-		}
 		ports := slices.Clone(sw.Ports)
 		if len(ports) == 0 || len(ports) > 256 {
 			return fmt.Errorf("%s/ports requires 1 to 256 explicit DPU uplink bindings", where)
@@ -150,6 +146,13 @@ func resolveUseCase(r *Request) error {
 			attachments[key] = true
 		}
 		slices.SortFunc(ports, func(a, b SwitchPort) int { return strings.Compare(a.Name, b.Name) })
+		access, err := resolveSSHAccess(credential, sw.SSH, filepath.Dir(r.Input.Path))
+		if err != nil {
+			if unavailable.record(where, "switches", err) {
+				continue
+			}
+			return fmt.Errorf("%s/ssh: %w", where, err)
+		}
 		r.Switches = append(r.Switches, SwitchTarget{Name: sw.Name, Platform: platform, Endpoint: endpoint, Access: access, Ports: ports})
 	}
 	slices.SortFunc(r.Switches, func(a, b SwitchTarget) int { return strings.Compare(a.Name, b.Name) })
