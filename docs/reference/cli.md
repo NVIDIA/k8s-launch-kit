@@ -100,7 +100,7 @@ available throughout the command tree.
 | `--skip-network-operator-helm` | yes | — | yes | yes | yes | — |
 | `--deployment-files` | — | — | — | yes | yes | — |
 | `--yes` | yes | — | — | — | — | — |
-| `--quiet` | yes | yes | — | — | DPF only | — |
+| `--quiet` | yes | yes | — | — | yes (DPF only) | — |
 | Validation flags below | — | — | — | — | yes | — |
 | `--keep-helm-chart` | — | — | — | — | — | yes |
 
