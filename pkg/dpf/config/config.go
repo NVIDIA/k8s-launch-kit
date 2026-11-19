@@ -178,6 +178,10 @@ type Request struct {
 	Timeout           time.Duration
 	RequestTimeout    time.Duration
 	MaxConcurrentBMCs int
+
+	// Validation proof is runtime-only and cannot authorize changed public targets.
+	validationScope         []inventory.ScopeEndpoint
+	validationScopeComplete bool
 }
 
 func regularFile(p string, limit int64) ([]byte, error) {
@@ -414,14 +418,16 @@ func resolve(in Input, unavailable *accessAvailability) (Request, error) {
 				if !ok {
 					return r, fmt.Errorf("%s/credentialRef is unknown", ptr)
 				}
-				access, err := resolveSSHAccess(c, *e.SSH, base)
+				target := Target{Name: name, Endpoint: origin, InputRef: ptr, Role: group.role}
+				access, err := unavailable.resolveSSHAccess(c, *e.SSH, base, target)
 				if err != nil {
 					if unavailable.record(ptr, group.role, err) {
 						continue
 					}
 					return r, fmt.Errorf("%s/ssh: %w", ptr, err)
 				}
-				r.Targets = append(r.Targets, Target{Name: name, Endpoint: origin, InputRef: ptr, Role: group.role, SSH: access})
+				target.SSH = access
+				r.Targets = append(r.Targets, target)
 				continue
 			}
 			origin, err := Origin(e.BMCEndpoint)
@@ -459,9 +465,13 @@ func resolve(in Input, unavailable *accessAvailability) (Request, error) {
 				return r, fmt.Errorf("%s/tls: caFile and insecureSkipVerify: true are mutually exclusive", ptr)
 			}
 			cacheKey := accessKey{credential: e.CredentialRef, caPath: caPath, insecure: insecure}
+			target := Target{Name: name, Endpoint: origin, SystemURI: selector, InputRef: ptr, Role: group.role}
 			a, ok := accesses[cacheKey]
-			if !ok {
-				a, err = resolveAccess(c, caPath, base, insecure)
+			if ok {
+				target.Access = a
+				unavailable.captureScope(target, nil)
+			} else {
+				a, err = unavailable.resolveAccess(c, caPath, base, insecure, target)
 				if err != nil {
 					if unavailable.record(ptr, group.role, err) {
 						continue
@@ -470,7 +480,8 @@ func resolve(in Input, unavailable *accessAvailability) (Request, error) {
 				}
 				accesses[cacheKey] = a
 			}
-			r.Targets = append(r.Targets, Target{Name: name, Endpoint: origin, SystemURI: selector, InputRef: ptr, Role: group.role, Access: a})
+			target.Access = a
+			r.Targets = append(r.Targets, target)
 		}
 	}
 	return r, nil
@@ -483,16 +494,30 @@ func resolvePath(base, p string) string {
 	return filepath.Join(base, p)
 }
 func resolveAccess(c Credential, caPath, base string, insecure bool) (Access, error) {
-	if c.PrivateKeyRef != nil {
-		return Access{}, fmt.Errorf("redfish requires passwordRef, not privateKeyRef")
-	}
-	if err := validatePasswordRef(c.PasswordRef); err != nil {
+	if err := validateRedfishCredential(c); err != nil {
 		return Access{}, err
 	}
 	password, err := resolvePassword(c.PasswordRef, base)
 	if err != nil {
 		return Access{}, err
 	}
+	access, err := resolveAccessTrust(caPath, insecure)
+	if err != nil {
+		return Access{}, err
+	}
+	access.username, access.password = c.Username, password
+	return access, nil
+}
+
+func validateRedfishCredential(c Credential) error {
+	if c.PrivateKeyRef != nil {
+		return fmt.Errorf("redfish requires passwordRef, not privateKeyRef")
+	}
+	return validatePasswordRef(c.PasswordRef)
+}
+
+// Resolve trust once; successful transports retain this exact CA/root snapshot.
+func resolveAccessTrust(caPath string, insecure bool) (Access, error) {
 	roots, err := x509.SystemCertPool()
 	if err != nil || roots == nil {
 		roots = x509.NewCertPool()
@@ -504,7 +529,7 @@ func resolveAccess(c Credential, caPath, base string, insecure bool) (Access, er
 			return Access{}, &accessMaterialError{message: "invalid CA file"}
 		}
 	}
-	return Access{username: c.Username, password: password, tls: &tls.Config{MinVersion: tls.VersionTLS12, RootCAs: roots, InsecureSkipVerify: insecure}, ca: ca}, nil
+	return Access{tls: &tls.Config{MinVersion: tls.VersionTLS12, RootCAs: roots, InsecureSkipVerify: insecure}, ca: ca}, nil
 }
 func resolvePassword(p PasswordRef, base string) (string, error) {
 	if err := validatePasswordRef(p); err != nil {

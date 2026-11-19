@@ -15,6 +15,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/nvidia/k8s-launch-kit/pkg/dpf/generation"
 	"github.com/nvidia/k8s-launch-kit/pkg/dpf/releases"
 	"github.com/nvidia/k8s-launch-kit/pkg/dpf/validation"
 	corev1 "k8s.io/api/core/v1"
@@ -45,13 +46,20 @@ func systemRoleKind(role systemArtifactRole) string {
 	return ""
 }
 func (o *validationObserver) systemValidationChecks() []validation.CheckSpec {
-	result := []validation.CheckSpec{validationSpec("system/artifact", validation.AreaSystem, "Locked system networking chart", false), validationSpec("system/coverage", validation.AreaSystem, "Enabled system component graph", true), validationSpec("definitions/tenant/coverage", validation.AreaDefinitions, "Projected tenant API definitions", false)}
+	result := []validation.CheckSpec{validationSpec("system/artifact", validation.AreaSystem, "Locked system networking chart", false), validationSpec("system/coverage", validation.AreaSystem, "Enabled system component graph", true), validationSpec("system/dns/management-service", validation.AreaSystem, "Selected management DNS NodePort Service", false), validationSpec("tenant/dns/service", validation.AreaTenant, "Selected tenant DNS Service", false), validationSpec("tenant/dns/endpoints", validation.AreaTenant, "Selected tenant DNS forwarding endpoints", false), validationSpec("tenant/kube-proxy", validation.AreaTenant, "Selected Kamaji kube-proxy addon", false), validationSpec("definitions/tenant/coverage", validation.AreaDefinitions, "Projected tenant API definitions", false)}
+	for _, device := range o.desired.plan.Intent().Devices {
+		result = append(result, validationSpec("tenant/kube-proxy/device/"+device.Serial, validation.AreaTenant, "Kube-proxy device "+device.Serial, false))
+	}
 	for _, manager := range validationDirectManagers {
 		result = append(result, validationSpec("system/manager/"+manager.role, validation.AreaSystem, manager.role, false))
 	}
 	for _, role := range systemArtifactRoles() {
-		for _, part := range []string{"service", "application", "workload"} {
-			result = append(result, validationSpec(systemRoleID(role)+"/"+part, validation.AreaSystem, role.Component+" "+strings.TrimPrefix(systemRoleID(role), "system/role/"), false))
+		location := "DPU cluster"
+		if role.Management {
+			location = "management cluster"
+		}
+		for _, part := range []struct{ id, title string }{{"service", "desired DPUService"}, {"application", "Argo Application"}, {"configuration", "consumed configuration"}, {"workload", "controller workload"}} {
+			result = append(result, validationSpec(systemRoleID(role)+"/"+part.id, validation.AreaSystem, role.Component+" ("+location+"): "+part.title, false))
 		}
 		for _, name := range systemArtifactAttachmentNames(role) {
 			spec := validationSpec(systemRoleID(role)+"/attachment/"+name, validation.AreaSystem, role.Component+" network attachment "+name, false)
@@ -87,7 +95,11 @@ func (o *validationObserver) loadValidationSystemArtifacts(ctx context.Context) 
 	if err != nil {
 		return nil, err
 	}
-	projected, err := projectSystemArtifacts(archive, o.desired.plan.Intent())
+	defaulted, err := generation.DefaultedObject(o.desired.operator.renderedManifest, o.desired.configObject)
+	if err != nil {
+		return nil, err
+	}
+	projected, err := projectSystemArtifacts(archive, o.desired.plan.Intent(), defaulted)
 	if err != nil {
 		return nil, err
 	}
@@ -95,6 +107,7 @@ func (o *validationObserver) loadValidationSystemArtifacts(ctx context.Context) 
 	return &projected, nil
 }
 func (o *validationObserver) observeSystemResources(ctx context.Context, management validationManagementReader, tenant *tenantClient, r *validationRecorder) error {
+	var hostDNS *corev1.Service
 	var artifacts *systemArtifacts
 	r.run("system/artifact", func() error { var err error; artifacts, err = o.loadValidationSystemArtifacts(ctx); return err })
 	release, err := releases.Resolve(o.desired.plan.Intent().Release)
@@ -114,6 +127,9 @@ func (o *validationObserver) observeSystemResources(ctx context.Context, managem
 			images, err := containerImages(current)
 			if err != nil || images["manager"] != release.Operator.Image {
 				return validationFailure(validation.Failed, validation.ReasonHealth, "System manager image differs from the selected operator release.")
+			}
+			if err := o.verifyValidationDirectManager(ctx, management, current, manager.role); err != nil {
+				return err
 			}
 			if err := validationReady(o.desired.rules.ResourceReadiness(current)); err != nil {
 				return err
@@ -143,7 +159,11 @@ func (o *validationObserver) observeSystemResources(ctx context.Context, managem
 				return listErr
 			}
 			var err error
-			service, err = o.selectValidationSystemService(services, role, expected.Values, release)
+			expected.Values, err = o.systemRoleValuesForAccounts(ctx, management, services, role, expected.Values)
+			if err != nil {
+				return err
+			}
+			service, err = o.selectValidationSystemService(services, role, expected.Values, release, expected.Defaults)
 			return err
 		})
 		if validationIdentityChanged(serviceErr) {
@@ -163,7 +183,7 @@ func (o *validationObserver) observeSystemResources(ctx context.Context, managem
 			if err != nil {
 				return err
 			}
-			return o.verifyValidationSystemApplication(role, service, application, release)
+			return o.verifyValidationSystemApplication(role, service, application, release, expected)
 		})
 		if validationIdentityChanged(appErr) {
 			return &validation.ObservationError{Category: validation.FatalIdentity, Cause: appErr}
@@ -171,6 +191,51 @@ func (o *validationObserver) observeSystemResources(ctx context.Context, managem
 		if appErr != nil {
 			r.pendingDependents(prefix+"/", validation.CheckID(prefix+"/application"))
 			continue
+		}
+		if artifacts != nil {
+			bound, bindErr := o.specializeSystemArtifact(role, expected, service, application)
+			if bindErr != nil {
+				r.recordError(validation.CheckID(prefix+"/workload"), bindErr)
+				continue
+			}
+			expected = bound
+		}
+		if role.Component == "coredns" && role.Management {
+			err := r.run("system/dns/management-service", func() error {
+				if artifacts == nil {
+					return validationFailure(validation.Unverified, validation.ReasonDependency, "Independent DNS chart artifact is unavailable.")
+				}
+				var err error
+				hostDNS, err = verifyValidationCoreDNSService(ctx, management, application, expected)
+				return err
+			})
+			if validationIdentityChanged(err) {
+				return err
+			}
+		}
+		configurationErr := r.run(validation.CheckID(prefix+"/configuration"), func() error {
+			if artifacts == nil {
+				return validationFailure(validation.Unverified, validation.ReasonDependency, "Independent chart configuration is unavailable.")
+			}
+			if role.Management {
+				if tenant == nil {
+					return r.tenantDependencyError()
+				}
+				if err := o.verifyValidationSystemCredentials(ctx, management, tenant, role); err != nil {
+					return err
+				}
+				return verifyValidationSystemConfiguration(ctx, management, application, expected, role)
+			}
+			if len(expected.ConfigMaps) == 0 {
+				return nil
+			}
+			if tenant == nil {
+				return r.tenantDependencyError()
+			}
+			return verifyValidationSystemConfiguration(ctx, validationTenantResources{tenant: tenant}, application, expected, role)
+		})
+		if validationIdentityChanged(configurationErr) {
+			return &validation.ObservationError{Category: validation.FatalIdentity, Cause: configurationErr}
 		}
 		for _, name := range systemArtifactAttachmentNames(role) {
 			err := r.run(validation.CheckID(prefix+"/attachment/"+name), func() error {
@@ -201,22 +266,28 @@ func (o *validationObserver) observeSystemResources(ctx context.Context, managem
 		}
 		r.pendingDependents(prefix+"/device/", validation.CheckID(prefix+"/workload"))
 		// Current semantic anchors fence correlated App/workload observations.
+		fenceID := validation.CheckID(prefix + "/service")
 		current, err := management.Get(ctx, validationObject(service.GetAPIVersion(), service.GetKind(), service.GetNamespace(), service.GetName()))
 		if err == nil && !sameValidationSemantic(service, current) {
 			err = fmt.Errorf("system service changed: %w", errValidationResourceChanged)
 		}
 		if err == nil {
+			fenceID = validation.CheckID(prefix + "/application")
 			var currentApp *unstructured.Unstructured
 			currentApp, err = management.getHBNRuntimeApplication(ctx, application.GetNamespace(), application.GetName())
-			if err == nil && !sameValidationSemantic(application, currentApp) {
+			if err == nil && !sameValidationApplicationSource(application, currentApp) {
 				err = fmt.Errorf("system app changed: %w", errValidationResourceChanged)
+			}
+			if err == nil {
+				err = o.verifyValidationSystemApplication(role, service, currentApp, release, expected)
 			}
 		}
 		if validationIdentityChanged(err) {
+			r.record(fenceID, validation.Unverified, validation.ReasonIdentityDrift, "Selected system source identity or semantic binding changed during role observation.", "Repeat validation after the selected source stabilizes.")
 			return &validation.ObservationError{Category: validation.FatalIdentity, Cause: err}
 		}
 		if err != nil {
-			r.recordError(validation.CheckID(prefix+"/application"), err)
+			r.recordError(fenceID, err)
 			r.record(validation.CheckID(prefix+"/workload"), validation.Unverified, validation.ReasonDependency, "System source could not be fenced after workload reads.", "Repeat validation after source inspection.")
 		}
 	}
@@ -242,6 +313,12 @@ func (o *validationObserver) observeSystemResources(ctx context.Context, managem
 	if tenant == nil && artifacts != nil {
 		r.pendingDependents("definitions/tenant/", "tenant/api")
 	}
+	if err := o.observeValidationKubeProxy(ctx, management, tenant, r); err != nil {
+		return err
+	}
+	if err := o.observeValidationTenantDNS(ctx, management, tenant, hostDNS, r); err != nil {
+		return err
+	}
 	r.aggregate("definitions/tenant/coverage", "definitions/tenant/", nil)
 	r.aggregate("system/coverage", "system/", []validation.CheckID{"system/coverage"})
 	return nil
@@ -258,7 +335,7 @@ func validationApplySetID(component, namespace string) string {
 	digest := sha256.Sum256([]byte(component + "-applyset." + namespace + ".Secret."))
 	return "applyset-" + base64.RawURLEncoding.EncodeToString(digest[:]) + "-v1"
 }
-func (o *validationObserver) selectValidationSystemService(services []unstructured.Unstructured, role systemArtifactRole, values map[string]any, release releases.Release) (*unstructured.Unstructured, error) {
+func (o *validationObserver) selectValidationSystemService(services []unstructured.Unstructured, role systemArtifactRole, values map[string]any, release releases.Release, defaults map[string]any) (*unstructured.Unstructured, error) {
 	var selected *unstructured.Unstructured
 	tenant := o.desired.plan.Intent().Bootstrap.Tenant
 	for i := range services {
@@ -299,37 +376,34 @@ func (o *validationObserver) selectValidationSystemService(services []unstructur
 	if release.SystemNetworking == nil || repo != release.SystemNetworking.ChartRepository || chart != release.SystemNetworking.Chart || version != release.SystemNetworking.ChartVersion || path != "" {
 		return nil, validationFailure(validation.Failed, validation.ReasonHealth, "System service chart source differs from the selected release.")
 	}
-	currentValues, _, _ := unstructured.NestedMap(selected.Object, "spec", "helmChart", "values")
-	if !validationMapContains(currentValues, values) {
-		return nil, validationFailure(validation.Failed, validation.ReasonHealth, "System service effective values differ from retained component intent.")
-	}
 	if err := validationReady(o.desired.rules.ValidationConditions(selected, "Ready", "ApplicationsReconciled", "ApplicationsReady")); err != nil {
 		return nil, err
 	}
+	if defaults == nil {
+		return selected, validationFailure(validation.Unverified, validation.ReasonDependency, "The locked chart defaults are unavailable for effective system configuration verification.")
+	}
+	currentValues, _, _ := unstructured.NestedMap(selected.Object, "spec", "helmChart", "values")
+	if !systemValuesMatch(currentValues, values, defaults) {
+		return nil, validationFailure(validation.Failed, validation.ReasonHealth, "System service effective values differ from retained component intent.")
+	}
 	return selected, nil
 }
-func validationMapContains(current, expected map[string]any) bool {
-	for key, want := range expected {
-		got, ok := current[key]
-		if !ok {
-			return false
-		}
-		if sub, ok := want.(map[string]any); ok {
-			live, ok := got.(map[string]any)
-			if !ok || !validationMapContains(live, sub) {
-				return false
-			}
-		} else if !reflect.DeepEqual(want, got) {
-			return false
-		}
-	}
-	return true
-}
 func sameValidationSemantic(before, after *unstructured.Unstructured) bool {
-	return before != nil && after != nil && before.GetUID() == after.GetUID() && before.GetGeneration() == after.GetGeneration() && after.GetDeletionTimestamp() == nil && reflect.DeepEqual(before.Object["spec"], after.Object["spec"]) && maps.Equal(before.GetLabels(), after.GetLabels()) && maps.Equal(before.GetAnnotations(), after.GetAnnotations())
+	return sameValidationSource(before, after) && before.GetGeneration() == after.GetGeneration()
 }
 
-func (o *validationObserver) verifyValidationSystemApplication(role systemArtifactRole, service, app *unstructured.Unstructured, release releases.Release) error {
+func sameValidationSource(before, after *unstructured.Unstructured) bool {
+	return before != nil && after != nil && before.GroupVersionKind() == after.GroupVersionKind() && before.GetName() == after.GetName() && before.GetNamespace() == after.GetNamespace() && before.GetUID() == after.GetUID() && after.GetDeletionTimestamp() == nil && reflect.DeepEqual(before.Object["spec"], after.Object["spec"]) && maps.Equal(before.GetLabels(), after.GetLabels()) && maps.Equal(before.GetAnnotations(), after.GetAnnotations())
+}
+
+// This release's Application CRD has no status subresource, so controller status
+// writes also advance generation. Fence its actual source/bindings and recheck
+// fresh current status instead of treating that counter as desired-spec identity.
+func sameValidationApplicationSource(before, after *unstructured.Unstructured) bool {
+	return before != nil && before.GetAPIVersion() == "argoproj.io/v1alpha1" && before.GetKind() == "Application" && sameValidationSource(before, after)
+}
+
+func (o *validationObserver) verifyValidationSystemApplication(role systemArtifactRole, service, app *unstructured.Unstructured, release releases.Release, expected systemArtifactExpectation) error {
 	tenant := o.desired.plan.Intent().Bootstrap.Tenant
 	target := tenant.Name
 	targetNamespace := service.GetNamespace()
@@ -351,6 +425,13 @@ func (o *validationObserver) verifyValidationSystemApplication(role systemArtifa
 		return validationFailure(validation.Pending, validation.ReasonProgressing, "System Application has not compared its current source and destination.")
 	}
 	values, _, _ := unstructured.NestedMap(service.Object, "spec", "helmChart", "values")
+	if expected.Defaults == nil {
+		return validationFailure(validation.Unverified, validation.ReasonDependency, "The locked chart defaults are unavailable for effective Application configuration verification.")
+	}
+	if !systemValuesMatch(values, expected.Values, expected.Defaults) {
+		return validationFailure(validation.Failed, validation.ReasonHealth, "System service contains unsupported effective chart values.")
+	}
+
 	daemonSet, _, _ := unstructured.NestedMap(service.Object, "spec", "serviceDaemonSet")
 	if daemonSet == nil {
 		daemonSet = map[string]any{}
@@ -372,7 +453,7 @@ func (o *validationObserver) verifyValidationSystemApplication(role systemArtifa
 		daemonAnnotations = map[string]any{}
 	}
 	daemonAnnotations[dpfDPUClusterNameLabel] = target
-	daemonAnnotations[dpfDPUClusterNamespaceLabel] = tenant.Namespace
+	daemonAnnotations[dpfDPUClusterNamespaceLabel] = service.GetNamespace()
 	daemonSet["annotations"] = daemonAnnotations
 	if values == nil {
 		values = map[string]any{}

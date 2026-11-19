@@ -58,7 +58,10 @@ func retainedValidationDeployment(plan *generation.Plan) (*unstructured.Unstruct
 	return object, nil
 }
 
-func validationSelectedHosts(desired *managementDesired, request config.Request) ([]currentSelectedDevice, error) {
+func validationSelectedHosts(desired *managementDesired, request config.Request, expected *inventory.Inventory) ([]currentSelectedDevice, error) {
+	if expected == nil {
+		return nil, fmt.Errorf("immutable retained physical expectations unavailable")
+	}
 	deployment, err := retainedValidationDeployment(desired.plan)
 	if err != nil {
 		return nil, err
@@ -67,8 +70,8 @@ func validationSelectedHosts(desired *managementDesired, request config.Request)
 	// Missing host credentials do not change retained selected scope. Bind the
 	// association with its declared endpoint; transport availability is separate.
 	targets := append([]config.Target(nil), request.Targets...)
-	if request.Input.Site.Inventory != nil {
-		for _, host := range request.Input.Site.Inventory.Hosts {
+	if expected != nil {
+		for _, host := range expected.Hosts {
 			found := false
 			for _, target := range targets {
 				if target.Role == "hosts" && target.InputRef == host.InputRef && target.Endpoint == host.SSHEndpoint {
@@ -80,7 +83,7 @@ func validationSelectedHosts(desired *managementDesired, request config.Request)
 			}
 		}
 	}
-	result, _, err := bindCurrentHostAssociations(desired.rules, intent.Devices, request.Input.Site.Inventory, targets, deployment, false)
+	result, _, err := bindCurrentHostAssociations(desired.rules, intent.Devices, expected, targets, deployment, false)
 	return result, err
 }
 
@@ -114,6 +117,9 @@ func observeCurrentRuntimeGraph(ctx context.Context, reader activationObservatio
 			return graph, err
 		}
 		lists[kind] = rows
+	}
+	if err := verifyCurrentDPUSetMembership(desired, graph.deployment, lists["DPUSet"]); err != nil {
+		return graph, err
 	}
 	for _, item := range selected {
 		set := uniqueObjectByName(lists["DPUSet"], item.dpuSet.GetName())
@@ -190,6 +196,37 @@ func observeCurrentRuntimeGraph(ctx context.Context, reader activationObservatio
 	graph.chains = lists["DPUServiceChain"]
 	graph.interfaces = lists["DPUServiceInterface"]
 	return graph, reader.VerifyIdentity(ctx)
+}
+
+func verifyCurrentDPUSetMembership(desired *managementDesired, deployment *unstructured.Unstructured, sets []unstructured.Unstructured) error {
+	expected, err := desired.rules.ActivationSetIntents(deployment, desired.plan.Intent().Devices)
+	if err != nil {
+		return err
+	}
+	names := map[string]bool{}
+	for _, set := range expected {
+		names[set.GetName()] = true
+	}
+	for i := range sets {
+		set := &sets[i]
+		owned := activationOwnerMatches(set, deployment.GetAPIVersion(), deployment.GetKind(), deployment.GetName(), deployment.GetUID())
+		selector, found, err := unstructured.NestedStringMap(set.Object, "spec", "dpuDeviceSelector", "matchLabels")
+		if err != nil && owned {
+			return validationFailure(validation.Failed, validation.ReasonHealth, "A selected deployment DPUSet has a malformed device selector.")
+		}
+		selected := false
+		if found {
+			for _, device := range desired.plan.Intent().Devices {
+				if reflect.DeepEqual(selector, device.SelectorLabels) {
+					selected = true
+				}
+			}
+		}
+		if owned && !names[set.GetName()] || selected && (!owned || !names[set.GetName()]) {
+			return validationFailure(validation.Failed, validation.ReasonHealth, "An additional or foreign DPUSet participates in the retained selected deployment or device selection.")
+		}
+	}
+	return nil
 }
 
 func currentObjectIdentity(current, expected *unstructured.Unstructured) bool {

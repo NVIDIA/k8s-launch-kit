@@ -12,6 +12,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/nvidia/k8s-launch-kit/pkg/dpf/config"
 	"github.com/nvidia/k8s-launch-kit/pkg/dpf/generation"
 	"github.com/nvidia/k8s-launch-kit/pkg/dpf/hbn"
 	"github.com/nvidia/k8s-launch-kit/pkg/dpf/hbnruntime"
@@ -29,17 +30,25 @@ func validationRuntimeChecks(plan *generation.Plan) ([]validation.CheckSpec, val
 		return nil, validation.RuntimeScope{}, fmt.Errorf("retained plan required")
 	}
 	checks := []validation.CheckSpec{}
-	for _, area := range []validation.Area{validation.AreaDevices, validation.AreaHBN, validation.AreaWorkloads} {
-		checks = append(checks, validation.CheckSpec{ID: validation.CheckID(string(area) + "/coverage"), Area: area, Subject: string(area) + " selected coverage", Required: true, Coverage: true, CohortBound: true})
+	areas := []struct {
+		area  validation.Area
+		title string
+	}{
+		{validation.AreaDevices, "DPU enrollment"},
+		{validation.AreaHBN, "HBN service and running workload"},
+		{validation.AreaWorkloads, "Tenant interfaces and service chains"},
+	}
+	for _, item := range areas {
+		checks = append(checks, validation.CheckSpec{ID: validation.CheckID(string(item.area) + "/coverage"), Area: item.area, Subject: item.title + " — selected coverage", Required: true, Coverage: true, CohortBound: true})
 	}
 	scope := validation.RuntimeScope{}
 	for _, device := range plan.Intent().Devices {
 		scope.Devices = append(scope.Devices, validation.DeviceID(device.Serial))
 		scope.Hosts = append(scope.Hosts, validation.HostID(device.Serial))
-		for _, area := range []validation.Area{validation.AreaDevices, validation.AreaHBN, validation.AreaWorkloads} {
-			checks = append(checks, validation.CheckSpec{ID: validation.CheckID(string(area) + "/" + device.Serial), Area: area, Subject: device.Serial, Required: true, CohortBound: true})
+		for _, item := range areas {
+			checks = append(checks, validation.CheckSpec{ID: validation.CheckID(string(item.area) + "/" + device.Serial), Area: item.area, Subject: item.title + " — " + device.Serial, Required: true, CohortBound: true})
 		}
-		checks = append(checks, validation.CheckSpec{ID: validation.CheckID("physical/host-network/" + device.Serial), Area: validation.AreaPhysical, Subject: device.Serial + " workload network", Required: true, FullOnly: true, CohortBound: true})
+		checks = append(checks, validation.CheckSpec{ID: validation.CheckID("physical/host-network/" + device.Serial), Area: validation.AreaPhysical, Subject: "Workload network on host attached to DPU " + device.Serial, Required: true, FullOnly: true, CohortBound: true})
 	}
 	for _, a := range scope.Devices {
 		for _, b := range scope.Devices {
@@ -94,6 +103,53 @@ type validationHostRequest struct {
 	selected currentSelectedDevice
 	lease    hostWorkloadLease
 	request  sshprobe.HostNetworkRequest
+}
+
+type validationHostNetworkReader func(context.Context, config.Target, sshprobe.HostNetworkRequest, time.Duration) (sshprobe.HostNetworkValidation, error)
+
+// openCurrentHostNetworkFence establishes current runtime and persistent state
+// from the freshly selected leases. It neither consumes nor emits effect history.
+func openCurrentHostNetworkFence(ctx context.Context, hosts []validationHostRequest, timeout time.Duration, read validationHostNetworkReader) (func(context.Context) error, error) {
+	if read == nil || len(hosts) == 0 {
+		return nil, fmt.Errorf("selected host qualification inputs unavailable")
+	}
+	observe := func(ctx context.Context) (map[string]sshprobe.HostNetworkValidation, error) {
+		current := make(map[string]sshprobe.HostNetworkValidation, len(hosts))
+		for _, host := range hosts {
+			if host.selected.hostTarget.SSH == nil {
+				return nil, validationFailure(validation.Unverified, validation.ReasonUnavailable, "Explicit selected-host SSH access is unavailable.")
+			}
+			value, err := read(ctx, host.selected.hostTarget, host.request, timeout)
+			if err != nil {
+				return nil, validationHostNetworkError(err)
+			}
+			if !value.Qualified() {
+				return nil, validationFailure(validation.Unverified, validation.ReasonIncomplete, "The selected host did not provide a complete current network qualification.")
+			}
+			current[host.lease.Serial] = value
+		}
+		return current, nil
+	}
+	anchor, err := observe(ctx)
+	if err != nil {
+		return nil, err
+	}
+	return func(ctx context.Context) error {
+		current, err := observe(ctx)
+		if err != nil {
+			var check *validationCheckError
+			if validationIdentityChanged(err) || errors.As(err, &check) && check.state == validation.Failed {
+				return fmt.Errorf("selected host no longer matches its qualified configuration: %w: %w", errValidationResourceChanged, err)
+			}
+			return err
+		}
+		for serial, expected := range anchor {
+			if !expected.SameCurrent(current[serial]) {
+				return fmt.Errorf("selected host current qualification changed: %w", errValidationResourceChanged)
+			}
+		}
+		return nil
+	}, nil
 }
 
 func observeCurrentAllocation(ctx context.Context, management resourceReader, tenant validationRuntimeTenantReader, desired *managementDesired, graph currentRuntimeGraph) (hostWorkloadLeaseSnapshot, []hostWorkloadLease, error) {
@@ -215,11 +271,19 @@ func observeCurrentHBNBindings(ctx context.Context, management validationManagem
 	if err != nil {
 		return empty, err
 	}
+	if err := verifyHBNRuntimeMembership(intent, daemonSets, pods, leases); err != nil {
+		return empty, err
+	}
 	result := validationHBNBindings{hbnRuntimeBindingSnapshot: hbnRuntimeBindingSnapshot{anchors: map[string]hbnPodBindingAnchor{}, sourceDigests: map[string]string{}}, unavailable: map[string]validation.Reason{}}
 	// Bind actual running identities even when a source is unhealthy or absent.
 	// Missing source Pods block only dependent exec measurements; no ready subset
 	// replaces the retained selected scope.
+	selectedDaemonSets := map[types.UID]bool{}
 	for _, ds := range daemonSets {
+		if ds.Namespace != intent.TargetNamespace || ds.Labels[hbnServiceIDLabel] != intent.ServiceID && ds.Spec.Template.Labels[hbnServiceIDLabel] != intent.ServiceID {
+			continue
+		}
+		selectedDaemonSets[ds.UID] = true
 		result.sourceDigests["DaemonSet/"+ds.Name] = hbnBindingDigest(struct {
 			UID        types.UID
 			Generation int64
@@ -228,6 +292,15 @@ func observeCurrentHBNBindings(ctx context.Context, management validationManagem
 		}{ds.UID, ds.Generation, ds.Spec, ds.OwnerReferences})
 	}
 	for _, pod := range pods {
+		participates := pod.Labels[hbnServiceIDLabel] == intent.ServiceID
+		for _, owner := range pod.OwnerReferences {
+			if owner.Kind == "DaemonSet" && selectedDaemonSets[owner.UID] {
+				participates = true
+			}
+		}
+		if pod.Namespace != intent.TargetNamespace || !participates {
+			continue
+		}
 		result.sourceDigests["Pod/"+pod.Name] = hbnBindingDigest(struct {
 			UID            types.UID
 			Spec           any
@@ -280,6 +353,69 @@ func observeCurrentHBNBindings(ctx context.Context, management validationManagem
 	return result, tenant.VerifyIdentity(ctx)
 }
 
+// verifyHBNRuntimeMembership qualifies the complete participating workload
+// before per-node positive bindings. Objects from other services are unrelated.
+func verifyHBNRuntimeMembership(intent hbnPodBindingIntent, daemonSets []appsv1.DaemonSet, pods []corev1.Pod, leases []hostWorkloadLease) error {
+	expected := map[string]bool{}
+	for _, lease := range leases {
+		if lease.TenantNodeName == "" || expected[lease.TenantNodeName] {
+			return fmt.Errorf("selected HBN tenant node set ambiguous")
+		}
+		expected[lease.TenantNodeName] = true
+	}
+	var selected *appsv1.DaemonSet
+	for i := range daemonSets {
+		ds := &daemonSets[i]
+		if ds.Namespace != intent.TargetNamespace || ds.Labels[hbnServiceIDLabel] != intent.ServiceID && ds.Spec.Template.Labels[hbnServiceIDLabel] != intent.ServiceID {
+			continue
+		}
+		if selected != nil {
+			return validationFailure(validation.Failed, validation.ReasonHealth, "More than one DaemonSet participates in the selected HBN service.")
+		}
+		selected = ds
+	}
+	if selected == nil {
+		return nil
+	} // Per-node bindings retain missing readiness.
+	if selected.Generation < 1 || selected.Status.ObservedGeneration > selected.Generation {
+		return validationFailure(validation.Failed, validation.ReasonHealth, "Selected HBN DaemonSet has invalid generation evidence.")
+	}
+	if selected.Status.ObservedGeneration < selected.Generation {
+		return validationFailure(validation.Pending, validation.ReasonProgressing, "Selected HBN DaemonSet has not observed its current generation.")
+	}
+	if selected.Status.DesiredNumberScheduled != int32(len(expected)) {
+		state, reason := validation.Pending, validation.ReasonProgressing
+		if selected.Status.DesiredNumberScheduled > int32(len(expected)) {
+			state, reason = validation.Failed, validation.ReasonHealth
+		}
+		return validationFailure(state, reason, "Selected HBN DaemonSet scheduling cardinality differs from the retained tenant Node set.")
+	}
+	nodes := map[string]bool{}
+	for i := range pods {
+		pod := &pods[i]
+		if pod.Namespace != intent.TargetNamespace {
+			continue
+		}
+		owned := false
+		for _, owner := range pod.OwnerReferences {
+			if owner.Kind == "DaemonSet" && owner.APIVersion == "apps/v1" && owner.UID == selected.UID && owner.Name == selected.Name && owner.Controller != nil && *owner.Controller {
+				owned = true
+			}
+		}
+		if !owned && pod.Labels[hbnServiceIDLabel] != intent.ServiceID {
+			continue
+		}
+		if !owned || !expected[pod.Spec.NodeName] {
+			return validationFailure(validation.Failed, validation.ReasonHealth, "A selected HBN service Pod has foreign ownership or an unselected tenant Node.")
+		}
+		if nodes[pod.Spec.NodeName] {
+			return validationFailure(validation.Pending, validation.ReasonProgressing, "More than one selected HBN Pod is present on a retained tenant Node.")
+		}
+		nodes[pod.Spec.NodeName] = true
+	}
+	return nil
+}
+
 func (o *validationObserver) captureValidationCohort(ctx context.Context, management validationManagementReader, tenant validationRuntimeTenantReader, selected []currentSelectedDevice, image hbnPodImageIdentity, requireExec bool) (validationCurrentCohort, error) {
 	var result validationCurrentCohort
 	graph, err := observeCurrentRuntimeGraph(ctx, management, o.desired, selected)
@@ -322,18 +458,19 @@ func (o *validationObserver) captureValidationCohort(ctx context.Context, manage
 }
 
 type validationRuntimeSession struct {
-	mu             sync.Mutex
-	scope          validation.RuntimeScope
-	anchor         validationCurrentCohort
-	observe        func(context.Context) (validationCurrentCohort, error)
-	read           hbnRuntimeRead
-	probe          hbnHostTrafficProbe
-	hosts          map[validation.HostID]validationHostRequest
-	asns           map[validation.DeviceID]uint32
-	fabricASN      uint32
-	timeout        time.Duration
-	poisoned       error
-	verifyPhysical func(context.Context) error
+	mu                sync.Mutex
+	scope             validation.RuntimeScope
+	anchor            validationCurrentCohort
+	observe           func(context.Context) (validationCurrentCohort, error)
+	read              hbnRuntimeRead
+	probe             hbnHostTrafficProbe
+	hosts             map[validation.HostID]validationHostRequest
+	asns              map[validation.DeviceID]uint32
+	fabricASN         uint32
+	timeout           time.Duration
+	poisoned          error
+	verifyPhysical    func(context.Context) error
+	verifyHostNetwork func(context.Context) error
 }
 
 func (o *validationObserver) OpenRuntime(ctx context.Context, _ validation.Progress) (validation.RuntimeSession, error) {
@@ -352,7 +489,7 @@ func (o *validationObserver) OpenRuntime(ctx context.Context, _ validation.Progr
 	if err != nil {
 		return nil, validationRuntimeError(ctx, err, false)
 	}
-	selected, err := validationSelectedHosts(o.desired, o.request)
+	selected, err := validationSelectedHosts(o.desired, o.request, o.physicalScope.expected)
 	if err != nil {
 		return nil, validationRuntimeError(ctx, err, false)
 	}
@@ -371,7 +508,11 @@ func (o *validationObserver) OpenRuntime(ctx context.Context, _ validation.Progr
 	if err != nil {
 		return nil, validationRuntimeError(ctx, err, false)
 	}
-	session := &validationRuntimeSession{scope: o.runtimeScope, anchor: anchor, observe: observe, read: tenant.readValidationHBN, probe: sshprobe.ProbeHostWorkloadTraffic, hosts: map[validation.HostID]validationHostRequest{}, asns: map[validation.DeviceID]uint32{}, fabricASN: o.desired.plan.Intent().Networking.FabricASN, timeout: o.request.RequestTimeout, verifyPhysical: physicalFence}
+	hostNetworkFence, err := openCurrentHostNetworkFence(ctx, hosts, o.request.RequestTimeout, sshprobe.VerifyHostWorkloadNetwork)
+	if err != nil {
+		return nil, validationRuntimeError(ctx, err, false)
+	}
+	session := &validationRuntimeSession{scope: o.runtimeScope, anchor: anchor, observe: observe, read: tenant.readValidationHBN, probe: sshprobe.ProbeHostWorkloadTraffic, hosts: map[validation.HostID]validationHostRequest{}, asns: map[validation.DeviceID]uint32{}, fabricASN: o.desired.plan.Intent().Networking.FabricASN, timeout: o.request.RequestTimeout, verifyPhysical: physicalFence, verifyHostNetwork: hostNetworkFence}
 	for _, host := range hosts {
 		session.hosts[validation.HostID(host.lease.Serial)] = host
 	}
@@ -408,6 +549,12 @@ func (s *validationRuntimeSession) fence(ctx context.Context) error {
 	if err := ctx.Err(); err != nil {
 		return validationRuntimeError(ctx, err, false)
 	}
+	if s.verifyHostNetwork != nil {
+		if err := s.verifyHostNetwork(ctx); err != nil {
+			s.poisoned = validationRuntimeError(ctx, err, validationIdentityChanged(err))
+			return s.poisoned
+		}
+	}
 	current, err := s.observe(ctx)
 	if err == nil && (currentGraphDigest(s.anchor.graph) != currentGraphDigest(current.graph) || !reflect.DeepEqual(s.anchor.leases, current.leases) || !reflect.DeepEqual(s.anchor.bindings, current.bindings) || !reflect.DeepEqual(s.anchor.workloads, current.workloads)) {
 		err = fmt.Errorf("current runtime cohort changed: %w", errValidationResourceChanged)
@@ -435,11 +582,14 @@ func (s *validationRuntimeSession) VerifyCohort(ctx context.Context) error {
 	}
 	return s.fence(ctx)
 }
-func (s *validationRuntimeSession) measure(ctx context.Context, fn func()) error {
+func (s *validationRuntimeSession) measure(ctx context.Context, fn func() error) error {
 	if err := s.fence(ctx); err != nil {
 		return err
 	}
-	fn()
+	if err := fn(); err != nil {
+		s.poisoned = validationRuntimeError(ctx, err, validationIdentityChanged(err))
+		return s.poisoned
+	}
 	return s.fence(ctx)
 }
 func runtimeReadOutcome(id validation.CheckID, err error) validation.Outcome {
@@ -456,20 +606,20 @@ func (s *validationRuntimeSession) ObserveBGP(ctx context.Context, device valida
 	if !ok {
 		if _, selected := s.asns[device]; selected {
 			result.Outcome = validation.Outcome{ID: validation.BGPCheckID(device), State: validation.Unverified, Reason: validation.ReasonDependency, Summary: "A current exact-image HBN execution target is unavailable for this selected source."}
-			return result, s.measure(ctx, func() {})
+			return result, s.measure(ctx, func() error { return nil })
 		}
 		return result, &validation.ObservationError{Category: validation.FatalInput}
 	}
-	err := s.measure(ctx, func() {
+	err := s.measure(ctx, func() error {
 		data, readErr := s.read(ctx, binding.PodNamespace, binding.PodName, hbnReadBGPSummary, netip.Prefix{})
 		result.Outcome = runtimeReadOutcome(validation.BGPCheckID(device), readErr)
 		if readErr != nil {
-			return
+			return nil
 		}
 		summary, parseErr := hbnruntime.Parse(data)
 		if parseErr != nil {
 			result.Outcome = runtimeReadOutcome(validation.BGPCheckID(device), parseErr)
-			return
+			return nil
 		}
 		result.Outcome.BGP = &validation.BGPFacts{ExpectedPeers: 2, LocalASN: summary.ASN}
 		for _, peer := range summary.Peers {
@@ -482,6 +632,7 @@ func (s *validationRuntimeSession) ObserveBGP(ctx context.Context, device valida
 			result.Outcome.Reason = validation.ReasonHealth
 			result.Outcome.Summary = "Expected fabric BGP peers are not established with retained ASNs."
 		}
+		return nil
 	})
 	return result, err
 }
@@ -497,7 +648,7 @@ func (s *validationRuntimeSession) ObserveRoute(ctx context.Context, pair valida
 		if _, sourceSelected := s.asns[pair.Source]; sourceSelected {
 			if _, destinationSelected := s.asns[pair.Destination]; destinationSelected {
 				result.Outcome = validation.Outcome{ID: validation.RouteCheckID(pair), State: validation.Unverified, Reason: validation.ReasonDependency, Summary: "A current exact-image HBN execution target is unavailable for this selected source."}
-				return result, s.measure(ctx, func() {})
+				return result, s.measure(ctx, func() error { return nil })
 			}
 		}
 		return result, &validation.ObservationError{Category: validation.FatalInput}
@@ -511,16 +662,16 @@ func (s *validationRuntimeSession) ObserveRoute(ctx context.Context, pair valida
 	if !prefix.IsValid() {
 		return result, &validation.ObservationError{Category: validation.FatalInput}
 	}
-	err := s.measure(ctx, func() {
+	err := s.measure(ctx, func() error {
 		data, readErr := s.read(ctx, binding.PodNamespace, binding.PodName, hbnReadRemoteRoute, prefix)
 		result.Outcome = runtimeReadOutcome(validation.RouteCheckID(pair), readErr)
 		if readErr != nil {
-			return
+			return nil
 		}
 		document, parseErr := hbnruntime.ParseFIBRoute(data)
 		if parseErr != nil {
 			result.Outcome = runtimeReadOutcome(validation.RouteCheckID(pair), parseErr)
-			return
+			return nil
 		}
 		installed := len(hbnruntime.ValidateFIBRoute(document, hbnruntime.FIBExpectation{Prefix: prefix.String(), EgressInterfaces: []string{"p0_if", "p1_if"}})) == 0
 		result.Outcome.Route = &validation.RouteFacts{Prefix: prefix, Installed: installed}
@@ -529,6 +680,7 @@ func (s *validationRuntimeSession) ObserveRoute(ctx context.Context, pair valida
 			result.Outcome.Reason = validation.ReasonHealth
 			result.Outcome.Summary = "The exact remote allocation is not installed through the expected uplinks."
 		}
+		return nil
 	})
 	return result, err
 }
@@ -546,7 +698,7 @@ func (s *validationRuntimeSession) ProbeTraffic(ctx context.Context, pair valida
 		Graph  string
 		Leases []hostWorkloadLease
 	}{currentGraphDigest(s.anchor.graph), s.anchor.leases})
-	err := s.measure(ctx, func() {
+	err := s.measure(ctx, func() error {
 		measured, probeErr := s.probe(ctx, source.selected.hostTarget, request, s.timeout)
 		result.Ordinary = validationTrafficOutcome(pair, false, measured.Ordinary, probeErr, 56)
 		result.DF = validationTrafficOutcome(pair, true, measured.MTUProbe, probeErr, request.MTU-28)
@@ -560,8 +712,30 @@ func (s *validationRuntimeSession) ProbeTraffic(ctx context.Context, pair valida
 				row.State = validation.Unverified
 				row.Reason = validation.ReasonIncomplete
 				row.Summary = "The intended natural source route was not verified."
+				if probeErr != nil && measured.State != sshprobe.TrafficProbeFailed {
+					row.Reason = validation.ReasonUnavailable
+					row.Summary = sshprobe.Reason(probeErr)
+					if sshprobe.Code(probeErr) == "SSH_AUTHENTICATION_OR_HANDSHAKE_FAILED" || sshprobe.Code(probeErr) == "PERMISSION_DENIED" {
+						row.Reason = validation.ReasonDenied
+					}
+				}
 			}
 		}
+		if validationHostObservedDrift(probeErr) {
+			for _, row := range []*validation.Outcome{&result.Ordinary, &result.DF} {
+				row.State = validation.Unverified
+				row.Reason = validation.ReasonIdentityDrift
+				row.Summary = "Selected host identity or network sources changed during the measurement."
+			}
+			return fmt.Errorf("selected host changed during traffic measurement: %w", errValidationResourceChanged)
+		}
+		if errors.Is(probeErr, context.Canceled) || errors.Is(probeErr, context.DeadlineExceeded) {
+			return probeErr
+		}
+		if ctx.Err() != nil {
+			return ctx.Err()
+		}
+		return nil
 	})
 	return result, err
 }
@@ -591,4 +765,12 @@ func validationTrafficOutcome(pair validation.DirectedHostPair, df bool, probe s
 		outcome.Summary = "The selected diagnostic packet measurement did not complete."
 	}
 	return outcome
+}
+
+func validationHostObservedDrift(err error) bool {
+	switch sshprobe.Code(err) {
+	case "HOST_NETWORK_RUNTIME_CHANGED", "HOST_NETWORK_OBSERVATION_CHANGED", "HOST_NETWORK_SOURCE_CHANGED", "HOST_NETWORK_IDENTITY_CHANGED", "HOST_NETWORK_READ_PCI_BINDING_CHANGED":
+		return true
+	}
+	return false
 }

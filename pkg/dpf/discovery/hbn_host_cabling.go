@@ -23,11 +23,10 @@ type HostLLDPCapturer interface {
 	CaptureHostLLDP(context.Context, config.Target, inventory.HostLLDPCaptureRequest, time.Duration) (inventory.HostLLDPCapture, error)
 }
 
-// collectHostHBNCabling captures only unresolved configured bindings after the
-// inventory has selected an exact host/card association. It mutates only the
-// current selected host's transient observation; evaluateHBN combines these
-// facts with the existing DPU-MAC/switch-LLDP result without overriding failure.
-func collectHostHBNCabling(ctx context.Context, request config.Request, inv *inventory.Inventory, capturer HostLLDPCapturer) {
+// CollectHostHBNCabling obtains bounded, passive host LLDP observations for
+// selected bindings unresolved by DPU MAC and switch LLDP observations. It
+// updates only transient observations on the supplied current inventory.
+func CollectHostHBNCabling(ctx context.Context, request config.Request, inv *inventory.Inventory, capturer HostLLDPCapturer) {
 	if ctx == nil || inv == nil || inv.HBN == nil || len(inv.DPUs) == 0 {
 		return
 	}

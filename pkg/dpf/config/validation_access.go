@@ -7,8 +7,10 @@ import (
 	"bytes"
 	"errors"
 	"fmt"
+	"slices"
 
 	"github.com/mitchellh/copystructure"
+	"github.com/nvidia/k8s-launch-kit/pkg/dpf/inventory"
 	"github.com/nvidia/k8s-launch-kit/pkg/yamlinput"
 )
 
@@ -25,17 +27,22 @@ type AccessIssue struct {
 // Structural configuration errors still reject the entire request. Targets
 // contains only resolved access; callers must retain every returned issue and
 // derive expected coverage from Input, never from the available target count.
+// ValidationScope records every readable source trust policy independently of
+// authentication. Its proof must be matched to each transport before use; it
+// cannot authorize public targets changed after resolution.
 // Discovery and deployment continue to use the fail-fast Resolve entry point.
 func ResolveForValidation(in Input) (Request, []AccessIssue, error) {
 	frozen, err := validationInputSnapshot(in)
 	if err != nil {
 		return Request{}, nil, err
 	}
-	availability := &accessAvailability{}
+	availability := &accessAvailability{scopeComplete: true}
 	request, err := resolve(frozen, availability)
 	if err != nil {
 		return Request{}, nil, err
 	}
+	request.validationScope = availability.scope
+	request.validationScopeComplete = availability.scopeComplete
 	return request, availability.issues, nil
 }
 
@@ -73,7 +80,9 @@ func (e *accessMaterialError) Error() string { return e.message }
 // A nil collector selects the ordinary fail-fast resolution policy. The
 // validation caller owns this collector for one synchronous resolution only.
 type accessAvailability struct {
-	issues []AccessIssue
+	issues        []AccessIssue
+	scope         []inventory.ScopeEndpoint
+	scopeComplete bool
 }
 
 func (a *accessAvailability) record(inputRef, role string, err error) bool {
@@ -85,9 +94,76 @@ func (a *accessAvailability) record(inputRef, role string, err error) bool {
 	return true
 }
 
+// ValidationScope returns a defensive copy of the selected access-policy snapshot
+// captured by ResolveForValidation. Completeness requires readable trust
+// for every source, independently of available authentication. This runtime-only
+// proof does not authorize mutated public targets: consumers must also match each
+// transport's Scope and declared source selection against the snapshot.
+func (r Request) ValidationScope() ([]inventory.ScopeEndpoint, bool) {
+	return slices.Clone(r.validationScope), r.validationScopeComplete
+}
+
+func (a *accessAvailability) captureScope(target Target, trustErr error) {
+	if a == nil {
+		return
+	}
+	if trustErr != nil {
+		a.scopeComplete = false
+		return
+	}
+	a.scope = append(a.scope, Scope(target))
+}
+
+// The validation policy resolves trust independently of authentication. Only a
+// fully resolved access value escapes to Targets; the private proof records the
+// same trust bytes even when authentication is unavailable. Ordinary resolution
+// keeps its existing authentication-first, fail-fast behavior.
+func (a *accessAvailability) resolveSSHAccess(c Credential, endpoint SSH, base string, target Target) (*SSHAccess, error) {
+	if a == nil {
+		return resolveSSHAccess(c, endpoint, base)
+	}
+	if err := validateSSHAccess(c, endpoint); err != nil {
+		return nil, err
+	}
+	known, trustErr := resolveSSHTrust(endpoint, base)
+	target.SSH = &SSHAccess{knownHosts: known, Sudo: endpoint.Sudo != nil && *endpoint.Sudo}
+	a.captureScope(target, trustErr)
+	access, authErr := resolveSSHAuthentication(c, base)
+	if authErr != nil {
+		return nil, authErr
+	}
+	if trustErr != nil {
+		return nil, trustErr
+	}
+	access.knownHosts, access.Sudo = known, target.SSH.Sudo
+	return access, nil
+}
+
+func (a *accessAvailability) resolveAccess(c Credential, caPath, base string, insecure bool, target Target) (Access, error) {
+	if a == nil {
+		return resolveAccess(c, caPath, base, insecure)
+	}
+	if err := validateRedfishCredential(c); err != nil {
+		return Access{}, err
+	}
+	access, trustErr := resolveAccessTrust(caPath, insecure)
+	target.Access = access
+	a.captureScope(target, trustErr)
+	password, authErr := resolvePassword(c.PasswordRef, base)
+	if authErr != nil {
+		return Access{}, authErr
+	}
+	if trustErr != nil {
+		return Access{}, trustErr
+	}
+	access.username, access.password = c.Username, password
+	return access, nil
+}
+
 // SnapshotRequestForValidation isolates resolved scope without resolving access
 // again. Private access bytes have no mutation API; SSH's public sudo flag and
-// every caller-owned public tree are copied before observers retain them.
+// every caller-owned public tree are copied before observers retain them. The
+// private proof is preserved, but cannot authorize mutated public targets by itself.
 func SnapshotRequestForValidation(request Request) (Request, error) {
 	input, err := validationInputSnapshot(request.Input)
 	if err != nil {
@@ -96,6 +172,8 @@ func SnapshotRequestForValidation(request Request) (Request, error) {
 	// copystructure cannot preserve private resolved access fields. Exclude the
 	// access containers, clone the public configuration, then restore value copies.
 	targets, switches := request.Targets, request.Switches
+	scope, complete := request.ValidationScope()
+	request.validationScope = nil
 	request.Input = Input{}
 	request.Targets = nil
 	request.Switches = nil
@@ -105,6 +183,7 @@ func SnapshotRequestForValidation(request Request) (Request, error) {
 	}
 	result := cloned.(Request)
 	result.Input = input
+	result.validationScope, result.validationScopeComplete = scope, complete
 	result.Targets = make([]Target, len(targets))
 	for i, target := range targets {
 		result.Targets[i] = target

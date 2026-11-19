@@ -137,20 +137,20 @@ func (s *hostNetworkSession) probeHostWorkloadTraffic(ctx context.Context, reque
 	}
 	result.Ordinary.State = TrafficProbeUnknown
 	result.Ordinary.PayloadBytes = 56
-	ordinary, err := s.pingHost(ctx, request, 56, false)
-	setTrafficProbe(&result.Ordinary, ordinary, err)
-	if err != nil {
-		return err
+	ordinary, ordinaryErr := s.pingHost(ctx, request, 56, false)
+	setTrafficProbe(&result.Ordinary, ordinary, ordinaryErr)
+	if ordinaryErr != nil && Code(ordinaryErr) != "HOST_NETWORK_TRAFFIC_PING_INCOMPLETE" {
+		return ordinaryErr
 	}
 	if err := s.checkTrafficRoute(ctx, request); err != nil {
 		return err
 	}
 	result.MTUProbe.State = TrafficProbeUnknown
 	result.MTUProbe.PayloadBytes = request.MTU - 28
-	mtu, err := s.pingHost(ctx, request, request.MTU-28, true)
-	setTrafficProbe(&result.MTUProbe, mtu, err)
-	if err != nil {
-		return err
+	mtu, mtuErr := s.pingHost(ctx, request, request.MTU-28, true)
+	setTrafficProbe(&result.MTUProbe, mtu, mtuErr)
+	if mtuErr != nil && Code(mtuErr) != "HOST_NETWORK_TRAFFIC_PING_INCOMPLETE" {
+		return mtuErr
 	}
 	if err := s.checkTrafficRoute(ctx, request); err != nil {
 		return err
@@ -166,7 +166,10 @@ func (s *hostNetworkSession) probeHostWorkloadTraffic(ctx context.Context, reque
 		return networkError("HOST_NETWORK_RUNTIME_CHANGED", false)
 	}
 	result.RouteVerified = true
-	return nil
+	if ordinaryErr != nil {
+		return ordinaryErr
+	}
+	return mtuErr
 }
 
 func setTrafficProbe(probe *HostTrafficProbe, counters *PingCounters, err error) {

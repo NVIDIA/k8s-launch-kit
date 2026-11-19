@@ -46,7 +46,7 @@ func collectHBN(ctx context.Context, r config.Request, report *inventory.Report,
 		}
 		inv.HBN.Switches = append(inv.HBN.Switches, inventory.FabricSwitch{Name: sw.Name, Endpoint: sw.Endpoint, Platform: sw.Platform, Ports: slices.Clone(sw.Ports), Snapshot: observation})
 	}
-	collectHostHBNCabling(ctx, r, inv, deps.HostLLDP)
+	CollectHostHBNCabling(ctx, r, inv, deps.HostLLDP)
 	hostNetworking := collectHostHBNNetworking(ctx, r, inv, deps.HostNetworking, deps.DeferHBNReadiness)
 	readiness := evaluateHBN(inv, report.Discovery.Checks, hostNetworking)
 	managementChecks, managementFacts := managementHBNChecks(provisioning, inv, r.DPFNamespace)

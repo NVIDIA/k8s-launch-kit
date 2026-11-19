@@ -22,8 +22,11 @@ func (r *Rules) ValidationConditions(object *unstructured.Unstructured, types ..
 		return result("RESOURCE_GENERATION_MISSING", "Current generation is missing.")
 	}
 	observed, found, err := unstructured.NestedInt64(object.Object, "status", "observedGeneration")
-	if err != nil || !found || observed != generation {
-		return result("RESOURCE_STATUS_INVALID", "Controller status does not match the current generation.")
+	if err != nil || (found && (observed < 0 || observed > generation)) {
+		return result("RESOURCE_STATUS_INVALID", "Controller observed generation is malformed, negative or ahead of the current generation.")
+	}
+	if !found || observed < generation {
+		return result("RESOURCE_STATUS_STALE", "Controller has not observed the current generation.")
 	}
 	for _, kind := range types {
 		if check := conditionAtGeneration(object, kind, generation, true); !check.Ready {
@@ -31,4 +34,28 @@ func (r *Rules) ValidationConditions(object *unstructured.Unstructured, types ..
 		}
 	}
 	return ready("Every required controller condition is true at the current generation.")
+}
+
+// SystemCredentialReadiness uses the credential API's per-condition generation
+// contract; that API has no top-level observedGeneration status member.
+func (r *Rules) SystemCredentialReadiness(object *unstructured.Unstructured) Readiness {
+	if !r.valid() {
+		return invalidRulesReadiness()
+	}
+	if object == nil {
+		return result("RESOURCE_UNAVAILABLE", "Credential request is unavailable.")
+	}
+	generation, ok := metadataGeneration(object)
+	if !ok {
+		return result("RESOURCE_GENERATION_MISSING", "Credential request generation is invalid.")
+	}
+	if deleting := deletionReadiness(object); deleting != nil {
+		return *deleting
+	}
+	for _, kind := range []string{"Ready", "ServiceAccountReconciled", "SecretReconciled"} {
+		if check := conditionAtGeneration(object, kind, generation, true); !check.Ready {
+			return check
+		}
+	}
+	return ready("Credential request conditions are current and ready.")
 }

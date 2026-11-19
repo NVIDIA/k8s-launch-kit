@@ -72,7 +72,20 @@ func resolveSSHAccess(c Credential, endpoint SSH, base string) (*SSHAccess, erro
 	if err := validateSSHAccess(c, endpoint); err != nil {
 		return nil, err
 	}
-	a := &SSHAccess{username: c.Username, Sudo: endpoint.Sudo != nil && *endpoint.Sudo}
+	a, err := resolveSSHAuthentication(c, base)
+	if err != nil {
+		return nil, err
+	}
+	a.knownHosts, err = resolveSSHTrust(endpoint, base)
+	if err != nil {
+		return nil, err
+	}
+	a.Sudo = endpoint.Sudo != nil && *endpoint.Sudo
+	return a, nil
+}
+
+func resolveSSHAuthentication(c Credential, base string) (*SSHAccess, error) {
+	a := &SSHAccess{username: c.Username}
 	if c.PrivateKeyRef != nil {
 		key, err := regularFile(resolvePath(base, c.PrivateKeyRef.File), 1<<20)
 		if err != nil {
@@ -89,12 +102,15 @@ func resolveSSHAccess(c Credential, endpoint SSH, base string) (*SSHAccess, erro
 		}
 		a.password = password
 	}
+	return a, nil
+}
+
+func resolveSSHTrust(endpoint SSH, base string) ([]byte, error) {
 	known, err := regularFile(resolvePath(base, endpoint.KnownHostsFile), 1<<20)
 	if err != nil || len(bytes.TrimSpace(known)) == 0 {
 		return nil, &accessMaterialError{message: "cannot resolve nonempty SSH knownHostsFile"}
 	}
-	a.knownHosts = known
-	return a, nil
+	return known, nil
 }
 
 func validateSSHAccess(c Credential, endpoint SSH) error {

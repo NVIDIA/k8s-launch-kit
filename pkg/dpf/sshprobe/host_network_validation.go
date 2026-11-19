@@ -17,6 +17,28 @@ type HostNetworkValidation struct {
 	PersistentVerified bool   `json:"persistentVerified"`
 	BootID             string `json:"bootID,omitempty"`
 	MTU                int    `json:"mtu,omitempty"`
+	current            hostNetworkQualification
+}
+
+// hostNetworkQualification binds independently verified current configuration.
+// It is private observation state, never a persisted transaction or evidence hash.
+type hostNetworkQualification struct {
+	present                                               bool
+	identity                                              HostNetworkIdentity
+	boot, source, runtime, fence, networkFile, management string
+	mtu                                                   int
+}
+
+// Qualified reports whether this value contains a complete current read, rather
+// than booleans assembled by a caller or an unsuccessful partial observation.
+func (v HostNetworkValidation) Qualified() bool {
+	return v.RuntimeVerified && v.PersistentVerified && v.current.present
+}
+
+// SameCurrent compares selected hardware, boot, runtime and persistent sources
+// across fresh read-only qualifications. New SSH source ports are not identity.
+func (v HostNetworkValidation) SameCurrent(other HostNetworkValidation) bool {
+	return v.Qualified() && other.Qualified() && v.current == other.current
 }
 
 // VerifyHostWorkloadNetwork verifies the desired address, route and MTU against
@@ -90,5 +112,6 @@ func currentHostNetworkConfiguration(request HostNetworkRequest, observation Hos
 	if !result.PersistentVerified {
 		return result, networkError("HOST_NETWORK_PERSISTENT_MISMATCH", false)
 	}
+	result.current = hostNetworkQualification{present: true, identity: observation.Identity, boot: observation.raw.BootID, source: observation.SourceDigest, runtime: observation.raw.RuntimeDigest, fence: observation.raw.Fence, networkFile: observation.raw.NetworkFile, management: observation.ManagementInterface, mtu: observation.MTU}
 	return result, nil
 }

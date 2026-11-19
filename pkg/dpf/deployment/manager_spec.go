@@ -63,7 +63,13 @@ func normalizedManagerSpec(object *unstructured.Unstructured) (appsv1.Deployment
 	if spec.ProgressDeadlineSeconds == nil {
 		spec.ProgressDeadlineSeconds = ptr.To(int32(600))
 	}
-	pod := &spec.Template.Spec
+	normalizeManagerPodTemplate(&spec.Template.Spec)
+	return spec, nil
+}
+
+// normalizeManagerPodTemplate applies only ordinary API defaults shared by
+// independently projected operator and system workload templates.
+func normalizeManagerPodTemplate(pod *corev1.PodSpec) {
 	if pod.RestartPolicy == "" {
 		pod.RestartPolicy = corev1.RestartPolicyAlways
 	}
@@ -120,7 +126,6 @@ func normalizedManagerSpec(object *unstructured.Unstructured) (appsv1.Deployment
 			}
 		}
 	}
-	return spec, nil
 }
 
 func defaultManagerProbe(probe *corev1.Probe) {

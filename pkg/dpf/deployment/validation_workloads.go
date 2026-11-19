@@ -5,9 +5,11 @@ package deployment
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"maps"
 	"reflect"
+	"strings"
 
 	"github.com/nvidia/k8s-launch-kit/pkg/dpf/deployment/internal/controllercontract"
 	"github.com/nvidia/k8s-launch-kit/pkg/dpf/sshprobe"
@@ -28,7 +30,7 @@ func (o *validationObserver) validationSelectedTenantNodes(ctx context.Context, 
 	if tenant == nil {
 		return nil, fmt.Errorf("bound tenant unavailable")
 	}
-	selected, err := validationSelectedHosts(o.desired, o.request)
+	selected, err := validationSelectedHosts(o.desired, o.request, o.physicalScope.expected)
 	if err != nil {
 		return nil, err
 	}
@@ -90,7 +92,7 @@ func (o *validationObserver) validationSelectedTenantNodes(ctx context.Context, 
 }
 
 func (o *validationObserver) observeValidationRuntimeResources(ctx context.Context, management validationManagementReader, tenant *tenantClient, r *validationRecorder) error {
-	selected, selectErr := validationSelectedHosts(o.desired, o.request)
+	selected, selectErr := validationSelectedHosts(o.desired, o.request, o.physicalScope.expected)
 	if selectErr != nil {
 		for _, id := range []validation.CheckID{"devices/coverage", "hbn/coverage", "workloads/coverage"} {
 			r.recordError(id, selectErr)
@@ -124,6 +126,7 @@ func (o *validationObserver) observeValidationRuntimeResources(ctx context.Conte
 	if graphErr != nil {
 		r.recordError("hbn/coverage", graphErr)
 		r.recordError("workloads/coverage", graphErr)
+		recordRuntimePendingDependencies(r, graphErr)
 		return nil
 	}
 	// Retained immutable prerequisites are compared independently of runtime.
@@ -137,6 +140,7 @@ func (o *validationObserver) observeValidationRuntimeResources(ctx context.Conte
 	snapshot, leases, leaseErr := observeCurrentAllocation(ctx, management, tenant, o.desired, graph)
 	if leaseErr != nil {
 		r.recordError("hbn/coverage", leaseErr)
+		recordRuntimePendingDependencies(r, leaseErr)
 		return nil
 	}
 	sfcBefore, sfcErr := currentSFCAnchors(ctx, tenant, o.desired, graph, snapshot)
@@ -182,7 +186,7 @@ func (o *validationObserver) observeValidationRuntimeResources(ctx context.Conte
 					if err != nil {
 						return validationHostNetworkError(err)
 					}
-					if !observed.RuntimeVerified || !observed.PersistentVerified {
+					if !observed.Qualified() {
 						return validationFailure(validation.Failed, validation.ReasonHealth, "Selected host runtime or persistent workload configuration differs.")
 					}
 					return nil
@@ -219,6 +223,24 @@ func (o *validationObserver) observeValidationRuntimeResources(ctx context.Conte
 		r.recordError("workloads/coverage", sfcErr)
 	}
 	return nil
+}
+
+// Only a proven progressing prerequisite makes unperformed dependent rows
+// pending. Denied, malformed, unsupported and terminal states remain blockers.
+func recordRuntimePendingDependencies(r *validationRecorder, cause error) {
+	var check *validationCheckError
+	if !errors.As(cause, &check) || check.state != validation.Pending {
+		return
+	}
+	for id, spec := range r.specs {
+		if _, done := r.outcomes[id]; done {
+			continue
+		}
+		if spec.Area == validation.AreaHBN || spec.Area == validation.AreaWorkloads || strings.HasPrefix(string(id), "physical/host-network/") {
+			r.start(id)
+			r.record(id, validation.Pending, validation.ReasonProgressing, "Waiting for the selected current device or allocation prerequisite to reconcile.", "Allow the selected controller to settle and repeat the observation.")
+		}
+	}
 }
 
 func (o *validationObserver) observeRetainedWorkloads(ctx context.Context, management resourceReader, tenant validationRuntimeTenantReader, graph currentRuntimeGraph) error {
@@ -720,12 +742,13 @@ func verifySelectedNSIEntry(rules *controllercontract.Rules, set, shard *unstruc
 }
 
 func validationHostNetworkError(err error) error {
+	if validationHostObservedDrift(err) {
+		return fmt.Errorf("host observation changed: %w", errValidationResourceChanged)
+	}
 	code := sshprobe.Code(err)
 	switch code {
 	case "HOST_NETWORK_RUNTIME_MISMATCH", "HOST_NETWORK_PERSISTENT_MISMATCH":
 		return validationFailure(validation.Failed, validation.ReasonHealth, sshprobe.Reason(err)+" ("+code+")")
-	case "HOST_NETWORK_OBSERVATION_CHANGED":
-		return fmt.Errorf("host observation changed: %w", errValidationResourceChanged)
 	default:
 		return validationFailure(validation.Unverified, validation.ReasonUnavailable, sshprobe.Reason(err)+" ("+code+")")
 	}

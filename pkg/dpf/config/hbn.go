@@ -146,7 +146,8 @@ func resolveUseCase(r *Request, unavailable *accessAvailability) error {
 			attachments[key] = true
 		}
 		slices.SortFunc(ports, func(a, b SwitchPort) int { return strings.Compare(a.Name, b.Name) })
-		access, err := resolveSSHAccess(credential, sw.SSH, filepath.Dir(r.Input.Path))
+		scopeTarget := Target{Endpoint: endpoint, InputRef: where, Role: "switches"}
+		access, err := unavailable.resolveSSHAccess(credential, sw.SSH, filepath.Dir(r.Input.Path), scopeTarget)
 		if err != nil {
 			if unavailable.record(where, "switches", err) {
 				continue

@@ -63,13 +63,13 @@ func NewPlan(input PlanInput) (Plan, error) {
 		return p, nil
 	}
 	for _, d := range p.input.Runtime.Devices {
-		p.checks = append(p.checks, runtimeSpec(BGPCheckID(d), string(d)))
+		p.checks = append(p.checks, runtimeSpec(BGPCheckID(d), "BGP peers — DPU "+string(d)))
 	}
 	for _, pair := range p.input.Runtime.Routes {
-		p.checks = append(p.checks, runtimeSpec(RouteCheckID(pair), string(pair.Source)+" to "+string(pair.Destination)))
+		p.checks = append(p.checks, runtimeSpec(RouteCheckID(pair), "Installed route — DPU "+string(pair.Source)+" to "+string(pair.Destination)))
 	}
 	for _, pair := range p.input.Runtime.Traffic {
-		p.checks = append(p.checks, runtimeSpec(TrafficCheckID(pair, false), string(pair.Source)+" to "+string(pair.Destination)), runtimeSpec(TrafficCheckID(pair, true), string(pair.Source)+" to "+string(pair.Destination)))
+		p.checks = append(p.checks, runtimeSpec(TrafficCheckID(pair, false), "Ordinary traffic — hosts attached to DPUs "+string(pair.Source)+" to "+string(pair.Destination)), runtimeSpec(TrafficCheckID(pair, true), "MTU-sized DF traffic — hosts attached to DPUs "+string(pair.Source)+" to "+string(pair.Destination)))
 	}
 	if len(p.input.Runtime.Hosts) < 2 {
 		p.checks = append(p.checks, runtimeSpec("runtime/cross-host-coverage", "cross-host coverage"))

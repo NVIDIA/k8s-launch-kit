@@ -63,9 +63,18 @@ func validationSources(site config.Site) ([]validationSource, error) {
 	return sources, nil
 }
 
-func validateValidationPhysicalScope(desired *managementDesired, request config.Request) error {
+// Physical expectations belong to the frozen bundle. Caller inventory supplies
+// access declarations; it cannot redefine the identities being validated.
+type validationPhysicalScope struct {
+	expected       *inventory.Inventory
+	accessVerified bool
+	trustProblem   string
+}
+
+func compileValidationPhysicalScope(desired *managementDesired, request config.Request) (validationPhysicalScope, error) {
+	var scope validationPhysicalScope
 	if desired == nil || desired.retained == nil || request.Input.Site.Inventory == nil {
-		return fmt.Errorf("validation requires retained physical inventory")
+		return scope, fmt.Errorf("validation requires retained physical inventory")
 	}
 	var original config.Input
 	for _, file := range desired.retained.Files() {
@@ -73,55 +82,82 @@ func validateValidationPhysicalScope(desired *managementDesired, request config.
 			var err error
 			original, err = config.Decode(file.Data, file.Path)
 			if err != nil {
-				return fmt.Errorf("retained physical source configuration is invalid")
+				return scope, fmt.Errorf("retained physical source configuration is invalid")
 			}
 		}
 	}
 	if err := config.VerifyRetainedPhysicalBindings(original.Site.Inventory, request.Input.Site.Inventory); err != nil {
-		return err
+		return scope, err
 	}
 	old, err := validationSources(original.Site)
 	if err != nil {
-		return err
+		return scope, err
 	}
 	current, err := validationSources(request.Input.Site)
 	if err != nil {
-		return err
+		return scope, err
 	}
 	if len(old) == 0 || !reflect.DeepEqual(old, current) {
-		return fmt.Errorf("declared physical endpoints or security policy differ from the retained deployment; repeat discovery and generation")
+		return scope, fmt.Errorf("declared physical endpoints or security policy differ from the retained deployment; repeat discovery and generation")
 	}
 	if err := validateResolvedPhysicalSources(current, request); err != nil {
-		return err
+		return scope, err
 	}
 	// Port intent is independent of SSH credential availability, too.
 	oldSwitches, newSwitches := original.Site.Discovery.Switches, request.Input.Site.Discovery.Switches
 	for i, sw := range oldSwitches {
 		if sw.Name != newSwitches[i].Name || !reflect.DeepEqual(sw.Platform, newSwitches[i].Platform) || !reflect.DeepEqual(sw.Ports, newSwitches[i].Ports) {
-			return fmt.Errorf("declared switch port bindings differ from the retained deployment")
+			return scope, fmt.Errorf("declared switch port bindings differ from the retained deployment")
 		}
 	}
-	// Hash resolved trust only when every declared source is available. A
-	// missing source is separately unverified; no partial hash can prove equality.
-	if len(request.Targets)+len(request.Switches) != len(current) {
-		return nil
-	}
-	inv := request.Input.Site.Inventory
-	scopes := make([]inventory.ScopeEndpoint, 0, len(current))
+	scope.expected = original.Site.Inventory
+	// Resolve trust independently of credential availability. The proof and
+	// successful transports retain the same immutable trust bytes.
+	scopes, complete := request.ValidationScope()
+	available := make([]inventory.ScopeEndpoint, 0, len(request.Targets)+len(request.Switches))
 	for _, target := range request.Targets {
-		scopes = append(scopes, config.Scope(target))
+		available = append(available, config.Scope(target))
 	}
 	for _, sw := range request.Switches {
-		scopes = append(scopes, config.Scope(config.Target{Role: "switches", Endpoint: sw.Endpoint, SSH: sw.Access}))
+		available = append(available, config.Scope(config.Target{Role: "switches", Endpoint: sw.Endpoint, SSH: sw.Access}))
+	}
+	if !complete && len(available) == len(current) {
+		// Ordinary fully resolved library requests already contain every trust
+		// snapshot. Partial requests without a validation proof are never sufficient.
+		scopes, complete = available, true
+	}
+	if !complete {
+		var missing []string
+		for _, source := range current {
+			if !slices.ContainsFunc(scopes, func(s inventory.ScopeEndpoint) bool {
+				return s.Role == source.role && s.Endpoint == source.endpoint && s.SystemURI == source.system
+			}) {
+				missing = append(missing, source.role+" "+source.endpoint)
+			}
+		}
+		scope.trustProblem = "The complete physical trust policy could not be verified; restore the trust files for " + strings.Join(missing, ", ") + " and repeat validation."
+		return scope, nil
+	}
+	if len(scopes) != len(current) {
+		return scope, fmt.Errorf("complete validation trust scope does not cover every declared source")
+	}
+	for _, observed := range available {
+		if !slices.Contains(scopes, observed) {
+			return scope, fmt.Errorf("resolved physical access policy differs from its frozen validation trust scope")
+		}
 	}
 	slices.SortFunc(scopes, func(a, b inventory.ScopeEndpoint) int {
 		return strings.Compare(a.Role+a.Endpoint+a.SystemURI, b.Role+b.Endpoint+b.SystemURI)
 	})
+	// Use the retained context as well as retained digest. Fresh caller facts must
+	// not alter the meaning of the original access and intent binding.
+	inv := scope.expected
 	observed := &inventory.Inventory{Collection: inv.Collection, RequestedScope: scopes, Management: inv.Management, HBN: inv.HBN}
 	if inv.ScopeDigest == "" || discovery.ScopeDigest(observed) != inv.ScopeDigest {
-		return fmt.Errorf("resolved physical access policy differs from the discovered scope; repeat discovery and generation")
+		return scope, fmt.Errorf("resolved physical access policy differs from the discovered scope; repeat discovery and generation")
 	}
-	return nil
+	scope.accessVerified = true
+	return scope, nil
 }
 
 // Even a partial resolved request must not introduce an undeclared source or

@@ -158,7 +158,7 @@ func TestValidationPlansEveryExpectedRoleAndDeviceWithoutLiveInventory(t *testin
 	nodeRows := 0
 	definitions := 0
 	for _, check := range checks {
-		if strings.HasSuffix(string(check.ID), "/service") {
+		if strings.HasPrefix(string(check.ID), "system/role/") && strings.HasSuffix(string(check.ID), "/service") {
 			roles[string(check.ID)] = true
 		}
 		if strings.Contains(string(check.ID), "/device/") {
@@ -168,7 +168,7 @@ func TestValidationPlansEveryExpectedRoleAndDeviceWithoutLiveInventory(t *testin
 			definitions++
 		}
 	}
-	if len(roles) != 15 || definitions != 8 || nodeRows != 7*len(o.desired.plan.Intent().Devices) {
+	if len(roles) != 15 || definitions != 8 || nodeRows != 8*len(o.desired.plan.Intent().Devices) {
 		t.Fatalf("expected graph reduced: roles=%d definitions=%d node rows=%d", len(roles), definitions, nodeRows)
 	}
 	// A reader with no create method can execute the resource domain. Every
@@ -300,23 +300,23 @@ func TestValidationSystemServiceUsesExpectedRoleNotDiscoveredHealthySubset(t *te
 		conditions = append(conditions, map[string]any{"type": kind, "status": "True", "observedGeneration": int64(2)})
 	}
 	object.Object["status"] = map[string]any{"observedGeneration": int64(2), "conditions": conditions}
-	if _, err := o.selectValidationSystemService([]unstructured.Unstructured{*object}, role, values, release); err != nil {
+	if _, err := o.selectValidationSystemService([]unstructured.Unstructured{*object}, role, values, release, map[string]any{}); err != nil {
 		t.Fatal(err)
 	}
 	other := object.DeepCopy()
 	labels := other.GetLabels()
 	labels[dpfComponentLabel] = "flannel"
 	other.SetLabels(labels)
-	if _, err := o.selectValidationSystemService([]unstructured.Unstructured{*other}, role, values, release); err == nil {
+	if _, err := o.selectValidationSystemService([]unstructured.Unstructured{*other}, role, values, release, map[string]any{}); err == nil {
 		t.Fatal("another healthy role satisfied missing role")
 	}
 	duplicate := object.DeepCopy()
 	duplicate.SetName("duplicate")
-	if _, err := o.selectValidationSystemService([]unstructured.Unstructured{*object, *duplicate}, role, values, release); err == nil {
+	if _, err := o.selectValidationSystemService([]unstructured.Unstructured{*object, *duplicate}, role, values, release, map[string]any{}); err == nil {
 		t.Fatal("ambiguous role passed")
 	}
 	before := object.DeepCopy()
-	if _, err := o.selectValidationSystemService([]unstructured.Unstructured{*object}, role, values, release); err != nil {
+	if _, err := o.selectValidationSystemService([]unstructured.Unstructured{*object}, role, values, release, map[string]any{}); err != nil {
 		t.Fatal(err)
 	}
 	if !reflect.DeepEqual(before.Object, object.Object) {
@@ -365,9 +365,11 @@ func TestValidationSystemApplicationBindsCurrentServiceSourceAndTarget(t *testin
 	service := validationObject("svc.dpu.nvidia.com/v1alpha1", "DPUService", o.desired.operatorNamespace, "system-service")
 	service.SetUID("selected-service")
 	service.SetCreationTimestamp(metav1.NewTime(time.Now().Add(-time.Minute)))
-	service.Object["spec"] = map[string]any{"helmChart": map[string]any{"values": map[string]any{"multus": map[string]any{"enabled": true}}}, "serviceDaemonSet": map[string]any{"labels": map[string]any{dpfComponentLabel: "multus", hbnServiceIDLabel: "current-id"}}}
+	serviceValues := systemArtifactValues(o.desired.plan.Intent(), release, role, false)
+	service.Object["spec"] = map[string]any{"helmChart": map[string]any{"values": serviceValues}, "serviceDaemonSet": map[string]any{"labels": map[string]any{dpfComponentLabel: "multus", hbnServiceIDLabel: "current-id"}}}
 	service.Object["status"] = map[string]any{"serviceID": "current-id"}
-	values := map[string]any{"multus": map[string]any{"enabled": true}, "global": map[string]any{"serviceDaemonSet": map[string]any{"labels": map[string]any{dpfComponentLabel: "multus", hbnServiceIDLabel: "current-id"}, "annotations": map[string]any{dpfDPUClusterNameLabel: tenant.Name, dpfDPUClusterNamespaceLabel: tenant.Namespace}}}}
+	values := runtime.DeepCopyJSON(serviceValues)
+	values["global"] = map[string]any{"serviceDaemonSet": map[string]any{"labels": map[string]any{dpfComponentLabel: "multus", hbnServiceIDLabel: "current-id"}, "annotations": map[string]any{dpfDPUClusterNameLabel: tenant.Name, dpfDPUClusterNamespaceLabel: service.GetNamespace()}}}
 	source := map[string]any{"repoURL": release.SystemNetworking.ChartRepository, "chart": release.SystemNetworking.Chart, "targetRevision": release.SystemNetworking.ChartVersion, "helm": map[string]any{"valuesObject": values}}
 	destination := map[string]any{"name": tenant.Name, "namespace": service.GetNamespace()}
 	fixture := func() *unstructured.Unstructured {
@@ -380,8 +382,8 @@ func TestValidationSystemApplicationBindsCurrentServiceSourceAndTarget(t *testin
 		app.Object["status"] = map[string]any{"sync": map[string]any{"status": "Synced", "comparedTo": map[string]any{"source": runtime.DeepCopyJSON(source), "destination": runtime.DeepCopyJSON(destination)}}, "health": map[string]any{"status": "Healthy"}, "reconciledAt": time.Now().Add(-time.Second).Format(time.RFC3339Nano)}
 		return app
 	}
-	if err := o.verifyValidationSystemApplication(role, service, fixture(), release); err != nil {
-		t.Fatalf("current bound application rejected: %v", err)
+	if err := o.verifyValidationSystemApplication(role, service, fixture(), release, systemArtifactExpectation{Values: serviceValues, Defaults: map[string]any{}}); err != nil {
+		t.Fatalf("current bound application rejected: %#v", err)
 	}
 	cases := []struct {
 		name   string
@@ -415,13 +417,13 @@ func TestValidationSystemApplicationBindsCurrentServiceSourceAndTarget(t *testin
 		t.Run(tc.name, func(t *testing.T) {
 			app := fixture()
 			tc.change(app)
-			if o.verifyValidationSystemApplication(role, service, app, release) == nil {
+			if o.verifyValidationSystemApplication(role, service, app, release, systemArtifactExpectation{Values: serviceValues, Defaults: map[string]any{}}) == nil {
 				t.Fatal("invalid system Application passed")
 			}
 		})
 	}
 	before := service.DeepCopy()
-	if err := o.verifyValidationSystemApplication(role, service, fixture(), release); err != nil {
+	if err := o.verifyValidationSystemApplication(role, service, fixture(), release, systemArtifactExpectation{Values: serviceValues, Defaults: map[string]any{}}); err != nil {
 		t.Fatal(err)
 	}
 	if !reflect.DeepEqual(before.Object, service.Object) {

@@ -276,6 +276,7 @@ func TestValidationPhysicalScopeKeepsUnavailableSwitchInCoverage(t *testing.T) {
 			},
 		},
 	}
+	o.physicalScope, _ = compileValidationPhysicalScope(desired, request)
 	checks := o.physicalValidationChecks()
 	id := physicalID("switch", "leaf-a")
 	if !slices.ContainsFunc(checks, func(check validation.CheckSpec) bool { return check.ID == id }) {
@@ -309,5 +310,86 @@ func TestValidationPhysicalScopePlansSwitchesFromVerifiedDeclarations(t *testing
 	if len(expected) != 1 || expected[0].Name != "leaf-a" || expected[0].Endpoint != "ssh://leaf.example.test:22" ||
 		expected[0].Platform != "cumulus-nvue" || len(expected[0].Ports) != 2 || expected[0].Ports[0].Name != "swp1" {
 		t.Fatalf("saved switch facts altered physical coverage: %+v", expected)
+	}
+}
+
+func validateValidationPhysicalScope(desired *managementDesired, request config.Request) error {
+	_, err := compileValidationPhysicalScope(desired, request)
+	return err
+}
+
+func TestValidationPhysicalScopeChecksTrustDespiteMissingAuthentication(t *testing.T) {
+	for _, changedFile := range []string{"host-known-hosts", "leaf-known-hosts", "bmc-ca.pem"} {
+		t.Run(changedFile, func(t *testing.T) {
+			desired, input := physicalScopeFixture(t)
+			dir := filepath.Dir(input.Path)
+			if err := os.Remove(filepath.Join(dir, "host-password")); err != nil {
+				t.Fatal(err)
+			}
+			initial, issues := resolvePhysicalScope(t, input)
+			scope, err := compileValidationPhysicalScope(desired, initial)
+			if err != nil || !scope.accessVerified || len(issues) != 1 {
+				t.Fatalf("missing auth lost complete trust proof: %v", err)
+			}
+			replacement := []byte("# changed known hosts\n")
+			if changedFile == "bmc-ca.pem" {
+				replacement = softwareTestCAPEM(t)
+			}
+			writePhysicalScopeFile(t, dir, changedFile, replacement)
+			changed, _ := resolvePhysicalScope(t, input)
+			if _, err := compileValidationPhysicalScope(desired, changed); err == nil {
+				t.Fatal("missing auth hid changed trust")
+			}
+		})
+	}
+}
+
+func TestValidationPhysicalScopeUnknownTrustPreventsAllPhysicalReads(t *testing.T) {
+	desired, input := physicalScopeFixture(t)
+	if err := os.Remove(filepath.Join(filepath.Dir(input.Path), "host-known-hosts")); err != nil {
+		t.Fatal(err)
+	}
+	request, issues := resolvePhysicalScope(t, input)
+	scope, err := compileValidationPhysicalScope(desired, request)
+	if err != nil || scope.accessVerified {
+		t.Fatalf("unreadable trust scope=%+v err=%v", scope, err)
+	}
+	o := &validationObserver{desired: desired, request: request, physicalScope: scope, unavailable: issues, mode: validation.ModeFull}
+	o.physical = validationPhysicalReaders{
+		bmc: func(context.Context, config.Target, time.Duration) (inventory.Device, map[string]inventory.Evidence, error) {
+			t.Fatal("unproven trust reached BMC")
+			return inventory.Device{}, nil, nil
+		},
+		host: func(context.Context, config.Target, time.Duration) (inventory.Device, map[string]inventory.Evidence, error) {
+			t.Fatal("unproven trust reached host")
+			return inventory.Device{}, nil, nil
+		},
+		fabric: func(context.Context, config.SwitchTarget, time.Duration) fabric.Snapshot {
+			t.Fatal("unproven trust reached switch")
+			return fabric.Snapshot{}
+		},
+	}
+	recorder := newValidationRecorder(o.physicalValidationChecks(), nil)
+	_ = o.observePhysical(context.Background(), recorder)
+	if got := recorder.outcomes[physicalID("switch", "leaf-a")]; got.State != validation.Unverified || !strings.Contains(got.Summary, "trust files") {
+		t.Fatalf("trust unavailable=%+v", got)
+	}
+}
+
+func TestValidationPhysicalExpectationsRemainOwnedByRetainedBundle(t *testing.T) {
+	desired, input := physicalScopeFixture(t)
+	request, _ := resolvePhysicalScope(t, input)
+	request.Input.Site.Inventory.Hosts[0].Runtime = &inventory.RuntimeObservation{Network: &inventory.NetworkObservation{Links: []inventory.NetworkLink{{Name: "pf0", PermanentMAC: "02:00:00:00:00:99"}}}}
+	scope, err := compileValidationPhysicalScope(desired, request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if scope.expected == request.Input.Site.Inventory || scope.expected.Hosts[0].Runtime != nil {
+		t.Fatal("caller observations redefined retained physical expectations")
+	}
+	before := scope.expected.Hosts[0].Adapters[0].SerialNumber
+	request.Input.Site.Inventory.Hosts[0].Adapters[0].SerialNumber = "other"
+	if scope.expected.Hosts[0].Adapters[0].SerialNumber != before {
+		t.Fatal("retained snapshot aliased caller inventory")
 	}
 }

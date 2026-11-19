@@ -214,7 +214,7 @@ func validationReady(ready controllercontract.Readiness) error {
 	switch ready.ReasonCode {
 	case "RESOURCE_KIND_UNSUPPORTED", "RESOURCE_API_UNSUPPORTED", "CONTROLLER_RULES_UNAVAILABLE":
 		state, reason = validation.Unverified, validation.ReasonUnsupported
-	case "RESOURCE_TERMINAL_FAILURE", "RESOURCE_STATUS_INVALID", "RESOURCE_DELETING", "DEPLOYMENT_ROLLOUT_FAILED":
+	case "RESOURCE_TERMINAL_FAILURE", "RESOURCE_STATUS_INVALID", "RESOURCE_STATUS_AMBIGUOUS", "RESOURCE_GENERATION_MISSING", "RESOURCE_DELETING", "DEPLOYMENT_ROLLOUT_FAILED":
 		state, reason = validation.Failed, validation.ReasonHealth
 	}
 	return validationFailure(state, reason, "Selected controller evidence does not establish current readiness.")

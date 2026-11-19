@@ -44,10 +44,10 @@ func TestSystemArtifactSourceVerification(t *testing.T) {
 			}
 		})
 	}
-	if _, err := projectSystemArtifacts(testArchive, generation.ResolvedIntent{Release: "26.4.0", UseCase: releases.UseCaseHBNBGP}); err == nil || !strings.Contains(err.Error(), "release or profile") {
+	if _, err := projectSystemArtifacts(testArchive, generation.ResolvedIntent{Release: "26.4.0", UseCase: releases.UseCaseHBNBGP}, nil); err == nil || !strings.Contains(err.Error(), "release or profile") {
 		t.Fatalf("unsupported release should fail before archive inspection: %v", err)
 	}
-	if _, err := projectSystemArtifacts(testArchive, generation.ResolvedIntent{Release: "26.8.0", UseCase: releases.UseCaseHBNBGP}); err == nil || !strings.Contains(err.Error(), "digest") {
+	if _, err := projectSystemArtifacts(testArchive, generation.ResolvedIntent{Release: "26.8.0", UseCase: releases.UseCaseHBNBGP}, nil); err == nil || !strings.Contains(err.Error(), "digest") {
 		t.Fatalf("archive digest should fail before chart loading: %v", err)
 	}
 }

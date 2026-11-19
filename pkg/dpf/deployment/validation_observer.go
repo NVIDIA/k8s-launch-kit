@@ -41,6 +41,7 @@ type validationManagementReader interface {
 
 type validationObserver struct {
 	physical         validationPhysicalReaders
+	physicalScope    validationPhysicalScope
 	desired          *managementDesired
 	request          config.Request
 	unavailable      []config.AccessIssue
@@ -73,10 +74,11 @@ func NewValidationObserver(retained *bundle.Bundle, plan *generation.Plan, reque
 	if err != nil {
 		return validation.Plan{}, nil, err
 	}
-	if err := validateValidationPhysicalScope(desired, request); err != nil {
+	physicalScope, err := compileValidationPhysicalScope(desired, request)
+	if err != nil {
 		return validation.Plan{}, nil, err
 	}
-	o := &validationObserver{desired: desired, request: request, unavailable: append([]config.AccessIssue(nil), unavailable...), mode: mode}
+	o := &validationObserver{physicalScope: physicalScope, desired: desired, request: request, unavailable: append([]config.AccessIssue(nil), unavailable...), mode: mode}
 	runtimeChecks, scope, err := validationRuntimeChecks(plan)
 	if err != nil {
 		return validation.Plan{}, nil, err
@@ -253,13 +255,13 @@ func (r *validationRecorder) recordError(id validation.CheckID, err error) {
 	case apierrors.IsNotFound(err) || errors.Is(err, driver.ErrReleaseNotFound):
 		r.record(id, validation.Failed, validation.ReasonMissing, "A required selected resource is absent.", "Inspect the responsible controller and selected resource.")
 	case apierrors.IsForbidden(err) || apierrors.IsUnauthorized(err):
-		r.record(id, validation.Unverified, validation.ReasonDenied, "The caller cannot inspect all required evidence.", "Grant read access to the selected source and repeat validation.")
+		r.record(id, validation.Unverified, validation.ReasonDenied, "Read access to this required resource was denied.", "Grant read access to the selected source and repeat validation.")
 	case errors.Is(err, context.Canceled):
 		r.record(id, validation.Unverified, validation.ReasonCanceled, "Observation was canceled.", "Repeat validation.")
 	case errors.Is(err, context.DeadlineExceeded):
 		r.record(id, validation.Unverified, validation.ReasonTimedOut, "A bounded observation request timed out.", "Inspect source reachability and repeat validation.")
 	default:
-		r.record(id, validation.Unverified, validation.ReasonUnavailable, "Required current evidence could not be completely inspected.", "Inspect the selected source and repeat validation.")
+		r.record(id, validation.Unverified, validation.ReasonUnavailable, "The current state of this required resource could not be inspected.", "Inspect the selected source and repeat validation.")
 	}
 }
 func (r *validationRecorder) run(id validation.CheckID, check func() error) error {
@@ -268,7 +270,7 @@ func (r *validationRecorder) run(id validation.CheckID, check func() error) erro
 	if err != nil {
 		r.recordError(id, err)
 	} else {
-		r.record(id, validation.Passed, validation.ReasonNone, "Current selected evidence matches the retained expectation.", "")
+		r.record(id, validation.Passed, validation.ReasonNone, "The current state satisfies this check.", "")
 	}
 	return err
 }

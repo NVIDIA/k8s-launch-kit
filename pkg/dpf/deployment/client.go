@@ -196,6 +196,12 @@ func (c *APIClient) resource(ctx context.Context, object *unstructured.Unstructu
 	}
 	gvk := object.GroupVersionKind()
 	namespaced, known := bundle.ResourceNamespaced(gvk.Group, gvk.Kind)
+	// ReplicaSets are observed controller children, never retained desired
+	// resources. Authorize only their namespace-bound apps/v1 List path; keep
+	// Get/Create and the bundle's render/mutation kind registry unchanged.
+	if !requireName && gvk.Group == "apps" && gvk.Version == "v1" && gvk.Kind == "ReplicaSet" && object.GetNamespace() != "" {
+		namespaced, known = true, true
+	}
 	if !known || gvk.Version == "" || (requireName && object.GetName() == "") {
 		return nil, fmt.Errorf("resource requires a reviewed kind, API version and explicit identity")
 	}

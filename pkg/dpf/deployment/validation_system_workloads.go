@@ -106,6 +106,9 @@ func (o *validationObserver) observeValidationSystemWorkload(ctx context.Context
 	if current.GetUID() == "" || current.GetResourceVersion() == "" || current.GetDeletionTimestamp() != nil || current.GetAnnotations()["argocd.argoproj.io/tracking-id"] != app.GetName()+":apps/"+selected.kind+":"+selected.namespace+"/"+selected.name {
 		return validationFailure(validation.Failed, validation.ReasonHealth, "System workload lacks the selected Argo tracking identity or live server identity.")
 	}
+	if !validationSystemWorkloadMatches(expected.Workload, current) {
+		return validationFailure(validation.Failed, validation.ReasonHealth, "System workload spec differs from the independently projected chart and controller inputs.")
+	}
 	images, err := systemArtifactImages(current)
 	if err != nil || !maps.Equal(images, expected.Images) {
 		return validationFailure(validation.Failed, validation.ReasonHealth, "System workload container images differ from the locked chart role projection.")
@@ -200,18 +203,49 @@ func verifyValidationDeploymentPods(ctx context.Context, management interface {
 	if err != nil || selector.Empty() {
 		return validationFailure(validation.Failed, validation.ReasonIncomplete, "System Deployment Pod selector is malformed or empty.")
 	}
-	sets, err := management.List(ctx, validationObject("apps/v1", "ReplicaSet", object.GetNamespace(), ""), selector.String())
+	// Ownership is independent of labels: selector-filtered lists would hide an
+	// active owned ReplicaSet or Pod whose labels no longer match this workload.
+	sets, err := management.List(ctx, validationObject("apps/v1", "ReplicaSet", object.GetNamespace(), ""), "")
 	if err != nil {
 		return err
 	}
 	var currentSet *appsv1.ReplicaSet
+	var currentSelector labels.Selector
 	for i := range sets {
 		var set appsv1.ReplicaSet
 		if err := runtime.DefaultUnstructuredConverter.FromUnstructured(sets[i].Object, &set); err != nil {
 			return err
 		}
-		if !validationControllerOwner(set.OwnerReferences, "Deployment", deployment.Name, deployment.UID) || set.Spec.Replicas == nil || *set.Spec.Replicas == 0 {
+		if set.Namespace != deployment.Namespace || !validationControllerOwner(set.OwnerReferences, "Deployment", deployment.Name, deployment.UID) {
 			continue
+		}
+		if set.Spec.Replicas == nil || *set.Spec.Replicas < 0 {
+			return validationFailure(validation.Failed, validation.ReasonIncomplete, "An owned system ReplicaSet has no valid replica count.")
+		}
+		if *set.Spec.Replicas == 0 {
+			continue // Historical zero-replica revisions do not define the current cohort.
+		}
+		if !selector.Matches(labels.Set(set.Labels)) || set.Spec.Selector == nil {
+			return validationFailure(validation.Failed, validation.ReasonHealth, "An active owned system ReplicaSet violates the selected workload selector.")
+		}
+		setSelector, selectorErr := metav1.LabelSelectorAsSelector(set.Spec.Selector)
+		if selectorErr != nil || setSelector.Empty() || !setSelector.Matches(labels.Set(set.Spec.Template.Labels)) {
+			return validationFailure(validation.Failed, validation.ReasonHealth, "An active owned system ReplicaSet has an invalid Pod selector or template labels.")
+		}
+		// Deployment controllers add only the revision hash to the retained Pod
+		// template labels and selector. Compare the remaining selector exactly.
+		baseSelector := set.Spec.Selector.DeepCopy()
+		baseLabels := maps.Clone(set.Spec.Template.Labels)
+		if hash, present := baseSelector.MatchLabels[appsv1.DefaultDeploymentUniqueLabelKey]; present {
+			if hash == "" || set.Labels[appsv1.DefaultDeploymentUniqueLabelKey] != hash || baseLabels[appsv1.DefaultDeploymentUniqueLabelKey] != hash {
+				return validationFailure(validation.Failed, validation.ReasonHealth, "An active owned system ReplicaSet has inconsistent revision labels.")
+			}
+			delete(baseSelector.MatchLabels, appsv1.DefaultDeploymentUniqueLabelKey)
+			delete(baseLabels, appsv1.DefaultDeploymentUniqueLabelKey)
+		}
+		base, selectorErr := metav1.LabelSelectorAsSelector(baseSelector)
+		if selectorErr != nil || base.String() != selector.String() || !maps.Equal(baseLabels, deployment.Spec.Template.Labels) {
+			return validationFailure(validation.Failed, validation.ReasonHealth, "An active owned system ReplicaSet selector or template labels differ from its Deployment.")
 		}
 		// The rollout's active ReplicaSet must carry the current complete PodSpec.
 		if !reflect.DeepEqual(set.Spec.Template.Spec, deployment.Spec.Template.Spec) {
@@ -221,11 +255,12 @@ func verifyValidationDeploymentPods(ctx context.Context, management interface {
 			return validationFailure(validation.Failed, validation.ReasonIncomplete, "System Deployment has multiple active current ReplicaSets.")
 		}
 		currentSet = &set
+		currentSelector = setSelector
 	}
 	if currentSet == nil || currentSet.UID == "" || currentSet.DeletionTimestamp != nil {
 		return validationFailure(validation.Failed, validation.ReasonMissing, "System Deployment has no active owned current ReplicaSet.")
 	}
-	objects, err := management.List(ctx, validationObject("v1", "Pod", object.GetNamespace(), ""), selector.String())
+	objects, err := management.List(ctx, validationObject("v1", "Pod", object.GetNamespace(), ""), "")
 	if err != nil {
 		return err
 	}
@@ -235,10 +270,10 @@ func verifyValidationDeploymentPods(ctx context.Context, management interface {
 		if err := runtime.DefaultUnstructuredConverter.FromUnstructured(objects[i].Object, &pod); err != nil {
 			return err
 		}
-		if !validationControllerOwner(pod.OwnerReferences, "ReplicaSet", currentSet.Name, currentSet.UID) {
+		if pod.Namespace != deployment.Namespace || !validationControllerOwner(pod.OwnerReferences, "ReplicaSet", currentSet.Name, currentSet.UID) {
 			continue
 		}
-		if !selector.Matches(labels.Set(pod.Labels)) {
+		if !selector.Matches(labels.Set(pod.Labels)) || !currentSelector.Matches(labels.Set(pod.Labels)) {
 			return validationFailure(validation.Failed, validation.ReasonHealth, "An owned system Pod violates the selected workload selector.")
 		}
 		if err := validationPodReady(&pod, &deployment.Spec.Template.Spec); err != nil {

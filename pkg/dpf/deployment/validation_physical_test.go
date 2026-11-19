@@ -39,10 +39,25 @@ func physicalValidationFixture(t *testing.T) (*validationObserver, map[string]in
 	for i := range f.inventory.Hosts {
 		h := &f.inventory.Hosts[i]
 		h.ObservationState = "observed"
+		h.Runtime.VirtualMachine = new(bool)
+		h.Runtime.SSHServerAddress = "192.0.2.10"
+		h.Runtime.Interfaces = []inventory.Interface{{Name: "mgmt0", Index: 2, Addresses: []string{"192.0.2.10/24"}}}
+		h.Runtime.Routes = []inventory.Route{{Destination: "0.0.0.0/0", InterfaceIndex: 2}}
+		h.Runtime.Network.Links = append(h.Runtime.Network.Links, inventory.NetworkLink{Name: "mgmt0", PhysicalPFRoots: []string{"0000:35:00.0"}})
+		h.Runtime.Observations = map[string]inventory.Observation{"interfaces": {State: "observed"}, "routes": {State: "observed"}, "network-links": {State: "observed"}, "host-management-roots": {State: "observed"}}
+		for j := range h.Adapters[0].PCIFunctions {
+			pf := &h.Adapters[0].PCIFunctions[j]
+			group := 10 + j
+			pf.IOMMUGroup = &group
+			for _, stage := range []string{"driver", "netdevs"} {
+				h.Runtime.Observations["host-pf:"+pf.Address+":"+stage] = inventory.Observation{State: "observed"}
+			}
+			h.Runtime.Observations["host-pf:"+pf.Address+":iommu-group"] = inventory.Observation{State: "observed", Values: []string{fmt.Sprintf("group=%d", group)}}
+		}
 		h.Runtime.BootID = fmt.Sprintf("12345678-1234-1234-1234-123456789ab%d", i)
 		hosts[h.SSHEndpoint] = *h
 	}
-	o := &validationObserver{desired: desired, request: f.request, mode: validation.ModeFull}
+	o := &validationObserver{physicalScope: validationPhysicalScope{expected: f.inventory, accessVerified: true}, desired: desired, request: f.request, mode: validation.ModeFull}
 	o.physical = validationPhysicalReaders{
 		bmc: func(_ context.Context, target config.Target, _ time.Duration) (inventory.Device, map[string]inventory.Evidence, error) {
 			d, ok := bmcs[target.Endpoint]
@@ -107,7 +122,7 @@ func TestValidationPhysicalChecksUseCurrentIdentityAndAdministrator(t *testing.T
 			o, b, h := physicalValidationFixture(t)
 			tc.edit(o, b, h)
 			r := newValidationRecorder(o.checks, nil)
-			_, _ = o.observePhysicalDevices(context.Background(), r)
+			_, _ = o.observePhysicalDevices(context.Background(), r, true)
 			if got := r.outcomes[physicalID(tc.kind, "SERIAL-A")]; got.State != tc.want {
 				t.Fatalf("selected observation=%+v want %s", got, tc.want)
 			}
@@ -182,5 +197,54 @@ func TestValidationDeclaredScopeDoesNotDependOnCredentialAvailability(t *testing
 	request.Input.Site.Discovery.DPUs[0].TLS = &config.TLS{InsecureSkipVerify: &insecure}
 	if err := validateValidationPhysicalScope(desired, request); err == nil {
 		t.Fatal("missing credentials hid degraded TLS policy")
+	}
+}
+
+func TestValidationPhysicalCallerMACCannotRedefineExpectedHardware(t *testing.T) {
+	o, _, hosts := physicalValidationFixture(t)
+	request, err := config.SnapshotRequestForValidation(o.request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	o.request = request
+	expected := o.physicalScope.expected.Hosts[0]
+	changedMAC := "02:00:00:00:00:99"
+	o.request.Input.Site.Inventory.Hosts[0].Runtime.Network.Links[0].PermanentMAC = changedMAC
+	current := hosts[expected.SSHEndpoint]
+	runtimeCopy := *current.Runtime
+	network := *runtimeCopy.Network
+	network.Links = append([]inventory.NetworkLink(nil), network.Links...)
+	network.Links[0].PermanentMAC = changedMAC
+	runtimeCopy.Network = &network
+	current.Runtime = &runtimeCopy
+	hosts[expected.SSHEndpoint] = current
+	recorder := newValidationRecorder(o.physicalValidationChecks(), nil)
+	_, _ = o.observePhysicalDevices(context.Background(), recorder, true)
+	serial := expected.Adapters[0].SerialNumber
+	if got := recorder.outcomes[physicalID("host", serial)]; got.State != validation.Failed || got.Reason != validation.ReasonIdentityDrift {
+		t.Fatalf("caller and live MAC replaced retained expectation: %+v", got)
+	}
+}
+
+func TestValidationPhysicalRuntimeFenceRequiresCurrentHostPrerequisites(t *testing.T) {
+	o, _, hosts := physicalValidationFixture(t)
+	fence, err := o.openValidationPhysicalFence(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	for endpoint, host := range hosts {
+		runtimeCopy := *host.Runtime
+		runtimeCopy.Observations = map[string]inventory.Observation{}
+		for key, value := range host.Runtime.Observations {
+			runtimeCopy.Observations[key] = value
+		}
+		stage := "host-pf:" + host.Adapters[0].PCIFunctions[0].Address + ":iommu-group"
+		runtimeCopy.Observations[stage] = inventory.Observation{State: "unavailable", ReasonCode: "IOMMU_GROUP_ABSENT"}
+		host.Runtime = &runtimeCopy
+		hosts[endpoint] = host
+		break
+	}
+	if err := fence(context.Background()); err == nil {
+		t.Fatal("runtime fence accepted lost host IOMMU prerequisite")
 	}
 }

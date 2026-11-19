@@ -27,18 +27,22 @@ type validationPhysicalReaders struct {
 	bmc    func(context.Context, config.Target, time.Duration) (inventory.Device, map[string]inventory.Evidence, error)
 	host   func(context.Context, config.Target, time.Duration) (inventory.Device, map[string]inventory.Evidence, error)
 	fabric func(context.Context, config.SwitchTarget, time.Duration) fabric.Snapshot
+	lldp   discovery.HostLLDPCapturer
 }
 
-func (o *validationObserver) physicalReaders() validationPhysicalReaders {
+func (o *validationObserver) physicalReaders(includeCabling bool) validationPhysicalReaders {
 	r := o.physical
 	if r.bmc == nil {
-		r.bmc = (redfish.Collector{ProvisioningRelease: o.desired.plan.Intent().Release}).Collect
+		r.bmc = (redfish.Collector{ProvisioningRelease: o.desired.plan.Intent().Release, IncludeNetworkFunctionMACs: includeCabling}).Collect
 	}
 	if r.host == nil {
 		r.host = (sshprobe.Collector{}).Collect
 	}
 	if r.fabric == nil {
 		r.fabric = (switchprobe.Collector{}).ObserveConfiguration
+	}
+	if r.lldp == nil {
+		r.lldp = sshprobe.Collector{}
 	}
 	return r
 }
@@ -56,6 +60,12 @@ func fabricValidationID(check inventory.Check) validation.CheckID {
 }
 
 func (o *validationObserver) unavailablePhysicalSource(role, endpoint, fallback string) string {
+	if !o.physicalScope.accessVerified {
+		if o.physicalScope.trustProblem != "" {
+			return o.physicalScope.trustProblem
+		}
+		return "Physical access cannot be verified against the retained trust policy because one or more trust files are unavailable. Restore the trust files and repeat validation."
+	}
 	sources, err := validationSources(o.request.Input.Site)
 	if err != nil {
 		return fallback
@@ -111,7 +121,7 @@ func (o *validationObserver) physicalValidationChecks() []validation.CheckSpec {
 		if check.ID == "dpf.hbn.switch-source" {
 			continue
 		}
-		s := physicalSpec("fabric", check.ID+"/"+check.Subject, check.Subject+": "+strings.TrimPrefix(check.ID, "dpf.hbn."))
+		s := physicalSpec("fabric", check.ID+"/"+check.Subject, fabricValidationTitle(check)+" — "+check.Subject)
 		checks = append(checks, s)
 	}
 	return checks
@@ -121,11 +131,11 @@ func (o *validationObserver) observePhysical(ctx context.Context, r *validationR
 	if o.mode != validation.ModeFull {
 		return nil
 	}
-	inv, err := o.observePhysicalDevices(ctx, r)
+	inv, err := o.observePhysicalDevices(ctx, r, true)
 	if ctx.Err() != nil {
 		return ctx.Err()
 	}
-	read := o.physicalReaders()
+	read := o.physicalReaders(true)
 	for i := range inv.HBN.Switches {
 		sw := &inv.HBN.Switches[i]
 		id := physicalID("switch", sw.Name)
@@ -136,19 +146,37 @@ func (o *validationObserver) observePhysical(ctx context.Context, r *validationR
 				target = &o.request.Switches[j]
 			}
 		}
-		if target == nil || target.Access == nil {
+		if !o.physicalScope.accessVerified || target == nil || target.Access == nil {
 			sw.Snapshot.Issues = []fabric.Issue{{Input: "connection", Code: "ACCESS_UNAVAILABLE", Message: "The selected switch credential or trust reference is unavailable."}}
 			r.record(id, validation.Unverified, validation.ReasonUnavailable, o.unavailablePhysicalSource("switches", sw.Endpoint, "Switch access is unavailable."), "Restore the switch credential and known-hosts reference.")
 			continue
 		}
 		sw.Snapshot = read.fabric(ctx, *target, o.request.RequestTimeout)
-		if len(sw.Snapshot.Issues) > 0 {
-			r.record(id, validation.Unverified, validation.ReasonUnavailable, "Some switch observations could not be collected; configuration checks show the affected prerequisites.", "Check switch access and availability of NVUE, LLDP and FRR commands.")
+	}
+	if o.physicalScope.accessVerified {
+		discovery.CollectHostHBNCabling(ctx, o.request, inv, read.lldp)
+	}
+	fabricChecks := validationFabricConfigurationChecks(inv)
+	for _, sw := range inv.HBN.Switches {
+		id := physicalID("switch", sw.Name)
+		if _, alreadyRecorded := r.outcomes[id]; alreadyRecorded {
+			continue
+		}
+		issues := validationRelevantSwitchIssues(sw, inv, fabricChecks)
+		if len(issues) > 0 {
+			state, reason := validation.Unverified, validation.ReasonUnavailable
+			for _, issue := range issues {
+				if issue.Code == "conflicting_observation" || issue.Code == "not_configured" || issue.Code == "interface_not_listed" {
+					state, reason = validation.Failed, validation.ReasonHealth
+				}
+			}
+			r.record(id, state, reason, "Selected switch configuration or observations need attention. "+validationSwitchProblems(issues), "Inspect the reported selected switch settings or read access.")
 		} else {
-			r.record(id, validation.Passed, validation.ReasonNone, "NVUE, Linux routes, LLDP and FRR were read without changing switch configuration or SDK logging.", "")
+			r.record(id, validation.Passed, validation.ReasonNone, "The read-only switch session completed; selected fabric requirements are checked separately.", "")
 		}
 	}
-	for _, check := range discovery.HBNFabricConfigurationChecks(inv) {
+
+	for _, check := range fabricChecks {
 		if check.ID != "dpf.hbn.switch-source" {
 			recordPhysicalCheck(r, fabricValidationID(check), check)
 		}
@@ -180,13 +208,13 @@ func (o *validationObserver) observePhysical(ctx context.Context, r *validationR
 	return err
 }
 
-func (o *validationObserver) observePhysicalDevices(ctx context.Context, r *validationRecorder) (*inventory.Inventory, error) {
+func (o *validationObserver) observePhysicalDevices(ctx context.Context, r *validationRecorder, includeCabling bool) (*inventory.Inventory, error) {
 	inv := o.physicalInventory()
-	selected, err := validationSelectedHosts(o.desired, o.request)
+	selected, err := validationSelectedHosts(o.desired, o.request, o.physicalScope.expected)
 	if err != nil {
 		return inv, &validation.ObservationError{Category: validation.FatalInput, Cause: err}
 	}
-	read := o.physicalReaders()
+	read := o.physicalReaders(includeCabling)
 	var fatal error
 	for _, item := range selected {
 		serial := item.retained.Serial
@@ -199,7 +227,7 @@ func (o *validationObserver) observePhysicalDevices(ctx context.Context, r *vali
 				target = candidate
 			}
 		}
-		if target == nil {
+		if !o.physicalScope.accessVerified || target == nil {
 			r.record(bmcID, validation.Unverified, validation.ReasonUnavailable, o.unavailablePhysicalSource("dpus", item.device.BMCEndpoint, "Selected DPU BMC access is unavailable."), "Restore its credential and TLS trust references.")
 			r.record(adminID, validation.Unverified, validation.ReasonDependency, "Administrator access could not be checked without a BMC session.", "Restore selected BMC access.")
 		} else {
@@ -228,7 +256,7 @@ func (o *validationObserver) observePhysicalDevices(ctx context.Context, r *vali
 			}
 		}
 		r.start(hostID)
-		if item.hostTarget.SSH == nil {
+		if !o.physicalScope.accessVerified || item.hostTarget.SSH == nil {
 			r.record(hostID, validation.Unverified, validation.ReasonUnavailable, o.unavailablePhysicalSource("hosts", item.hostTarget.Endpoint, "The selected host's SSH access is unavailable."), "Restore its credential and known-hosts references.")
 			continue
 		}
@@ -308,16 +336,20 @@ func recordPhysicalGroup(r *validationRecorder, id validation.CheckID, checks []
 // runs at runtime entry and final acceptance only.
 func (o *validationObserver) currentPhysicalBoots(ctx context.Context) (map[string]string, error) {
 	r := newValidationRecorder(o.physicalValidationChecks(), nil)
-	inv, err := o.observePhysicalDevices(ctx, r)
+	inv, err := o.observePhysicalDevices(ctx, r, false)
 	if err != nil {
 		return nil, err
 	}
 	boots := map[string]string{}
 	for _, device := range o.desired.plan.Intent().Devices {
-		for _, kind := range []string{"dpu", "administrator", "host"} {
+		for _, kind := range []string{"dpu", "administrator", "host", "host-prerequisites"} {
 			out, ok := r.outcomes[physicalID(kind, device.Serial)]
 			if !ok || out.State != validation.Passed {
-				return nil, &validation.ObservationError{Category: validation.FatalAccess, Cause: fmt.Errorf("selected physical identity or administrator access could not be verified")}
+				category := validation.FatalObservation
+				if !ok || out.Reason == validation.ReasonDenied || out.Reason == validation.ReasonUnavailable || out.Reason == validation.ReasonDependency {
+					category = validation.FatalAccess
+				}
+				return nil, &validation.ObservationError{Category: category, Cause: fmt.Errorf("selected physical identity, administrator access or host prerequisites could not be verified")}
 			}
 		}
 		for _, association := range inv.Associations {

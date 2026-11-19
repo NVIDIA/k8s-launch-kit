@@ -48,6 +48,57 @@ func TestHostNetworkValidationRequiresOnlyCurrentState(t *testing.T) {
 	}
 }
 
+func TestHostNetworkQualificationFencesAcrossFreshReadSessions(t *testing.T) {
+	remote := &hostNetworkFakeRemote{snapshot: configuredHostNetworkSnapshot()}
+	session := hostNetworkSession{remote: remote}
+	request := hostNetworkTestRequest()
+	request.LeaseBinding = ""
+	first, err := session.verifyConfiguration(context.Background(), request)
+	if err != nil || !first.Qualified() {
+		t.Fatalf("entry qualification failed: %+v %v", first, err)
+	}
+	second, err := session.verifyConfiguration(context.Background(), request)
+	if err != nil || !first.SameCurrent(second) {
+		t.Fatalf("stable qualification changed: %+v %v", second, err)
+	}
+	for _, change := range []struct {
+		name string
+		edit func(*hostNetworkSnapshot)
+	}{
+		{"persistent source", func(s *hostNetworkSnapshot) { s.SourceDigest = strings.Repeat("e", 64) }},
+		{"runtime", func(s *hostNetworkSnapshot) { s.RuntimeDigest = strings.Repeat("e", 64) }},
+		{"boot", func(s *hostNetworkSnapshot) { s.BootID = "123e4567-e89b-12d3-a456-426614174002" }},
+	} {
+		t.Run(change.name, func(t *testing.T) {
+			remote.snapshot = configuredHostNetworkSnapshot()
+			change.edit(&remote.snapshot)
+			current, err := session.verifyConfiguration(context.Background(), request)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if first.SameCurrent(current) {
+				t.Fatal("cross-phase source/runtime/boot drift was accepted")
+			}
+		})
+	}
+	remote.snapshot = configuredHostNetworkSnapshot()
+	remote.snapshot.Merged = hostNetworkTestSnapshot().Merged
+	current, err := session.verifyConfiguration(context.Background(), request)
+	if Code(err) != "HOST_NETWORK_PERSISTENT_MISMATCH" || current.Qualified() || first.SameCurrent(current) {
+		t.Fatalf("persistent desired configuration drift remained qualified: %+v %v", current, err)
+	}
+	public, err := json.Marshal(first)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(public), "source") || strings.Contains(string(public), "runtimeDigest") || strings.Contains(string(public), "current") {
+		t.Fatalf("private qualification escaped serialization: %s", public)
+	}
+	if (HostNetworkValidation{RuntimeVerified: true, PersistentVerified: true, BootID: first.BootID, MTU: first.MTU}).Qualified() {
+		t.Fatal("booleans manufactured a current qualification")
+	}
+}
+
 func TestHostNetworkValidationSeparatesRuntimeAndPersistentMismatch(t *testing.T) {
 	for _, tc := range []struct {
 		name string

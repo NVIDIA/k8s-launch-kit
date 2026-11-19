@@ -42,7 +42,13 @@ type systemArtifactExpectation struct {
 	Attachments map[string]*unstructured.Unstructured
 	// Values is the independently derived subset of the system service's
 	// chart values that affects this projection.
-	Values map[string]any
+	Values     map[string]any
+	Defaults   map[string]any
+	ConfigMaps map[string]*unstructured.Unstructured
+	Services   map[string]*unstructured.Unstructured
+	archive    []byte
+	source     releases.SystemNetworking
+	version    chartutil.KubeVersion
 }
 
 type systemArtifacts struct {
@@ -84,7 +90,7 @@ func systemArtifactRoles() []systemArtifactRole {
 // projectSystemArtifacts derives the v26.8 flat HBN system expectations from a
 // verified release archive and the retained intent. The caller owns the returned
 // projection and can reuse it for all observations in the invocation.
-func projectSystemArtifacts(archive []byte, intent generation.ResolvedIntent) (systemArtifacts, error) {
+func projectSystemArtifacts(archive []byte, intent generation.ResolvedIntent, config *unstructured.Unstructured) (systemArtifacts, error) {
 	release, err := releases.Resolve(intent.Release)
 	if err != nil || intent.Release == "" || intent.UseCase != releases.UseCaseHBNBGP || release.SystemNetworking == nil {
 		return systemArtifacts{}, fmt.Errorf("system networking projection is unavailable for the retained release or profile")
@@ -96,6 +102,13 @@ func projectSystemArtifacts(archive []byte, intent generation.ResolvedIntent) (s
 		intent.Bootstrap.Tenant.VIP == "" || intent.Bootstrap.TenantKubernetesVersion != release.TenantKubernetesVersion ||
 		intent.Networking.UplinkMTU < 1280 || intent.Networking.UplinkMTU > 9216 {
 		return systemArtifacts{}, fmt.Errorf("retained system networking inputs are incomplete or inconsistent")
+	}
+	if config == nil {
+		return systemArtifacts{}, fmt.Errorf("retained defaulted operator configuration is unavailable")
+	}
+	controlPlaneMTU, found, mtuErr := unstructured.NestedInt64(config.UnstructuredContent(), "spec", "networking", "controlPlaneMTU")
+	if mtuErr != nil || !found || controlPlaneMTU < 1280 || controlPlaneMTU > 9216 {
+		return systemArtifacts{}, fmt.Errorf("retained defaulted control-plane MTU is unavailable or invalid")
 	}
 	managementVersion, err := chartutil.ParseKubeVersion(intent.KubernetesVersion)
 	if err != nil {
@@ -111,12 +124,12 @@ func projectSystemArtifacts(archive []byte, intent generation.ResolvedIntent) (s
 	}
 	for _, component := range systemArtifactComponents {
 		role := systemArtifactRole{Component: component.name}
-		if err := projectSystemArtifactRole(projected, archive, intent, release, role, component.tenantKind, component.perCluster, *tenantVersion); err != nil {
+		if err := projectSystemArtifactRole(projected, archive, intent, release, role, component.tenantKind, component.perCluster, *tenantVersion, controlPlaneMTU); err != nil {
 			return systemArtifacts{}, err
 		}
 		if component.perCluster {
 			role.Management = true
-			if err := projectSystemArtifactRole(projected, archive, intent, release, role, "Deployment", true, *managementVersion); err != nil {
+			if err := projectSystemArtifactRole(projected, archive, intent, release, role, "Deployment", true, *managementVersion, controlPlaneMTU); err != nil {
 				return systemArtifacts{}, err
 			}
 		}
@@ -138,16 +151,32 @@ func verifySystemArchive(archive []byte, source releases.SystemNetworking) error
 }
 
 func projectSystemArtifactRole(projected systemArtifacts, archive []byte, intent generation.ResolvedIntent, release releases.Release,
-	role systemArtifactRole, workloadKind string, perCluster bool, kubeVersion chartutil.KubeVersion,
+	role systemArtifactRole, workloadKind string, perCluster bool, kubeVersion chartutil.KubeVersion, controlPlaneMTU int64,
 ) error {
 	values := systemArtifactValues(intent, release, role, perCluster)
-	expectation := systemArtifactExpectation{WorkloadKind: workloadKind, Values: values, Attachments: map[string]*unstructured.Unstructured{}}
+	if role.Component == "flannel" {
+		_ = unstructured.SetNestedField(values, strconv.FormatInt(controlPlaneMTU, 10), "flannel", "flannel", "mtu")
+	}
+	expectation := systemArtifactExpectation{WorkloadKind: workloadKind, Values: values, Attachments: map[string]*unstructured.Unstructured{}, ConfigMaps: map[string]*unstructured.Unstructured{}, Services: map[string]*unstructured.Unstructured{}, archive: bytes.Clone(archive), source: *release.SystemNetworking, version: kubeVersion}
+	expectedDefaults, err := systemRoleDefaults(archive, role)
+	if err != nil {
+		return err
+	}
+	expectation.Defaults = expectedDefaults
 	objects, err := renderSystemArtifactRole(archive, *release.SystemNetworking, role, values, kubeVersion)
 	if err != nil {
 		return err
 	}
 	for _, object := range objects {
 		switch object.GetKind() {
+		case "ConfigMap":
+			expectation.ConfigMaps[object.GetName()] = object
+		case "Service":
+			// Only the selected functional DNS Service is an obligation;
+			// incidental metrics Services are outside this finite contract.
+			if role.Component == "coredns" && role.Management {
+				expectation.Services[object.GetName()] = object
+			}
 		case "CustomResourceDefinition":
 			if role.Management {
 				return fmt.Errorf("management system networking role rendered a tenant API definition")
@@ -197,6 +226,8 @@ func systemArtifactValues(intent generation.ResolvedIntent, release releases.Rel
 		}
 	}
 	switch role.Component {
+	case "dpu-monitoring":
+		component["deployDPUManifests"] = true
 	case "cni-installer":
 		component["cniInstaller"] = map[string]any{"image": systemArtifactImageValues(release.SystemNetworking.CNIInstallerImage)}
 	case "sfc-controller", "servicechainset-controller":
@@ -215,7 +246,9 @@ func systemArtifactValues(intent generation.ResolvedIntent, release releases.Rel
 			component["nodeSelector"] = selector
 		}
 	}
-	return map[string]any{role.Component: component}
+	values := map[string]any{role.Component: component}
+	systemControllerValues(intent, role, values)
+	return values
 }
 
 func systemArtifactImageValues(image string) map[string]any {
@@ -226,6 +259,10 @@ func systemArtifactImageValues(image string) map[string]any {
 func renderSystemArtifactRole(archive []byte, source releases.SystemNetworking, role systemArtifactRole, values map[string]any,
 	version chartutil.KubeVersion,
 ) ([]*unstructured.Unstructured, error) {
+	return renderSystemArtifactRoleAt(archive, source, role, values, version, "system-artifact-validation", "system-artifact-validation")
+}
+
+func renderSystemArtifactRoleAt(archive []byte, source releases.SystemNetworking, role systemArtifactRole, values map[string]any, version chartutil.KubeVersion, name, namespace string) ([]*unstructured.Unstructured, error) {
 	// ProcessDependencies prunes the chart tree. Load a fresh tree for each
 	// role, from the same archive verified by projectSystemArtifacts.
 	chart, err := loader.LoadArchive(bytes.NewReader(archive))
@@ -246,7 +283,7 @@ func renderSystemArtifactRole(archive []byte, source releases.SystemNetworking, 
 	}
 	capabilities := chartutil.DefaultCapabilities.Copy()
 	capabilities.KubeVersion = version
-	options := chartutil.ReleaseOptions{Name: "system-artifact-validation", Namespace: "system-artifact-validation", IsInstall: true}
+	options := chartutil.ReleaseOptions{Name: name, Namespace: namespace, IsInstall: true}
 	renderValues, err := chartutil.ToRenderValuesWithSchemaValidation(chart, values, options, capabilities, false)
 	if err != nil {
 		return nil, fmt.Errorf("validate retained system networking chart values")
@@ -330,4 +367,20 @@ func systemArtifactAttachmentNames(role systemArtifactRole) []string {
 	default:
 		return nil
 	}
+}
+
+func systemRoleDefaults(archive []byte, role systemArtifactRole) (map[string]any, error) {
+	chart, err := loader.LoadArchive(bytes.NewReader(archive))
+	if err != nil {
+		return nil, err
+	}
+	defaults, err := chartutil.CoalesceValues(chart, nil)
+	if err != nil {
+		return nil, err
+	}
+	component, ok := defaults[role.Component].(map[string]any)
+	if !ok {
+		return nil, fmt.Errorf("system component defaults unavailable")
+	}
+	return map[string]any{role.Component: component}, nil
 }
