@@ -53,6 +53,12 @@ and at least two selected physical hosts for cross-host coverage. A one-host
 resource-only run may pass; a one-host full run reports missing cross-host
 coverage and cannot pass full acceptance.
 
+Runtime diagnostics require a verified physical selection and qualified host
+network configuration across the selected cohort. An unavailable BMC or host
+prerequisite can leave BGP, route and traffic checks unverified for that run;
+independent Kubernetes resource checks remain visible. Restore the reported
+prerequisite and rerun full validation.
+
 ## What runs where
 
 | Location | Operations |
