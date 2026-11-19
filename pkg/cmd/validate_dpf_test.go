@@ -25,6 +25,9 @@ func TestDPFValidateFlagScopes(t *testing.T) {
 	actual, err := flagTargetScope(validateCmd.Flags().Lookup("inventory"))
 	require.NoError(t, err)
 	assert.Equal(t, []target.Name{target.DPF}, actual)
+	actual, err = flagTargetScope(validateCmd.Flags().Lookup("quiet"))
+	require.NoError(t, err)
+	assert.Equal(t, []target.Name{target.DPF}, actual)
 	for _, name := range []string{"flavor", "kubeconfig", "keep", "junit-path", "validation-mode", "validation-checks", "network-operator-namespace", "skip-network-operator-helm", "rdma-rping-iterations", "rdma-ib-write-size", "rdma-ib-write-min-bandwidth-gbps"} {
 		actual, err := flagTargetScope(validateCmd.Flags().Lookup(name))
 		require.NoError(t, err)
@@ -128,10 +131,21 @@ func TestDPFValidateSchemaSharesFlagsAndKeepsPipelineUnavailable(t *testing.T) {
 		assert.Equal(t, []string{"host", "dpf"}, s.Flags[name].Targets, name)
 	}
 	assert.Equal(t, []string{"host"}, s.Flags["--validation-mode"].Targets)
+	assert.Contains(t, s.Flags["--quiet"].Description, "With validate, supported only for --target dpf")
 	for _, descriptor := range s.Targets {
 		if descriptor.Name == "dpf" {
 			assert.True(t, descriptor.Phases["validate"].Available)
 			assert.False(t, descriptor.Phases["pipeline"].Available)
 		}
+	}
+}
+
+func TestValidateQuietIsRejectedForHost(t *testing.T) {
+	for _, flags := range [][]string{{"--quiet"}, {"--target", "host", "--quiet=false"}} {
+		args := append([]string{"validate", "--output", "json"}, flags...)
+		output, code := runCLIHelper(t, args...)
+		assert.Equal(t, 2, code, output)
+		assert.Contains(t, output, "--quiet (targets: dpf)")
+		assert.NotContains(t, output, "deployment files directory")
 	}
 }

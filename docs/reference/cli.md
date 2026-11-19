@@ -63,7 +63,7 @@ flag groups and `l8k schema` for each flag's `targets` list.
 | `--flavor` | root, discover, generate, deploy, validate, clean | host | `k8s` or `ocp`, overriding config. Clean accepts the flag to reject OpenShift cleanup explicitly. |
 | `--output json` | all (inherited) | target-agnostic | Command-specific output; Host validation emits a stream, DPF validation emits one terminal result, and preset/sosreport success remains text. See [Automation](../integrator/automation.md#json-mode). |
 | `--yes`, `-y` | root pipeline only | target-agnostic | Auto-confirm root prompts. Subcommands reject this flag; lifecycle JSON mode auto-confirms. |
-| `--quiet` | root pipeline, discover, validate | target-agnostic | Suppress informational progress; keep the terminal result and errors. |
+| `--quiet` | root pipeline, discover; DPF validate | root/discover: target-agnostic; validate: dpf | Suppress informational progress; keep the terminal result and errors. Host validate rejects this flag. |
 | `--log-level` | all | target-agnostic | Enable `trace`, `debug`, `info`, `warn`, or `error` logging. `debug` shows structured progress; `trace` also shows bounded command output. |
 | `--log-file` | all | target-agnostic | Write logs to a file instead of `stderr`. |
 
@@ -100,7 +100,7 @@ available throughout the command tree.
 | `--skip-network-operator-helm` | yes | — | yes | yes | yes | — |
 | `--deployment-files` | — | — | — | yes | yes | — |
 | `--yes` | yes | — | — | — | — | — |
-| `--quiet` | yes | yes | — | — | yes | — |
+| `--quiet` | yes | yes | — | — | DPF only | — |
 | Validation flags below | — | — | — | — | yes | — |
 | `--keep-helm-chart` | — | — | — | — | — | yes |
 

@@ -248,7 +248,7 @@ var schemaCmd = &cobra.Command{
 				"--quiet": {
 					Type:        "bool",
 					Default:     "false",
-					Description: "Suppress informational output (errors still shown)",
+					Description: "Suppress informational output for the root pipeline and discovery. With validate, supported only for --target dpf; the terminal result and errors remain visible.",
 				},
 				"--groups": {
 					Type:        "[]string",

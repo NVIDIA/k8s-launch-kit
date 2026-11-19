@@ -77,6 +77,8 @@ func (d validateDriver) Bind(inv target.Invocation) (target.Operation, error) {
 		r.Stderr = os.Stderr
 	}
 	return target.OperationFunc(func(parent context.Context) error {
+		stopBrokenPipe := notifyValidationBrokenPipe()
+		defer stopBrokenPipe()
 		ctx, stop := signal.NotifyContext(parent, terminationSignals()...)
 		defer stop()
 		output := ui.NewSilent()

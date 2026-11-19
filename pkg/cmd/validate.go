@@ -210,7 +210,7 @@ func init() {
 	addTargetFlag(validateCmd)
 	validateCmd.Flags().StringVar(&dpfInventoryPath, "inventory", "", "DPF inventory YAML input (required for --target dpf)")
 	setFlagGroup(validateCmd, "inventory", GroupCommon)
-	validateCmd.Flags().BoolVarP(&quietFlag, "quiet", "q", false, "Suppress validation progress (final result and errors still shown)")
+	validateCmd.Flags().BoolVarP(&quietFlag, "quiet", "q", false, "DPF only: suppress validation progress (final result and errors still shown)")
 	setFlagGroup(validateCmd, "quiet", GroupOutputLogging)
 
 	validateCmd.Flags().StringVar(&kubeconfig, "kubeconfig", "", "Path to kubeconfig file (falls back to $KUBECONFIG, then ~/.kube/config)")

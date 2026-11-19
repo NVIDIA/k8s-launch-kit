@@ -327,9 +327,9 @@ func markDeployTargetScopes() {
 }
 
 func markValidateTargetScopes() {
-	setFlagTargetScope(validateCmd, []target.Name{target.DPF}, "inventory")
+	setFlagTargetScope(validateCmd, []target.Name{target.DPF}, "inventory", "quiet")
 	setFlagTargetScope(validateCmd, []target.Name{target.Host, target.DPF},
-		"deployment-files", "user-config", "connectivity", "connectivity-timeout", "wait", "report-path", "quiet")
+		"deployment-files", "user-config", "connectivity", "connectivity-timeout", "wait", "report-path")
 	setFlagTargetScope(validateCmd, []target.Name{target.Host},
 		"flavor", "kubeconfig", "network-operator-namespace", "skip-network-operator-helm",
 		"keep", "validation-mode", "validation-checks",
