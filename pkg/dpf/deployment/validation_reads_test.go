@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/nvidia/k8s-launch-kit/pkg/dpf/validation"
+	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
@@ -110,7 +111,7 @@ func newCurrentReadHTTPFixture(t *testing.T, paced bool) *currentReadHTTPFixture
 		f.record(r)
 		if r.Method != http.MethodGet {
 			t.Errorf("management effect: %s %s", r.Method, r.URL.Path)
-			http.Error(w, "read only", 405)
+			http.Error(w, "read only", http.StatusMethodNotAllowed)
 			return
 		}
 		if r.URL.Path == f.deny {
@@ -437,11 +438,41 @@ func TestValidationCurrentReadScopeJoinsBothCloseFailures(t *testing.T) {
 }
 
 func TestValidationCurrentReadResourceCloseInvalidatesOnlyDependentRows(t *testing.T) {
-	for _, scenario := range []string{"source-drift", "close-denied", "nil-tenant"} {
+	for _, scenario := range []string{"source-drift", "close-denied", "nil-tenant", "pod-drift"} {
 		t.Run(scenario, func(t *testing.T) {
 			f := newCurrentReadHTTPFixture(t, false)
 			completed := []validation.Outcome{}
-			r := newValidationRecorder(f.adapter.checks, func(event validation.ProgressEvent) {
+			checks := f.adapter.checks
+			hostStarts := 0
+			if scenario == "pod-drift" {
+				f.adapter.native.mode = validation.ModeFull
+				var err error
+				checks, _, err = validationRuntimeChecks(f.adapter.native.desired.plan)
+				if err != nil {
+					t.Fatal(err)
+				}
+				f.mutateResponse = func(request *http.Request, data []byte) []byte {
+					if !strings.Contains(request.URL.Path, "/pods/hbn-pod-") {
+						return data
+					}
+					var pod corev1.Pod
+					if err := json.Unmarshal(data, &pod); err != nil {
+						t.Error(err)
+						return data
+					}
+					pod.UID = "replacement"
+					encoded, err := json.Marshal(pod)
+					if err != nil {
+						t.Error(err)
+						return data
+					}
+					return encoded
+				}
+			}
+			r := newValidationRecorder(checks, func(event validation.ProgressEvent) {
+				if event.Phase == validation.Running && strings.HasPrefix(string(event.Check.ID), "physical/host-network/") {
+					hostStarts++
+				}
 				if event.Phase == validation.Completed {
 					completed = append(completed, event.Outcome)
 				}
@@ -492,6 +523,9 @@ func TestValidationCurrentReadResourceCloseInvalidatesOnlyDependentRows(t *testi
 				if (strings.HasPrefix(string(out.ID), "hbn/") || strings.HasPrefix(string(out.ID), "workloads/")) && out.State == validation.Passed {
 					t.Fatalf("provisional accepted progress: %+v", out)
 				}
+			}
+			if scenario == "pod-drift" && hostStarts != 0 {
+				t.Fatalf("host qualification ran after observed Pod drift: %d", hostStarts)
 			}
 			if scenario == "close-denied" && !validationRuntimeAccessFailure(err) {
 				t.Fatalf("access category lost: %v", err)

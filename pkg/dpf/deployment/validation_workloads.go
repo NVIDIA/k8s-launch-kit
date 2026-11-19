@@ -212,6 +212,9 @@ func (o *validationObserver) observeValidationRuntimeResourcesWithImage(ctx cont
 				r.record(id, validation.Unverified, validation.ReasonDependency, "The selected current HBN execution target or exact image is unavailable.", "Inspect this selected Pod, image and parent health.")
 			}
 		}
+		if validationIdentityChanged(hbnErr) {
+			return hbnErr
+		}
 		complete = true
 		return nil
 	})
@@ -248,9 +251,6 @@ func (o *validationObserver) observeValidationRuntimeResourcesWithImage(ctx cont
 					}
 				}
 			}
-		}
-		if validationIdentityChanged(hbnErr) {
-			return validationRuntimeError(ctx, hbnErr, false)
 		}
 		return nil
 	}()
