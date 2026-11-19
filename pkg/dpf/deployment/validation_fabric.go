@@ -38,7 +38,8 @@ func validationFabricConfigurationChecks(inv *inventory.Inventory) []inventory.C
 				continue
 			} // Declared scope and already-typed unknown checks.
 			var unavailable []fabric.Issue
-			for _, issue := range issuesBySwitch[sw.Name] {
+			issues := validationFabricCheckIssues(*check, sw.Name, issuesBySwitch[sw.Name])
+			for _, issue := range issues {
 				if issue.Code == "not_configured" || issue.Code == "interface_not_listed" || issue.Code == "conflicting_observation" {
 					continue
 				}
@@ -52,7 +53,7 @@ func validationFabricConfigurationChecks(inv *inventory.Inventory) []inventory.C
 					}
 				}
 			}
-			if len(unavailable) > 0 && !definitiveFabricMismatch(*check, sw, inv) {
+			if len(unavailable) > 0 && !definitiveFabricMismatch(*check, sw, inv, issues) {
 				check.State, check.ReasonCode = "unknown", "SWITCH_SOURCE_UNAVAILABLE"
 				check.Message = "This check could not be evaluated: " + validationSwitchProblems(unavailable)
 			}
@@ -84,13 +85,13 @@ func fabricCheckInputs(id, port string) []string {
 
 // Explicit contradictions from an independently successful source stay failures
 // even when another source is absent. Absence itself is never a contradiction.
-func definitiveFabricMismatch(check inventory.Check, sw inventory.FabricSwitch, inv *inventory.Inventory) bool {
+func definitiveFabricMismatch(check inventory.Check, sw inventory.FabricSwitch, inv *inventory.Inventory, issues []fabric.Issue) bool {
 	if check.State != "failed" {
 		return false
 	}
 	port := strings.TrimPrefix(check.Subject, sw.Name+"/")
 	available := func(inputs ...string) bool {
-		for _, issue := range sw.Snapshot.Issues {
+		for _, issue := range issues {
 			if issue.Input == "connection" {
 				return false
 			}
@@ -144,6 +145,46 @@ func definitiveFabricMismatch(check inventory.Check, sw inventory.FabricSwitch, 
 		}
 	}
 	return false
+}
+
+// Both unavailable-source classification and contradiction retention consume the
+// same selected port/field projection. An error in another port or property
+// cannot erase a successfully measured value.
+func validationFabricCheckIssues(check inventory.Check, switchName string, issues []fabric.Issue) []fabric.Issue {
+	port := strings.TrimPrefix(check.Subject, switchName+"/")
+	var properties []string
+	switch check.ID {
+	case "dpf.hbn.port-mtu":
+		properties = []string{"$.type", "$.link.mtu"}
+	case "dpf.hbn.port-vrf":
+		properties = []string{"$.type", "$.vrf", "$.parent"}
+	case "dpf.hbn.routed-port":
+		properties = []string{"$.type", "$.bridge", "$.parent"}
+	}
+	var result []fabric.Issue
+	for _, issue := range issues {
+		field := issue.Field
+		switch issue.Input {
+		case "appliedInterfaces", "operationalInterfaces":
+			if strings.HasPrefix(field, "$[") {
+				prefix := "$[" + strconv.Quote(port) + "]"
+				if field != prefix && !strings.HasPrefix(field, prefix+".") {
+					continue
+				}
+				field = "$" + strings.TrimPrefix(field, prefix)
+			}
+		case "appliedInterface/" + port, "operationalInterface/" + port:
+		default:
+			result = append(result, issue)
+			continue
+		}
+		if len(properties) == 0 || field == "" || field == "$" || slices.ContainsFunc(properties, func(property string) bool {
+			return field == property || strings.HasPrefix(field, property+".") || strings.HasPrefix(property, field+".")
+		}) {
+			result = append(result, issue)
+		}
+	}
+	return result
 }
 
 func fabricValidationTitle(check inventory.Check) string {

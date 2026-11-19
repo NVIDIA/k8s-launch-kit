@@ -5,6 +5,7 @@ package deployment
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"strings"
@@ -13,8 +14,110 @@ import (
 
 	"github.com/nvidia/k8s-launch-kit/pkg/dpf/config"
 	"github.com/nvidia/k8s-launch-kit/pkg/dpf/inventory"
+	"github.com/nvidia/k8s-launch-kit/pkg/dpf/redfish"
+	"github.com/nvidia/k8s-launch-kit/pkg/dpf/sshprobe"
 	"github.com/nvidia/k8s-launch-kit/pkg/dpf/validation"
 )
+
+func cloneValidationDevice(t *testing.T, device inventory.Device) inventory.Device {
+	t.Helper()
+	raw, err := json.Marshal(device)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var result inventory.Device
+	if err := json.Unmarshal(raw, &result); err != nil {
+		t.Fatal(err)
+	}
+	return result
+}
+
+func TestValidationPhysicalUnavailableFactsDoNotProveReplacement(t *testing.T) {
+	for _, tc := range []struct {
+		name, kind string
+		edit       func(*inventory.Device)
+	}{
+		{"missing permanent MAC", "host", func(d *inventory.Device) {
+			for i := range d.Runtime.Network.Links {
+				if d.Runtime.Network.Links[i].PhysicalPortName == "p0" {
+					d.Runtime.Network.Links[i].PermanentMAC = ""
+				}
+			}
+		}},
+		{"unavailable network", "host", func(d *inventory.Device) { d.Runtime.Network = nil }},
+		{"unavailable adapter serial", "host", func(d *inventory.Device) {
+			d.Adapters[0].SerialNumber, d.Adapters[0].IdentityState = "", "unknown"
+		}},
+		{"unavailable PSID", "dpu", func(d *inventory.Device) {
+			d.PSID = ""
+			d.Observations["psid"] = inventory.Observation{State: "unavailable", ReasonCode: "PSID_INVALID"}
+		}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			o, bmcs, hosts := physicalValidationFixture(t)
+			current := hosts
+			if tc.kind == "dpu" {
+				current = bmcs
+			}
+			for endpoint, device := range current {
+				if device.SerialNumber == "SERIAL-A" || len(device.Adapters) > 0 && device.Adapters[0].SerialNumber == "SERIAL-A" {
+					// Detach nested observation storage from the retained expectation.
+					device = cloneValidationDevice(t, device)
+					tc.edit(&device)
+					current[endpoint] = device
+				}
+			}
+			r := newValidationRecorder(o.checks, nil)
+			_, err := o.observePhysicalDevices(context.Background(), r, true)
+			if err != nil {
+				t.Fatalf("unavailable current fact poisoned cohort: %v", err)
+			}
+			got := r.outcomes[physicalID(tc.kind, "SERIAL-A")]
+			if got.State != validation.Unverified || got.Reason != validation.ReasonUnavailable {
+				t.Fatalf("unavailable fact was not classified accurately: %+v", got)
+			}
+			if independent := r.outcomes[physicalID("dpu", "SERIAL-B")]; independent.State != validation.Passed {
+				t.Fatalf("independent DPU observation was lost: %+v", independent)
+			}
+		})
+	}
+}
+
+func TestValidationPhysicalKnownReplacementStillPoisonsCohort(t *testing.T) {
+	for _, kind := range []string{"dpu", "host", "bmc-during-read", "host-during-read"} {
+		t.Run(kind, func(t *testing.T) {
+			o, bmcs, hosts := physicalValidationFixture(t)
+			switch kind {
+			case "dpu":
+				for endpoint, d := range bmcs {
+					d.PSID = "MT_0000009999"
+					bmcs[endpoint] = d
+				}
+			case "host":
+				for endpoint, d := range hosts {
+					d = cloneValidationDevice(t, d)
+					d.Adapters[0].SerialNumber = "REPLACEMENT"
+					d.Runtime.Network = nil // Missing optional facts cannot hide known replacement.
+					hosts[endpoint] = d
+				}
+			case "bmc-during-read":
+				o.physical.bmc = func(context.Context, config.Target, time.Duration) (inventory.Device, map[string]inventory.Evidence, error) {
+					return inventory.Device{}, nil, &redfish.Error{Code: "IDENTITY_CHANGED"}
+				}
+			case "host-during-read":
+				o.physical.host = func(context.Context, config.Target, time.Duration) (inventory.Device, map[string]inventory.Evidence, error) {
+					return inventory.Device{}, nil, &sshprobe.Error{Code: "INVENTORY_CHANGED"}
+				}
+			}
+			r := newValidationRecorder(o.checks, nil)
+			_, err := o.observePhysicalDevices(context.Background(), r, true)
+			var fatal *validation.ObservationError
+			if !errors.As(err, &fatal) || fatal.Category != validation.FatalIdentity {
+				t.Fatalf("known identity replacement did not poison cohort: %v", err)
+			}
+		})
+	}
+}
 
 func physicalValidationFixture(t *testing.T) (*validationObserver, map[string]inventory.Device, map[string]inventory.Device) {
 	t.Helper()

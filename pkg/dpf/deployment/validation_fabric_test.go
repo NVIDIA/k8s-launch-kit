@@ -53,6 +53,43 @@ func TestValidationFabricPartialReadsPreserveIndependentContradictions(t *testin
 	}
 }
 
+func TestValidationFabricPortFieldIssuesPreserveMeasuredContradictions(t *testing.T) {
+	for _, tc := range []struct {
+		name, input, field, want string
+	}{
+		{"unselected port", "appliedInterfaces", `$["swp99"].link.mtu`, "failed"},
+		{"other selected port", "appliedInterfaces", `$["swp2"].link.mtu`, "failed"},
+		{"other field on same port", "appliedInterfaces", `$["swp1"].vrf`, "failed"},
+		{"other detail field", "appliedInterface/swp1", "$.bridge", "failed"},
+		{"same field", "appliedInterfaces", `$["swp1"].link.mtu`, "unknown"},
+		{"same parent field", "appliedInterfaces", `$["swp1"].link`, "unknown"},
+		{"same port malformed", "appliedInterfaces", `$["swp1"]`, "unknown"},
+		{"whole source malformed", "appliedInterfaces", "$", "unknown"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			o, _, _ := physicalValidationFixture(t)
+			inv := o.physicalInventory()
+			wrongMTU := 1280
+			inv.HBN.Switches = []inventory.FabricSwitch{{Name: "leaf-a", Ports: []inventory.SwitchPort{{Name: "swp1", DPUSerial: "SERIAL-A", DPUInterface: "p0"}, {Name: "swp2", DPUSerial: "SERIAL-A", DPUInterface: "p1"}}, Snapshot: fabric.Snapshot{
+				Configured: fabric.ConfiguredFacts{Interfaces: []fabric.InterfaceConfig{{Name: "swp1", MTU: &wrongMTU}}},
+				Issues:     []fabric.Issue{{Input: "operationalInterface/swp1", Code: "PERMISSION_DENIED"}, {Input: tc.input, Field: tc.field, Code: "invalid_type"}},
+			}}}
+			found := false
+			for _, check := range validationFabricConfigurationChecks(inv) {
+				if check.ID == "dpf.hbn.port-mtu" && check.Subject == "leaf-a/swp1" {
+					found = true
+					if check.State != tc.want {
+						t.Fatalf("selected field availability misclassified: %+v want %s", check, tc.want)
+					}
+				}
+			}
+			if !found {
+				t.Fatal("selected MTU check missing")
+			}
+		})
+	}
+}
+
 func TestValidationFabricIgnoresUnrelatedSourcesAndKeepsMeasuredAbsence(t *testing.T) {
 	o, _, _ := physicalValidationFixture(t)
 	inv := o.physicalInventory()

@@ -233,13 +233,20 @@ func (o *validationObserver) observePhysicalDevices(ctx context.Context, r *vali
 		} else {
 			observed, _, readErr := read.bmc(ctx, *target, o.request.RequestTimeout)
 			switch {
+			case redfish.Code(readErr) == "IDENTITY_CHANGED":
+				r.record(bmcID, validation.Failed, validation.ReasonIdentityDrift, "The selected DPU identity changed during the BMC observation.", "Inspect the selected BMC and repeat discovery and generation.")
+				fatal = &validation.ObservationError{Category: validation.FatalIdentity}
+				r.record(adminID, validation.Unverified, validation.ReasonDependency, "Administrator access cannot qualify an identity that changed during collection.", "Resolve the identity change.")
 			case readErr != nil:
 				r.record(bmcID, validation.Unverified, validation.ReasonUnavailable, "BMC identity could not be fully observed or its session closed. "+safeBMCDiagnostics(readErr), "Verify BMC reachability, credentials and certificate policy.")
 				r.record(adminID, validation.Unverified, validation.ReasonDependency, "Administrator access cannot qualify an incomplete BMC session.", "Resolve the BMC observation failure.")
-			case observed.ObservationState != "observed" || observed.ID != item.device.ID || observed.SerialNumber != serial || !enrollmentPSIDMatches(observed, item.retained.PSID):
+			case validationDPUIdentityConflict(observed, item.device.ID, serial, item.retained.PSID):
 				r.record(bmcID, validation.Failed, validation.ReasonIdentityDrift, "The current DPU physical identity conflicts with the retained selection.", "Inspect the selected BMC and repeat discovery and generation.")
 				fatal = &validation.ObservationError{Category: validation.FatalIdentity}
 				r.record(adminID, validation.Unverified, validation.ReasonDependency, "Administrator access cannot qualify a different device.", "Resolve the identity mismatch.")
+			case observed.ObservationState != "observed" || observed.ID == "" || observed.SerialNumber == "" || !enrollmentPSIDMatches(observed, item.retained.PSID):
+				r.record(bmcID, validation.Unverified, validation.ReasonUnavailable, "The current BMC observation does not establish the selected DPU identity or PSID. Missing or malformed identity facts do not establish a device replacement.", "Restore the BMC identity and PSID observations, then validate again.")
+				r.record(adminID, validation.Unverified, validation.ReasonDependency, "Administrator access cannot qualify an incompletely identified device.", "Resolve the BMC identity observation failure.")
 			default:
 				for i := range inv.DPUs {
 					if inv.DPUs[i].SerialNumber == serial {
@@ -261,15 +268,33 @@ func (o *validationObserver) observePhysicalDevices(ctx context.Context, r *vali
 			continue
 		}
 		host, _, readErr := read.host(ctx, item.hostTarget, o.request.RequestTimeout)
+		if sshprobe.Code(readErr) == "INVENTORY_CHANGED" {
+			r.record(hostID, validation.Failed, validation.ReasonIdentityDrift, "The selected host identity or PCI binding changed during hardware inspection.", "Inspect the host and repeat discovery and generation.")
+			fatal = &validation.ObservationError{Category: validation.FatalIdentity}
+			continue
+		}
 		if readErr != nil || host.ObservationState != "observed" {
 			r.record(hostID, validation.Unverified, validation.ReasonUnavailable, "Host hardware inspection did not complete: "+sshprobe.Reason(readErr)+" ("+sshprobe.Code(readErr)+").", "Check SSH access, sudo permissions and the reported inspection tool.")
 			continue
 		}
 		oldIdentity, oldErr := sshprobe.SelectHostWorkloadNetworkIdentity(item.host, item.adapter.Key, serial)
 		newIdentity, newErr := sshprobe.SelectHostWorkloadNetworkIdentity(host, item.adapter.Key, serial)
-		if oldErr != nil || newErr != nil || oldIdentity != newIdentity || host.ID != item.host.ID {
+		if oldErr != nil {
+			r.record(hostID, validation.Unverified, validation.ReasonInvalidInput, "The retained inventory does not establish the selected host interface identity.", "Repeat discovery and generation to retain a complete host binding.")
+			return inv, &validation.ObservationError{Category: validation.FatalInput, Cause: oldErr}
+		}
+		if validationHostIdentityConflict(host, item.host, item.adapter) || newErr == nil && oldIdentity != newIdentity {
 			r.record(hostID, validation.Failed, validation.ReasonIdentityDrift, "The host UUID, selected card, PCI function or permanent MAC differs from the retained binding.", "Inspect the host and repeat discovery and generation.")
 			fatal = &validation.ObservationError{Category: validation.FatalIdentity}
+			continue
+		}
+		if newErr != nil || host.ID == "" {
+			message := "The current host observation does not establish the selected physical interface identity."
+			if newErr != nil {
+				// This pure selector returns finite diagnostics, never command output.
+				message += " " + newErr.Error() + "."
+			}
+			r.record(hostID, validation.Unverified, validation.ReasonUnavailable, message, "Restore the required host PCI, network and permanent-MAC reads, then validate again.")
 			continue
 		}
 		inv.Hosts = append(inv.Hosts, host)
@@ -294,6 +319,31 @@ func (o *validationObserver) observePhysicalDevices(ctx context.Context, r *vali
 		recordPhysicalGroup(r, physicalID("host-prerequisites", device.SerialNumber), checks, "Selected PCI functions, IOMMU groups and management physical separation are valid.")
 	}
 	return inv, fatal
+}
+
+// Only positively observed conflicting values establish replacement. Optional
+// collector reads can be unavailable even after the physical session succeeds.
+func validationDPUIdentityConflict(current inventory.Device, id, serial, psid string) bool {
+	if current.ID != "" && current.ID != id || current.SerialNumber != "" && current.SerialNumber != serial || current.PSID != "" && !strings.EqualFold(current.PSID, psid) {
+		return true
+	}
+	observed := current.Observations["psid"]
+	return observed.State == "observed" && len(observed.Values) == 1 && observed.Values[0] != "" && !strings.EqualFold(observed.Values[0], psid)
+}
+
+func validationHostIdentityConflict(current, expected inventory.Device, adapter inventory.Adapter) bool {
+	if current.ID != "" && current.ID != expected.ID || current.SystemUUID != "" && !strings.EqualFold(current.SystemUUID, expected.SystemUUID) {
+		return true
+	}
+	for _, observed := range current.Adapters {
+		if observed.IdentityState != "known" || observed.SerialNumber == "" || observed.Key == "" {
+			continue
+		}
+		if observed.Key == adapter.Key && observed.SerialNumber != adapter.SerialNumber || observed.SerialNumber == adapter.SerialNumber && observed.Key != adapter.Key {
+			return true
+		}
+	}
+	return false
 }
 
 func recordPhysicalCheck(r *validationRecorder, id validation.CheckID, check inventory.Check) {
