@@ -36,6 +36,14 @@ func prepareOperatorDesired(archiveInput []byte, inputs bootstrap.OperatorRender
 	if err != nil {
 		return nil, fmt.Errorf("validate retained DPF operator chart and inputs: %w", err)
 	}
+	return compileOperatorDesired(archive, inputs, rendered.Manifest, rendered.HelmValues)
+}
+
+// compileOperatorDesired prepares comparison and installation inputs from a
+// projection already validated by RenderOperator or a digest-bound LoadPlan.
+// It owns all retained bytes; executable callbacks remain operation-specific.
+func compileOperatorDesired(archiveInput []byte, inputs bootstrap.OperatorRenderInputs, manifestInput, valuesInput []byte) (*operatorDesired, error) {
+	archive := bytes.Clone(archiveInput)
 	operatorChart, err := loader.LoadArchive(bytes.NewReader(archive))
 	if err != nil {
 		return nil, fmt.Errorf("load retained DPF operator chart: %w", err)
@@ -53,7 +61,7 @@ func prepareOperatorDesired(archiveInput []byte, inputs bootstrap.OperatorRender
 	if err != nil {
 		return nil, fmt.Errorf("fingerprint retained DPF operator chart: %w", err)
 	}
-	values, err := sharedbundle.ParseValues(rendered.HelmValues)
+	values, err := sharedbundle.ParseValues(valuesInput)
 	if err != nil {
 		return nil, fmt.Errorf("decode rendered DPF Helm values: %w", err)
 	}
@@ -61,7 +69,7 @@ func prepareOperatorDesired(archiveInput []byte, inputs bootstrap.OperatorRender
 	if err != nil {
 		return nil, fmt.Errorf("canonicalize rendered DPF Helm values: %w", err)
 	}
-	manifest, err := canonicalManifest(rendered.Manifest)
+	manifest, err := canonicalManifest(manifestInput)
 	if err != nil {
 		return nil, fmt.Errorf("canonicalize rendered DPF operator manifest: %w", err)
 	}
@@ -73,8 +81,8 @@ func prepareOperatorDesired(archiveInput []byte, inputs bootstrap.OperatorRender
 		chart:              operatorChart,
 		chartFingerprint:   fingerprint,
 		expectedValuesJSON: valuesJSON,
-		valuesYAML:         bytes.Clone(rendered.HelmValues),
+		valuesYAML:         bytes.Clone(valuesInput),
 		expectedManifest:   manifest,
-		renderedManifest:   bytes.Clone(rendered.Manifest),
+		renderedManifest:   bytes.Clone(manifestInput),
 	}, nil
 }

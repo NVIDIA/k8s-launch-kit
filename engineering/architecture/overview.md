@@ -332,6 +332,10 @@ management/tenant readers, plus explicit bounded command, traffic and image I/O.
 Its inputs and lease closure retain no operation store, first-create callback,
 installer, selector/activation patcher, resetter or host configurer. The retained
 plan, bundle and compiled schemas remain immutable data owners.
+`LoadPlan` regenerates and exactly compares the retained bundle before management
+access. Management desired preparation then reuses that
+validated stage's raw operator projection and explicit Helm values for chart
+comparison and readiness; standalone operator requests still render their inputs.
 Management preparation selects one concrete immutable controller rules value from
 the validated retained release, profile and renderer, with the existing compiled
 `generation.ObjectSchemas`, before opening management access. Catalog discovery

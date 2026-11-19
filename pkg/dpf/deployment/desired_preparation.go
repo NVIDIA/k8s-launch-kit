@@ -5,6 +5,7 @@ package deployment
 
 import (
 	"fmt"
+	"slices"
 
 	"github.com/nvidia/k8s-launch-kit/pkg/dpf/bundle"
 	"github.com/nvidia/k8s-launch-kit/pkg/dpf/deployment/internal/controllercontract"
@@ -47,7 +48,11 @@ func prepareManagementDesiredFromPlan(retained *bundle.Bundle, plan *generation.
 		return nil, fmt.Errorf("validated plan does not identify the retained bundle")
 	}
 	inputs, archive := plan.Operator()
-	operator, err := prepareOperatorDesired(archive, inputs)
+	manifest, values, err := operatorArtifactsFromValidatedPlan(retained, plan)
+	if err != nil {
+		return nil, fmt.Errorf("prepare retained operator projection: %w", err)
+	}
+	operator, err := compileOperatorDesired(archive, inputs, manifest, values)
 	if err != nil {
 		return nil, fmt.Errorf("prepare retained operator projection: %w", err)
 	}
@@ -79,4 +84,39 @@ func prepareManagementDesiredFromPlan(retained *bundle.Bundle, plan *generation.
 	return &managementDesired{retained: retained, plan: plan, operator: operator,
 		operatorVersion: "v" + inputs.ReleaseVersion, rules: rules, verifier: verifier,
 		namespaces: namespaces, operatorNamespace: namespace, configObject: configObject, manager: manager, crds: crds}, nil
+}
+
+// operatorArtifactsFromValidatedPlan reads raw artifacts only after the caller
+// binds this immutable bundle to a plan that passed full regeneration. Stage
+// projections are not apply documents and must not be serialized from objects.
+func operatorArtifactsFromValidatedPlan(retained *bundle.Bundle, plan *generation.Plan) ([]byte, []byte, error) {
+	valuesPath := plan.Intent().OperatorValues.Path
+	var projectionPath string
+	for _, view := range plan.Stages() {
+		stage := view.Stage()
+		if stage.ID != generation.StageOperator {
+			continue
+		}
+		if len(stage.ProjectionFiles) != 1 || !slices.Contains(stage.Files, valuesPath) {
+			return nil, nil, fmt.Errorf("validated operator stage must identify one projection and its retained values")
+		}
+		projectionPath = stage.ProjectionFiles[0]
+		break
+	}
+	if projectionPath == "" || valuesPath == "" {
+		return nil, nil, fmt.Errorf("validated operator projection or values path is unavailable")
+	}
+	var manifest, values []byte
+	for _, file := range retained.Files() {
+		switch file.Path {
+		case projectionPath:
+			manifest = file.Data
+		case valuesPath:
+			values = file.Data
+		}
+	}
+	if len(manifest) == 0 || len(values) == 0 {
+		return nil, nil, fmt.Errorf("validated operator projection %q or values %q is unavailable", projectionPath, valuesPath)
+	}
+	return manifest, values, nil
 }
