@@ -36,6 +36,14 @@ The upstream nic-configuration-operator Helm chart uses cluster-scoped names
 `k8s-launch-kit-nic-config-daemon` for all three so it can coexist with a Network
 Operator install without collision.
 
+### ConfigMap cache permissions
+
+The daemon registers a label-filtered, cluster-wide ConfigMap informer for its
+Spectrum-X controller even on nodes without NICs. The bootstrap ClusterRole
+therefore grants `get/list/watch` on ConfigMaps, with no write verbs. Kubernetes
+RBAC cannot restrict these reads to the cache's label filter. The empty firmware
+ConfigMap alone does not satisfy informer synchronization without these verbs.
+
 ### Why CRDs persist
 
 Cleanup deletes the namespace and the cluster RBAC but **not** the CRDs. If the
@@ -92,6 +100,21 @@ A failed or unrecognized trust query is not evidence of restriction and is not c
 If the scan fails after verifying a usable NIC, the node remains eligible and a
 warning marks exclusion reporting as incomplete. Read-only publisher eligibility
 probes retain their early-exit behavior and do not collect this full inventory.
+
+Probe failures before a usable NIC is verified identify the excluded node/pod
+and warn that eligibility is unverified and inventory may be incomplete. During
+bootstrap's `NicDevice` wait, pod status is refreshed for missing publishers;
+container failure reasons are reported once per unchanged state while recovery
+remains possible. Read-only waiters do not acquire this bootstrap observer.
+Keep the namespace and inspect current and `--previous` logs for the command
+error; pod status alone cannot establish host restriction.
+
+Bootstrap deliberately leaves `SKIP_DEVICE_ON_DISCOVERY_ERROR` unset. The
+daemon can omit firmware/PSID failures on ConnectX as well as BlueField mode
+errors, and its in-process skipped-device list is not published in CR status.
+It may preserve an omitted device's existing CR in another namespace. Enabling
+the option without completeness/freshness evidence could let the node-level
+wait succeed on incomplete or stale topology.
 
 ### Leftover pre-clean
 

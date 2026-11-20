@@ -27,8 +27,12 @@ Before waiting for `NicDevice` resources, Launch Kit checks BlueField trust
 mode with `mlxprivhost`. A restricted BlueField is excluded from the wait set.
 If the same node has another non-restricted NVIDIA NIC, that node remains in
 the wait set and its published devices are discovered normally. A failed or
-unrecognized trust query is treated as non-restricted, matching NIC
-Configuration Operator behavior.
+unrecognized trust query leaves the device's restriction status unknown and
+keeps it eligible, matching NIC Configuration Operator behavior. A later
+device-query error can still abort daemon startup; readable peers are not
+guaranteed to publish. Launch Kit does not enable
+`SKIP_DEVICE_ON_DISCOVERY_ERROR`: that daemon option can omit any failed NIC,
+and its skipped-device list is not exposed through `NicDevice` status.
 
 ## Run discovery
 
@@ -73,6 +77,20 @@ If a worker is missing, check its readiness, image pull, discovery pod,
 8. Deletes the temporary namespace and cluster-scoped bootstrap RBAC. The CRDs remain installed.
 
 The bootstrap namespace is fixed. `--network-operator-namespace` is accepted for compatibility but ignored by discovery.
+
+The temporary daemon needs cluster-wide ConfigMap `get`, `list`, and `watch`
+permissions for its informer cache, including on nodes without NICs. Its cache
+filters ConfigMaps by label; Kubernetes RBAC grants these read permissions
+across namespaces. Bootstrap grants no ConfigMap write permissions.
+
+Pod readiness is a startup snapshot, not proof of device publication. During
+the `NicDevice` wait, discovery reports failing bootstrap containers on missing
+publishers and keeps waiting for recovery. Repeated unchanged failures are
+reported once. Progress counts only expected publishers; timeout errors name
+the last missing nodes. Eligibility probe failures identify the unverified
+node/pod; they can reduce the wait set and leave inventory incomplete. Retain the
+namespace with `--keep-namespace` and inspect current and previous daemon logs
+as described in [Troubleshooting](troubleshooting.md#discovery-failures).
 
 Discovery reports each confirmed host-restricted BlueField PCI function with its
 node and PCI address in normal CLI output, before deleting the bootstrap namespace.

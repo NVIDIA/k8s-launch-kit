@@ -85,6 +85,10 @@ rules:
   - configmaps
   verbs:
   - get
+  # The daemon watches Spectrum-X profile ConfigMaps through a cluster-wide,
+  # label-filtered cache in addition to reading its firmware map directly.
+  - list
+  - watch
 - apiGroups:
   - ""
   resources:

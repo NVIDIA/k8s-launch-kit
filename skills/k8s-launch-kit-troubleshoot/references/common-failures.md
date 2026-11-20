@@ -206,3 +206,16 @@ therefore excluded from `NicDevice` discovery.
 5. NFD and `feature.node.kubernetes.io/pci-15b3.present` are not prerequisites
    for discovery. `--node-selector` is saved for deployment-time selection and
    does not constrain the discovery daemon or its `NicDevice` wait set.
+
+If pods initially appear Ready but then crash while discovery awaits
+`NicDevice` publication, inspect the pending-publisher container warnings and
+both current and `kubectl logs --previous` output. Eligibility-probe failures
+can exclude unverified GPU nodes and explain a smaller wait set. Neither an
+exec failure nor a failed `mlxprivhost` query proves absence or restriction.
+Collect the trust query's stdout/stderr, exit status, MFT version and device
+firmware version before diagnosing an access restriction.
+
+Bootstrap leaves `SKIP_DEVICE_ON_DISCOVERY_ERROR` unset because it can omit
+ConnectX NICs too and provides no CR completeness signal. For ConfigMap
+`list/watch` denials, use a Launch Kit version granting the read permissions
+required by the daemon's cluster-wide cache, including on NIC-less nodes.
