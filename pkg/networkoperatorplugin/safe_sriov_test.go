@@ -147,6 +147,21 @@ func TestCleanSriovStatePending(t *testing.T) {
 	}
 }
 
+func TestCleanSriovRejectsMalformedBridges(t *testing.T) {
+	for _, section := range []string{"spec", "status"} {
+		t.Run(section, func(t *testing.T) {
+			state := sriovCleanState()
+			state.Object[section].(map[string]interface{})["bridges"] = map[string]interface{}{
+				"ovs": []interface{}{map[string]interface{}{"name": "br0"}, map[string]interface{}{}},
+			}
+			ctx, cancel := context.WithTimeout(t.Context(), time.Second)
+			defer cancel()
+			_, err := cleanSriovPolicies(ctx, sriovCleanClient(state), sriovCleanRefs(state), state.GetNamespace(), time.Millisecond, ui.NewSilent())
+			require.ErrorContains(t, err, section+" bridge has no name")
+		})
+	}
+}
+
 func TestCleanSriovPoliciesBatchAndWait(t *testing.T) {
 	policy1 := sriovCleanObject("SriovNetworkNodePolicy", "p1")
 	policy2 := sriovCleanObject("SriovNetworkNodePolicy", "p2")
@@ -241,6 +256,26 @@ func TestCleanSriovPoliciesRetryAndInspectionFailure(t *testing.T) {
 		assert.Zero(t, count)
 		require.ErrorContains(t, err, "still has 8 VFs")
 		assert.ErrorIs(t, err, context.DeadlineExceeded)
+	})
+	t.Run("retry waits for a reported bridge after policy and spec are gone", func(t *testing.T) {
+		state := sriovCleanState()
+		state.SetGeneration(2)
+		status := state.Object["status"].(map[string]interface{})
+		status["bridges"] = map[string]interface{}{"ovs": []interface{}{map[string]interface{}{"name": "br0"}}}
+		c := sriovCleanClient(state)
+		ctx := t.Context()
+		reset, err := prepareSriovReset(ctx, c, sriovCleanRefs(state), state.GetNamespace(), fakeSriovLogReader)
+		require.NoError(t, err)
+		node := reset.nodes[state.GetName()]
+		reason, err := node.pending(ctx, c, state, fakeSriovLogReader)
+		require.NoError(t, err)
+		require.Equal(t, "managed bridge br0 is still observed", reason)
+
+		delete(status, "bridges")
+		require.NoError(t, c.Update(ctx, state))
+		reason, err = node.pending(ctx, c, state, fakeSriovLogReader)
+		require.NoError(t, err)
+		require.Empty(t, reason)
 	})
 	t.Run("inspection fails before deleting policy", func(t *testing.T) {
 		policy := sriovCleanObject("SriovNetworkNodePolicy", "p")
@@ -470,7 +505,6 @@ func TestCleanSriovRechecksAllStateAfterLogRead(t *testing.T) {
 			reset, err := prepareSriovReset(context.Background(), c, sriovCleanRefs(state), state.GetNamespace(), reader)
 			require.NoError(t, err)
 			node := reset.nodes[state.GetName()]
-			node.bridges["br0"] = struct{}{}
 			reason, err := node.pending(context.Background(), c, state, reader)
 			if tt.failure != "" {
 				require.ErrorContains(t, err, tt.failure)

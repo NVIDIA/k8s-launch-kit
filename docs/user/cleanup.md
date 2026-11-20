@@ -97,7 +97,8 @@ the controllers can still reconcile their resources.
    rollback of firmware settings.
 4. Remove SR-IOV node policies and pool configs. Every observed node state must
    report an empty desired spec, `Succeeded`, and no remaining VFs on managed
-   PFs. Previously managed OVS bridges must disappear from the reported state.
+   PFs. Cleanup also waits until `status.bridges.ovs` reports no managed bridges,
+   including on a retry after the policies have disappeared.
    Empty maps and lists are normal API representations. The operator exposes
    no observed generation on this status. For a configured node, cleanup checks
    the configuration daemon's logs for the successful reconciliation of the

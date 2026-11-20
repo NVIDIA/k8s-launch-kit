@@ -54,7 +54,6 @@ type cleanSriovReset struct {
 type cleanSriovNode struct {
 	uid                 types.UID
 	managedPFs          map[string]struct{}
-	bridges             map[string]struct{}
 	requiresProof       bool
 	provedGeneration    int64
 	attemptedGeneration int64
@@ -102,7 +101,7 @@ func (reset *cleanSriovReset) refresh(ctx context.Context, c client.Client, refs
 		delete(expected, name)
 		node := reset.nodes[name]
 		if node == nil {
-			node = &cleanSriovNode{uid: state.GetUID(), managedPFs: make(map[string]struct{}), bridges: make(map[string]struct{})}
+			node = &cleanSriovNode{uid: state.GetUID(), managedPFs: make(map[string]struct{})}
 			reset.nodes[name] = node
 		} else if node.uid != state.GetUID() {
 			return fmt.Errorf("SriovNetworkNodeState %s/%s changed identity during cleanup", reset.namespace, name)
@@ -128,11 +127,10 @@ func (node *cleanSriovNode) capture(state *unstructured.Unstructured) error {
 		return err
 	}
 	maps.Copy(node.managedPFs, addresses)
-	bridges, err := cleanSriovBridgeNames(state, "spec")
-	if err != nil {
+	// Reject malformed desired bridge entries before deleting a policy.
+	if _, err := firstCleanSriovBridge(state, "spec"); err != nil {
 		return err
 	}
-	maps.Copy(node.bridges, bridges)
 	spec, _, err := unstructured.NestedMap(state.Object, "spec")
 	if err != nil {
 		return err
@@ -218,14 +216,13 @@ func (node *cleanSriovNode) observe(state *unstructured.Unstructured) (string, e
 			return "managed PF " + address + " missing from observed interfaces", nil
 		}
 	}
-	bridges, err := cleanSriovBridgeNames(state, "status")
+	// The daemon reports the bridges it manages, even after a policy is gone.
+	bridge, err := firstCleanSriovBridge(state, "status")
 	if err != nil {
 		return "", err
 	}
-	for _, bridge := range slices.Sorted(maps.Keys(node.bridges)) {
-		if _, ok := bridges[bridge]; ok {
-			return "managed bridge " + bridge + " is still observed", nil
-		}
+	if bridge != "" {
+		return "managed bridge " + bridge + " is still observed", nil
 	}
 	return "", nil
 }
@@ -394,27 +391,30 @@ func cleanSriovEmpty(value interface{}) bool {
 	}
 }
 
-func cleanSriovBridgeNames(state *unstructured.Unstructured, section string) (map[string]struct{}, error) {
+// Validate all entries and return a stable bridge name for progress messages.
+func firstCleanSriovBridge(state *unstructured.Unstructured, section string) (string, error) {
 	bridges, _, err := unstructured.NestedSlice(state.Object, section, "bridges", "ovs")
 	if err != nil {
-		return nil, err
+		return "", err
 	}
-	names := make(map[string]struct{}, len(bridges))
+	var first string
 	for _, value := range bridges {
 		bridge, ok := value.(map[string]interface{})
 		if !ok {
-			return nil, fmt.Errorf("malformed %s bridge", section)
+			return "", fmt.Errorf("malformed %s bridge", section)
 		}
 		name, _, err := unstructured.NestedString(bridge, "name")
 		if err != nil {
-			return nil, err
+			return "", err
 		}
 		if name == "" {
-			return nil, fmt.Errorf("%s bridge has no name", section)
+			return "", fmt.Errorf("%s bridge has no name", section)
 		}
-		names[name] = struct{}{}
+		if first == "" || name < first {
+			first = name
+		}
 	}
-	return names, nil
+	return first, nil
 }
 
 // sriovDaemonLogReader reads a bounded, timestamped current-container log. The
