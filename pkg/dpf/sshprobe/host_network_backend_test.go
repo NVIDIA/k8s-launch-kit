@@ -774,6 +774,12 @@ func (r *containerHostNetworkRemote) RunWithInput(ctx context.Context, stage, co
 	return r.Run(ctx, stage, command)
 }
 
+func (r *containerHostNetworkRemote) RunWithInputTimeout(ctx context.Context, stage, command string, input []byte, timeout time.Duration) (string, error) {
+	ctx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
+	return r.RunWithInput(ctx, stage, command, input)
+}
+
 func containerCommand(t *testing.T, container, action string) string {
 	t.Helper()
 	cmd := exec.Command("docker", action, container)

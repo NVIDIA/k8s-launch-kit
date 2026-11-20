@@ -10,7 +10,6 @@ import (
 	"net/http"
 	"strings"
 	"testing"
-	"time"
 
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/client-go/kubernetes/fake"
@@ -88,7 +87,7 @@ func TestManagementIdentityMarksOnlyObservedDifferences(t *testing.T) {
 }
 
 type identityRuntimeClient struct {
-	hbnRuntimeStageClient
+	activationBoundaryReader
 	identity func(context.Context) error
 }
 
@@ -110,8 +109,9 @@ func TestHBNRuntimeManagementIdentityFailureKeepsReasonAndCause(t *testing.T) {
 				journal := testJournal(execution)
 				file := journal.file.(*managementMemoryFile)
 				injected := false
-				client := identityRuntimeClient{hbnRuntimeStageClient: f.client, identity: func(ctx context.Context) error {
-					if phase == "entry" || runtimeDiagnosticExitReady(t, file) {
+				closing := phase == "entry"
+				client := identityRuntimeClient{activationBoundaryReader: f.client, identity: func(ctx context.Context) error {
+					if closing {
 						injected = true
 						switch scenario {
 						case "cancel":
@@ -128,25 +128,29 @@ func TestHBNRuntimeManagementIdentityFailureKeepsReasonAndCause(t *testing.T) {
 					return f.client.VerifyIdentity(ctx)
 				}}
 				patches, claims := len(f.activationIntegrationFixture.client.patches), f.activationIntegrationFixture.client.guardCalls
-				result, err := runHBNRuntimeStage(ctx, client, newControlPlaneVerificationInputs(f.prepared, f.controlPlane, f.workload), f.controlPlane.tenant.Client, f.activation, f.hosts, journal, time.Second, f.transports)
-				want, wantRuntime := "MANAGEMENT_IDENTITY_CHANGED", "HBN_RUNTIME_PHYSICAL_ENTRY_FAILED"
+				fences := fixtureAcceptanceFences(t, f, client, journal)
 				if phase == "exit" {
-					wantRuntime = "HBN_RUNTIME_PHYSICAL_EXIT_FAILED"
+					if err := fences.physical(ctx); err != nil {
+						t.Fatal(err)
+					}
+					closing = true
 				}
+				err = fences.physical(ctx)
+				want := "MANAGEMENT_IDENTITY_CHANGED"
 				switch scenario {
 				case "cancel", "deadline":
-					want, wantRuntime = "ACTIVATION_CANCELED", "HBN_RUNTIME_CANCELED"
+					want = "ACTIVATION_CANCELED"
 				case "unavailable":
 					want = "MANAGEMENT_IDENTITY_UNVERIFIED"
 				}
-				if !injected || err == nil || result.TrafficValidated || result.ReasonCode != wantRuntime || !strings.Contains(file.String(), `"reasonCode":"`+want+`"`) {
-					t.Fatalf("injected=%v result=%+v err=%v journal=%s", injected, result, err, file.String())
+				if !injected || err == nil || !strings.Contains(file.String(), `"reasonCode":"`+want+`"`) {
+					t.Fatalf("injected=%v err=%v journal=%s", injected, err, file.String())
 				}
 				if scenario == "cancel" && !errors.Is(err, context.Canceled) || scenario == "deadline" && !errors.Is(err, context.DeadlineExceeded) {
 					t.Fatal("runtime lost management cancellation")
 				}
-				if phase == "entry" && (f.commandReads != 0 || f.trafficReads != 0) || phase == "exit" && len(result.Traffic) != 2 {
-					t.Fatal("wrong runtime boundary exercised")
+				if f.commandReads != 0 || f.trafficReads != 0 {
+					t.Fatal("receipt boundary measured runtime")
 				}
 				if fixture.writes.Load() != 0 || len(f.activationIntegrationFixture.client.patches) != patches || f.activationIntegrationFixture.client.guardCalls != claims {
 					t.Fatal("failed observation introduced an effect")
@@ -157,7 +161,7 @@ func TestHBNRuntimeManagementIdentityFailureKeepsReasonAndCause(t *testing.T) {
 }
 
 type canceledEnrollmentFenceClient struct {
-	hbnRuntimeStageClient
+	activationBoundaryReader
 	cancel context.CancelFunc
 	hit    *bool
 }
@@ -168,7 +172,7 @@ func (c canceledEnrollmentFenceClient) Get(ctx context.Context, wanted *unstruct
 		c.cancel()
 		return nil, ctx.Err()
 	}
-	return c.hbnRuntimeStageClient.Get(ctx, wanted)
+	return c.activationBoundaryReader.Get(ctx, wanted)
 }
 
 func TestHBNRuntimeLateControlCancellationDoesNotAssertCredentialDrift(t *testing.T) {
@@ -176,12 +180,13 @@ func TestHBNRuntimeLateControlCancellationDoesNotAssertCredentialDrift(t *testin
 	ctx, cancel := context.WithCancel(f.ctx)
 	defer cancel()
 	hit := false
-	client := canceledEnrollmentFenceClient{hbnRuntimeStageClient: f.client, cancel: cancel, hit: &hit}
+	client := canceledEnrollmentFenceClient{activationBoundaryReader: f.client, cancel: cancel, hit: &hit}
 	journal := testJournal(f.prepared.execution)
-	result, err := runHBNRuntimeStage(ctx, client, newControlPlaneVerificationInputs(f.prepared, f.controlPlane, f.workload), f.controlPlane.tenant.Client, f.activation, f.hosts, journal, time.Second, f.transports)
+	fences := fixtureAcceptanceFences(t, f, client, journal)
+	err := fences.physical(ctx)
 	text := journal.file.(*managementMemoryFile).String()
-	if !hit || !errors.Is(err, context.Canceled) || result.ReasonCode != "HBN_RUNTIME_CANCELED" || result.TrafficValidated ||
+	if !hit || !errors.Is(err, context.Canceled) ||
 		!strings.Contains(text, "ACTIVATION_CANCELED") || strings.Contains(text, "ACTIVATION_ENROLLMENT_SECRET_CHANGED") || f.commandReads != 0 || f.trafficReads != 0 {
-		t.Fatalf("hit=%v result=%+v err=%v journal=%s", hit, result, err, text)
+		t.Fatalf("hit=%v err=%v journal=%s", hit, err, text)
 	}
 }

@@ -83,6 +83,9 @@ func (*validationReadFake) observeRegistrySnapshot(context.Context, string) (reg
 func (*validationReadFake) observeValidationTenantStorage(context.Context, string) managementprobe.TenantStorageResult {
 	return managementprobe.TenantStorageResult{State: "unknown", ReasonCode: "TENANT_STORAGE_CLIENT_UNAVAILABLE"}
 }
+func (*validationReadFake) observeKamajiCompatibility(_ context.Context, namespace, release string) managementprobe.KamajiCompatibilityResult {
+	return managementprobe.KamajiCompatibilityResult{State: "unknown", ReasonCode: "KAMAJI_COMPATIBILITY_CLIENT_UNAVAILABLE", Message: "Fixture has no external producer observation.", Namespace: namespace, Release: release}
+}
 func (f *validationReadFake) inspectValidationOperator(context.Context, *operatorDesired) error {
 	return f.operatorErr
 }

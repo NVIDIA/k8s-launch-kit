@@ -14,7 +14,7 @@ import (
 
 // ObserveProvisioning uses the same explicit, snapshotted access as the cluster
 // identity observation. It never loads ambient kubeconfig or changes resources.
-func ObserveProvisioning(ctx context.Context, m managementaccess.Client, namespace string) managementprobe.Snapshot {
+func ObserveProvisioning(ctx context.Context, m managementaccess.Client, namespace, releaseVersion string) managementprobe.Snapshot {
 	unavailable := func() managementprobe.Snapshot {
 		return managementprobe.Snapshot{Namespace: namespace, Issues: []managementprobe.Issue{{Source: "management", Code: "CLIENT_UNAVAILABLE", Message: "Cannot construct DPF inspection clients from the selected management access."}}}
 	}
@@ -30,5 +30,8 @@ func ObserveProvisioning(ctx context.Context, m managementaccess.Client, namespa
 		return unavailable()
 	}
 	collector := managementprobe.Collector{Kubernetes: m.Client, Dynamic: dynamicClient, Extensions: extensionsClient}
-	return collector.Collect(ctx, namespace)
+	snapshot := collector.Collect(ctx, namespace)
+	compatibility := collector.CollectKamajiCompatibility(ctx, namespace, releaseVersion)
+	snapshot.KamajiCompatibility = &compatibility
+	return snapshot
 }

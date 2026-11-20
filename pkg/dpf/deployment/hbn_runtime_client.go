@@ -6,39 +6,17 @@ package deployment
 import (
 	"context"
 	"fmt"
-	"time"
 
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
-	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/util/validation"
 )
 
 const hbnRuntimePageSize = 64
 const hbnRuntimeMaxPages = 16
-
-type hbnRuntimeStageClient interface {
-	activationBoundaryReader
-	checkHBNRuntimeAccess(context.Context, string, string, string) []PreflightCheck
-	listHBNRuntimeObjects(context.Context, string, string, string) ([]unstructured.Unstructured, error)
-	getHBNRuntimeApplication(context.Context, string, string) (*unstructured.Unstructured, error)
-}
-
-// The service/interface list is namespaced; the App permission names one exact
-// generated Application. This adds no write permission other than SSAR create.
-func (c *APIClient) checkHBNRuntimeAccess(ctx context.Context, namespace, argoNamespace, application string) []PreflightCheck {
-	requirements := map[accessRequirement]struct{}{}
-	for _, resource := range []string{"dpuservices", "dpuserviceinterfaces"} {
-		requirements[accessRequirement{verb: "list", group: "svc.dpu.nvidia.com", version: "v1alpha1", resource: resource, namespace: namespace}] = struct{}{}
-	}
-	if application != "" {
-		requirements[accessRequirement{verb: "get", group: "argoproj.io", version: "v1alpha1", resource: "applications", namespace: argoNamespace, resourceName: application}] = struct{}{}
-	}
-	return c.checkAccessRequirements(ctx, requirements)
-}
 
 func (c *APIClient) listHBNRuntimeObjects(ctx context.Context, kind, namespace, selector string) ([]unstructured.Unstructured, error) {
 	if ctx == nil || namespace == "" || len(validation.IsDNS1123Label(namespace)) != 0 || kind != "DPUService" && kind != "DPUServiceInterface" {
@@ -88,121 +66,6 @@ func (c *APIClient) listHBNRuntimeObjects(ctx context.Context, kind, namespace, 
 type hbnRuntimeBindingSnapshot struct {
 	anchors       map[string]hbnPodBindingAnchor
 	sourceDigests map[string]string
-}
-
-// observeHBNRuntimeBindings verifies source/tenant identity and complete lists.
-// The caller brackets this with the shared activation/allocation observer and
-// compares semantic anchors for the entire selected cohort around every read.
-func observeHBNRuntimeBindings(ctx context.Context, client hbnRuntimeStageClient, execution *managementVerificationInputs, tenant hbnRuntimeTenantReader,
-	activation activationStageReceipt, fence hostNetworkLeaseFence, image hbnPodImageIdentity, timeout time.Duration,
-) (hbnRuntimeBindingSnapshot, error) {
-	var empty hbnRuntimeBindingSnapshot
-	observeCtx, cancel := context.WithTimeout(ctx, timeout)
-	defer cancel()
-	if tenant == nil {
-		return empty, fmt.Errorf("HBN_RUNTIME_TENANT_UNAVAILABLE")
-	}
-	if err := client.VerifyIdentity(observeCtx); err != nil {
-		return empty, err
-	}
-	if err := tenant.VerifyIdentity(observeCtx); err != nil {
-		return empty, err
-	}
-	namespace := execution.plan.Intent().Namespace
-	if !runtimePermissionsPassed(tenant.checkTenantRuntimeReadPermissions(observeCtx, namespace)) || !runtimePermissionsPassed(client.checkHBNRuntimeAccess(observeCtx, namespace, execution.operatorNamespace, "")) {
-		return empty, fmt.Errorf("HBN_RUNTIME_PERMISSION_DENIED")
-	}
-	selector := labels.Set{activationParentLabel: namespace + "_" + fence.activation.deployment.GetName(), hbnServiceReferenceLabel: hbnContainerName}.AsSelector().String()
-	services, err := client.listHBNRuntimeObjects(observeCtx, "DPUService", namespace, selector)
-	if err != nil {
-		return empty, err
-	}
-	interfaces, err := client.listHBNRuntimeObjects(observeCtx, "DPUServiceInterface", namespace, selector)
-	if err != nil {
-		return empty, err
-	}
-	var selected *unstructured.Unstructured
-	var expected hbnPodBindingIntent
-	for i := range services {
-		object := &services[i]
-		candidate, err := compileHBNRuntimeBinding(execution, activation, fence, object, interfaces, image)
-		if err != nil {
-			continue
-		}
-		if selected != nil {
-			return empty, fmt.Errorf("HBN_RUNTIME_SERVICE_AMBIGUOUS")
-		}
-		selected = object
-		expected = candidate
-	}
-	if selected == nil {
-		return empty, fmt.Errorf("HBN_RUNTIME_CURRENT_SERVICE_UNAVAILABLE")
-	}
-	appName := dpfApplicationName(expected.DPUClusterName, expected.DPUServiceName)
-	if !runtimePermissionsPassed(client.checkHBNRuntimeAccess(observeCtx, namespace, execution.operatorNamespace, appName)) {
-		return empty, fmt.Errorf("HBN_RUNTIME_PERMISSION_DENIED")
-	}
-	app, err := client.getHBNRuntimeApplication(observeCtx, execution.operatorNamespace, appName)
-	if err != nil {
-		return empty, err
-	}
-	daemonSets, pods, err := tenant.listRuntimeObjects(observeCtx, namespace, labels.Set{hbnServiceIDLabel: expected.ServiceID}.AsSelector().String())
-	if err != nil {
-		return empty, err
-	}
-	result := hbnRuntimeBindingSnapshot{anchors: map[string]hbnPodBindingAnchor{}, sourceDigests: map[string]string{}}
-	interfaceNames, found, err := unstructured.NestedStringSlice(selected.Object, "spec", "interfaces")
-	if err != nil || !found {
-		return empty, fmt.Errorf("HBN_RUNTIME_INTERFACES_MISMATCH")
-	}
-	for _, name := range interfaceNames {
-		object := uniqueObjectByName(interfaces, name)
-		if object == nil {
-			return empty, fmt.Errorf("HBN_RUNTIME_INTERFACES_MISMATCH")
-		}
-		result.sourceDigests[name] = hbnBindingDigest(struct {
-			UID                 string
-			Generation          int64
-			Spec                any
-			Owners              any
-			Version, ConsumedBy string
-		}{string(object.GetUID()), object.GetGeneration(), object.Object["spec"], object.GetOwnerReferences(), object.GetAnnotations()[hbnServiceVersionAnnotation], object.GetAnnotations()["dpu.nvidia.com/consumed-by"]})
-	}
-	observedAt := time.Now().UTC()
-	for _, lease := range fence.leases {
-		intent := expected
-		intent.TenantNodeName = lease.TenantNodeName
-		anchor, err := validateHBNPodBinding(intent, selected, app, daemonSets, pods, observedAt)
-		if err != nil {
-			return empty, err
-		}
-		if !runtimePermissionsPassed(tenant.checkTenantPodExecPermissions(observeCtx, namespace, anchor.PodName)) {
-			return empty, fmt.Errorf("HBN_RUNTIME_PERMISSION_DENIED")
-		}
-		// A named fresh read fences the actual exec target, not only a list cache.
-		pod, err := tenant.readPod(observeCtx, namespace, anchor.PodName)
-		if err != nil {
-			return empty, safeAPIError("read selected HBN Pod", err)
-		}
-		if pod == nil {
-			return empty, fmt.Errorf("HBN_RUNTIME_POD_CHANGED")
-		}
-		named, err := validateHBNPodBinding(intent, selected, app, daemonSets, []corev1.Pod{*pod}, time.Now().UTC())
-		if err != nil || !sameHBNPodBinding(anchor, named) {
-			return empty, fmt.Errorf("HBN_RUNTIME_POD_CHANGED")
-		}
-		result.anchors[lease.Serial] = anchor
-	}
-	if err := client.VerifyIdentity(observeCtx); err != nil {
-		return empty, err
-	}
-	if err := tenant.VerifyIdentity(observeCtx); err != nil {
-		return empty, err
-	}
-	if err := observeCtx.Err(); err != nil {
-		return empty, err
-	}
-	return result, nil
 }
 
 func runtimePermissionsPassed(checks []PreflightCheck) bool {

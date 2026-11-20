@@ -543,10 +543,10 @@ func TestValidationRuntimeEntryRejectsPersistenceLostAfterResourcePass(t *testin
 	}
 }
 
-func TestHBNRuntimeDeploymentRejectsOrdinaryLossWithMeasuredDF(t *testing.T) {
-	fixture := newRuntimeStageFixture(t, []string{"SERIAL-A", "SERIAL-B"})
+func TestValidationRuntimeRejectsOrdinaryLossWithMeasuredDF(t *testing.T) {
+	session, _ := standaloneValidationSession()
 	attempts := 0
-	fixture.transports.probeTraffic = func(_ context.Context, _ config.Target, request sshprobe.HostTrafficRequest, _ time.Duration) (sshprobe.HostTrafficResult, error) {
+	session.probe = func(_ context.Context, _ config.Target, request sshprobe.HostTrafficRequest, _ time.Duration) (sshprobe.HostTrafficResult, error) {
 		attempts++
 		result := runtimePassedTraffic(request)
 		result.State = sshprobe.TrafficProbeFailed
@@ -554,8 +554,8 @@ func TestHBNRuntimeDeploymentRejectsOrdinaryLossWithMeasuredDF(t *testing.T) {
 		result.Ordinary.Counters = &sshprobe.PingCounters{Sent: 3, Received: 1, LostPct: 66.6667}
 		return result, &sshprobe.HostNetworkError{ReasonCode: "HOST_NETWORK_TRAFFIC_PING_INCOMPLETE"}
 	}
-	result, err := fixture.run(testJournal(fixture.prepared.execution))
-	if err == nil || result.TrafficValidated || attempts != 1 || len(result.Traffic) != 1 || result.Traffic[0].Measurement.MTUProbe.State != sshprobe.TrafficProbePassed {
-		t.Fatalf("deployment accepted loss or lost DF evidence: attempts=%d result=%+v err=%v", attempts, result, err)
+	result, err := session.ProbeTraffic(context.Background(), validation.DirectedHostPair{Source: "SERIAL-A", Destination: "SERIAL-B"})
+	if err != nil || attempts != 1 || result.Ordinary.State != validation.Failed || result.DF.State != validation.Passed || result.Ordinary.Traffic == nil || result.Ordinary.Traffic.Received != 1 {
+		t.Fatalf("canonical loss/DF evidence: %+v %v", result, err)
 	}
 }

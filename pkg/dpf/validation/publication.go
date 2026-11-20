@@ -466,3 +466,32 @@ func (d *ReportDestination) removeStage(name string, opened fs.FileInfo) error {
 	}
 	return d.parent.root.Remove(name)
 }
+
+// PublishReport renders and closes a prepared destination. Close belongs to this
+// operation, including publication failure; callers close only abandoned destinations.
+func PublishReport(destination *ReportDestination, result Result, metadata ReportMetadata) (ReportDisposition, error) {
+	disposition, err := destination.Publish(func(w io.Writer) error { return RenderHTML(w, result, metadata) })
+	if closeErr := destination.Close(); closeErr != nil {
+		disposition = ReportDisposition{Status: ReportFailed}
+		err = errors.Join(err, closeErr)
+	}
+	return disposition, err
+}
+
+// ApplyReportPublication records output disposition without changing measured acceptance.
+func ApplyReportPublication(result *Result, disposition ReportDisposition, err error) {
+	if result == nil {
+		return
+	}
+	result.Report = disposition
+	if err == nil {
+		return
+	}
+	result.Cause = errors.Join(result.Cause, err)
+	result.Checks = append(result.Checks, CheckResult{
+		CheckSpec: CheckSpec{ID: "report/publication", Area: AreaPreparation, Subject: "HTML report publication"},
+		Outcome: Outcome{ID: "report/publication", State: Unverified, Reason: ReasonUnavailable,
+			Summary: "The HTML report could not be published; validation results remain available in the command output.",
+			Action:  "Choose a stable writable report location outside the deployment bundle and its input files."},
+	})
+}

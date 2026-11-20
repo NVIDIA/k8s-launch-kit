@@ -123,6 +123,19 @@ result identifies the known stage, explains the failure and gives a next action.
 Earlier measurements may remain visible as prior observations; they do not count
 as current acceptance when the required verification could not finish.
 
+Tenant kube-proxy results distinguish the trusted API source, its configuration,
+the DaemonSet and the Pod on each selected DPU. Configuration checks include the
+Pod CIDR and the reference used by the running workload. Healthy Pods do not prove
+that this configuration is correct. A configuration failure therefore remains a
+failure while independently verified healthy Pods can still pass. If API identity
+or access cannot be established, dependent checks explain which prerequisite is
+missing instead of treating an unobserved Pod as unhealthy.
+
+Deployment uses this same full validation workflow before reporting `validated`
+and saves an acceptance HTML report. A later standalone run observes the current
+setup afresh; it does not reuse deployment's earlier results or require its
+operation record. Changes or new failures after deployment can change the verdict.
+
 HTML is enabled by default. Each run reserves a private directory beside the
 bundle and writes `validation.html` there, for example
 `./hbn-bgp-validation-<unique>/validation.html`. Only a successfully published

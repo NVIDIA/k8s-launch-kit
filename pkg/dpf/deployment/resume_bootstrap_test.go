@@ -83,7 +83,7 @@ func TestRunResumeRestoresPendingBootstrapBeforeTenantOrEffects(t *testing.T) {
 				continue
 			}
 			current := o.DeepCopy()
-			if configReads >= 4 && (scenario == "manager access revoked" && o.GetKind() == "Deployment" || scenario == "namespace access revoked" && o.GetKind() == "Namespace") {
+			if configReads >= 4 && scenario == "manager access revoked" && o.GetKind() == "Deployment" || configReads >= 2 && scenario == "namespace access revoked" && o.GetKind() == "Namespace" {
 				deny()
 				return
 			}
@@ -118,7 +118,7 @@ func TestRunResumeRestoresPendingBootstrapBeforeTenantOrEffects(t *testing.T) {
 					}
 				}
 			}
-			if configReads >= 4 && (scenario == "manager UID drift" && o.GetKind() == "Deployment" || scenario == "namespace UID drift" && o.GetKind() == "Namespace") {
+			if configReads >= 4 && scenario == "manager UID drift" && o.GetKind() == "Deployment" || configReads >= 2 && scenario == "namespace UID drift" && o.GetKind() == "Namespace" {
 				current.SetUID("replacement-bootstrap")
 			}
 			_ = json.NewEncoder(w).Encode(current)
@@ -157,10 +157,10 @@ func TestRunResumeRestoresPendingBootstrapBeforeTenantOrEffects(t *testing.T) {
 		{"permission denied", "OPERATION_PERMISSION_DENIED", "", false, false},
 		{"operation read denied", "OPERATION_RESUME_RECORD_UNAVAILABLE", "API_ACCESS_DENIED", false, false},
 		{"BMC access missing", "OPERATION_RESUME_ENROLLMENT_UNVERIFIED", "", false, false},
-		{"config UID drift", "DPF_CONFIG_INTENT_CHANGED", "", true, false},
-		{"config spec drift", "DPF_CONFIG_INTENT_CHANGED", "", true, false},
-		{"config version drift", "DPF_CONFIG_VERSION_MISMATCH", "", true, false},
-		{"config access revoked", "DPF_CONFIG_READ_FAILED", "API_ACCESS_DENIED", true, false},
+		{"config UID drift", "BOOTSTRAP_CONFIG_CHANGED", "", true, false},
+		{"config spec drift", "BOOTSTRAP_CONFIG_CHANGED", "", true, false},
+		{"config version drift", "BOOTSTRAP_CONFIG_VERSION_CHANGED", "", true, false},
+		{"config access revoked", "BOOTSTRAP_CONFIG_READ_FAILED", "API_ACCESS_DENIED", true, false},
 		{"manager UID drift", "BOOTSTRAP_MANAGER_CHANGED", "", true, false},
 		{"namespace UID drift", "BOOTSTRAP_NAMESPACE_CHANGED", "", true, false},
 		{"cancel during wait", "DPF_CONFIG_READINESS_CANCELED", "", true, false},
@@ -240,6 +240,9 @@ func TestRunResumeRestoresPendingBootstrapBeforeTenantOrEffects(t *testing.T) {
 			}
 			if strings.Contains(string(raw), "DPF_CONFIG_READINESS_STARTED") != tc.waited || strings.Contains(string(raw), "TENANT_READINESS_STARTED") != tc.tenant {
 				t.Fatalf("wrong wait/tenant path: %s", raw)
+			}
+			if (tc.name == "namespace UID drift" || tc.name == "namespace access revoked") && configReads != 2 {
+				t.Fatalf("namespace drift was not rejected while configuration remained pending: configReads=%d", configReads)
 			}
 			if tc.tenant && !strings.Contains(string(raw), "DPF_CONFIG_READY") && tc.waited {
 				t.Fatal("pending bootstrap was bypassed instead of waited")

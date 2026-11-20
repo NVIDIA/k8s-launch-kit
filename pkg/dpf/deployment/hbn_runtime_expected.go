@@ -17,22 +17,6 @@ import (
 	"k8s.io/apimachinery/pkg/util/validation"
 )
 
-// compileHBNRuntimeBinding binds pure expected Service and App projections to
-// fresh selected-child, owner, cohort and image observations.
-// It implements the HBN subset of pinned DPF 26.8's generateDPUService,
-// generateDPUServiceInterface, addNetworkAnnotationToServiceDaemonSet and
-// argoCDValuesFromDPUService. Observed random names are accepted only after
-// owner, cohort selector and complete retained-spec checks; configuration is
-// never taken from the observed Service or App.
-func compileHBNRuntimeBinding(execution *managementVerificationInputs, activation activationStageReceipt, fence hostNetworkLeaseFence,
-	service *unstructured.Unstructured, interfaces []unstructured.Unstructured, image hbnPodImageIdentity,
-) (hbnPodBindingIntent, error) {
-	if execution == nil || execution.plan == nil || execution.reconciler == nil || !image.valid() {
-		return hbnPodBindingIntent{}, fmt.Errorf("HBN_RUNTIME_EXPECTATION_MISMATCH")
-	}
-	return compileCurrentHBNBinding(execution.plan, execution.rules, execution.operatorNamespace, activation.DeploymentUID, fence.activation.deployment, fence.leases, fence.snapshot.TenantNodes, service, interfaces, image)
-}
-
 // compileCurrentHBNBinding has only retained desired and fresh current inputs.
 func compileCurrentHBNBinding(plan *generation.Plan, rules *controllercontract.Rules, operatorNamespace string, deploymentUID types.UID, deployment *unstructured.Unstructured, leases []hostWorkloadLease, tenantNodes []unstructured.Unstructured, service *unstructured.Unstructured, interfaces []unstructured.Unstructured, image hbnPodImageIdentity) (hbnPodBindingIntent, error) {
 	bad := func() (hbnPodBindingIntent, error) {

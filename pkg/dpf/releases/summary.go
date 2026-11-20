@@ -13,19 +13,27 @@ import (
 	"unicode"
 )
 
+// KamajiCompatibilitySummary describes the external prerequisite separately
+// from the vendor-published components. It never authorizes execution.
+type KamajiCompatibilitySummary struct {
+	Image       string `json:"image" yaml:"image"`
+	SupportNote string `json:"supportNote" yaml:"supportNote"`
+}
+
 // Summary is the persisted software BOM. Catalog research provenance remains in
 // Release; omitted minima mean unknown requirements, never inferred constraints.
 type Summary struct {
-	Version                 string              `json:"version" yaml:"version"`
-	UseCases                []string            `json:"useCases,omitempty" yaml:"useCases,omitempty"`
-	HBNWorkload             *HBNWorkloadSummary `json:"hbnWorkload,omitempty" yaml:"hbnWorkload,omitempty"`
-	Capabilities            Capabilities        `json:"capabilities,omitempty" yaml:"capabilities,omitempty"`
-	SupportedKubernetes     *VersionRange       `json:"supportedKubernetes,omitempty" yaml:"supportedKubernetes,omitempty"`
-	TenantServiceCIDR       string              `json:"tenantServiceCIDR,omitempty" yaml:"tenantServiceCIDR,omitempty"`
-	TenantKubernetesVersion string              `json:"tenantKubernetesVersion,omitempty" yaml:"tenantKubernetesVersion,omitempty"`
-	Operator                OperatorSummary     `json:"operator" yaml:"operator"`
-	Components              []ComponentSummary  `json:"components" yaml:"components"`
-	Hardware                []HardwareSummary   `json:"hardware" yaml:"hardware"`
+	KamajiCompatibility     *KamajiCompatibilitySummary `json:"kamajiCompatibility,omitempty" yaml:"kamajiCompatibility,omitempty"`
+	Version                 string                      `json:"version" yaml:"version"`
+	UseCases                []string                    `json:"useCases,omitempty" yaml:"useCases,omitempty"`
+	HBNWorkload             *HBNWorkloadSummary         `json:"hbnWorkload,omitempty" yaml:"hbnWorkload,omitempty"`
+	Capabilities            Capabilities                `json:"capabilities,omitempty" yaml:"capabilities,omitempty"`
+	SupportedKubernetes     *VersionRange               `json:"supportedKubernetes,omitempty" yaml:"supportedKubernetes,omitempty"`
+	TenantServiceCIDR       string                      `json:"tenantServiceCIDR,omitempty" yaml:"tenantServiceCIDR,omitempty"`
+	TenantKubernetesVersion string                      `json:"tenantKubernetesVersion,omitempty" yaml:"tenantKubernetesVersion,omitempty"`
+	Operator                OperatorSummary             `json:"operator" yaml:"operator"`
+	Components              []ComponentSummary          `json:"components" yaml:"components"`
+	Hardware                []HardwareSummary           `json:"hardware" yaml:"hardware"`
 }
 
 // HBNWorkloadSummary is the compact, source-reference-free projection of the
@@ -124,6 +132,9 @@ func Summarize(r Release) Summary {
 		Components: make([]ComponentSummary, 0, len(r.Components)),
 		Hardware:   make([]HardwareSummary, 0, len(r.Hardware)),
 	}
+	if r.KamajiCompatibility != nil {
+		s.KamajiCompatibility = &KamajiCompatibilitySummary{Image: r.KamajiCompatibility.Image, SupportNote: r.KamajiCompatibility.SupportNote}
+	}
 	if r.HBNWorkload != nil {
 		w := r.HBNWorkload
 		s.HBNWorkload = &HBNWorkloadSummary{ChartRepository: w.ChartRepository, Chart: w.Chart, ChartVersion: w.ChartVersion,
@@ -168,6 +179,9 @@ var (
 // current catalog. Unknown minima stay unknown; BFB targets are never minima.
 // The caller must use strict YAML/JSON decoding to reject unknown fields.
 func (s Summary) Release() (Release, error) {
+	if s.KamajiCompatibility != nil && (!summaryToken(s.KamajiCompatibility.Image) || s.KamajiCompatibility.SupportNote == "") {
+		return Release{}, fmt.Errorf("invalid saved Kamaji prerequisite description")
+	}
 	if s.TenantServiceCIDR != "" && !validTenantServiceCIDR(s.TenantServiceCIDR) {
 		return Release{}, fmt.Errorf("invalid saved tenant serviceCIDR")
 	}
@@ -187,6 +201,11 @@ func (s Summary) Release() (Release, error) {
 		Operator: Operator{Chart: s.Operator.Chart, ChartRepository: s.Operator.ChartRepository,
 			Version: s.Operator.Version, ChartDigest: s.Operator.ChartDigest, Image: s.Operator.Image},
 		Components: make([]Component, 0, len(s.Components)), Hardware: make([]HardwareBOM, 0, len(s.Hardware))}
+	if s.KamajiCompatibility != nil {
+		// This restores display metadata only. Execution resolves the full rule
+		// from the embedded catalog, never these saved descriptions.
+		r.KamajiCompatibility = &KamajiCompatibility{Image: s.KamajiCompatibility.Image, SupportNote: s.KamajiCompatibility.SupportNote}
+	}
 	if s.HBNWorkload != nil {
 		w := HBNWorkload{ChartRepository: s.HBNWorkload.ChartRepository, Chart: s.HBNWorkload.Chart, ChartVersion: s.HBNWorkload.ChartVersion,
 			ChartDigest: s.HBNWorkload.ChartDigest, ImageRepository: s.HBNWorkload.ImageRepository, ImageTag: s.HBNWorkload.ImageTag,

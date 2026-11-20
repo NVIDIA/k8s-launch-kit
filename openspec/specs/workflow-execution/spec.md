@@ -125,6 +125,15 @@ New and changed workflow checks SHALL persist a stable reason code and safe expl
 - **AND** confirmed peer progress and any saved request-only checkpoint remain intact; a subsequent complete observation must satisfy every existing current request, identity, ownership, resource and physical safety check before effects.
 - **AND** nonnil observation errors, observed conflicts, cancellation and deadline expiry remain stops; postclaim submission and acknowledgment fences are not converted into waits.
 
+#### Scenario: Operator services reconcile during activation
+
+- **WHEN** the same retained operator configuration is temporarily Pending before a host reset is claimed
+- **THEN** activation waits within the existing deployment deadline, preserving the configuration identity, retained intent and release checks, and rechecks the complete bootstrap before preparing the reset.
+- **AND** a pending transition during preclaim preparation defers the whole attempt, discards its physical reset proof and requires fresh control, cohort and physical observations on the next attempt.
+- **AND** observed terminal or invalid status, changed identities, intent or versions, unverified reads, cancellation and deadline expiry remain stops; no pending result authorizes an effect.
+- **AND** postclaim submission and acknowledgment fences remain strict; no wait or retry can replay a claimed reboot or extend a physical proof's lifetime.
+- **AND** read-only activation entry and completion boundaries may wait for the same pending configuration, but must repeat their complete current boundary checks before dependent work; no earlier physical or resource observation substitutes for that recheck.
+
 #### Scenario: Resume the same initial DPF deployment
 
 - **WHEN** the caller supplies the reported operation reference with the original site and bundle
@@ -202,7 +211,7 @@ New and changed workflow checks SHALL persist a stable reason code and safe expl
 - **WHEN** the tenant API is verified but the same retained operator configuration is not Ready while the new tenant's management services start
 - **THEN** enrollment waits within the existing deployment deadline and retains the current readiness reason, without accepting replacement, ownership/specification drift, a different release version or terminal failure.
 - **AND** it rechecks the complete bootstrap and tenant identities before BMC, shared-credential or discovery effects.
-- **AND** later enrollment and activation fences remain immediate checks rather than implicit recovery loops.
+- **AND** later enrollment fences remain immediate checks; activation permits only the explicit preclaim pending-configuration handling described above, while postclaim fences remain strict.
 
 #### Scenario: DPF selected-device enrollment
 
@@ -249,6 +258,54 @@ reset, remediation, host configuration or operation-record creation.
 - **AND** collection, closing-verification and context errors are joined; an incomplete scope cannot publish an accepted cohort or authorize a diagnostic probe.
 - **AND** independent management-only observations remain available when tenant access fails; bounded capture does not claim atomic isolation or detection of every transient change.
 
+### Requirement: Full DPF deployment acceptance
+
+DPF deployment SHALL use the same immutable check plan, resource observer and
+runtime evaluation as standalone full validation, preserving deployment-owned
+receipt and physical identity checks. Runtime diagnostics SHALL use the canonical
+matrix and its retry policy. The command SHALL publish the complete validation
+result, including partial failure, as HTML.
+
+#### Scenario: Traffic passes but a required tenant networking check fails
+
+- **WHEN** the selected HBN traffic passes but a required resource, physical or
+  tenant networking check fails or remains unverified
+- **THEN** deployment SHALL NOT report `validated` or successful multi-host acceptance.
+- **AND** independently observable kube-proxy Pod health SHALL remain visible
+  alongside a failed or inaccessible configuration check.
+- **AND** source changes during collection SHALL invalidate provisional results.
+
+#### Scenario: Deployment acceptance publication fails
+
+- **WHEN** measured checks pass but HTML publication or final journal persistence fails
+- **THEN** the deployment command SHALL fail without claiming successful acceptance.
+- **AND** it SHALL retain completed deployment effects and the available diagnostics.
+
+#### Scenario: The selected cohort contains one physical host
+
+- **WHEN** all required full checks pass except the explicit cross-host coverage check
+- **THEN** deployment MAY report `provisioned`, with the missing coverage explicit.
+- **AND** any other required failure or missing measurement SHALL prevent this exception.
+
+### Requirement: Release-owned tenant networking producer prerequisite
+
+HBN discovery, fresh and resumed deployment preflight, and standalone validation
+SHALL observe the same finite release-owned Kamaji compatibility requirement.
+The published DPF BOM and Launch Kit's qualified prerequisite exception SHALL
+remain distinct; saved or user-supplied compatibility metadata SHALL NOT authorize
+an unqualified running producer. External Kamaji installation remains owned by
+the prerequisite administrator.
+
+#### Scenario: A Ready controller uses an affected or unqualified image
+
+- **WHEN** the controller is Ready but its actual current named manager process,
+  ownership, platform or immutable image does not satisfy the selected contract
+- **THEN** discovery and deployment SHALL block with an actionable reason before
+  provisioning effects, including on resume.
+- **AND** incomplete reads, ambiguous ownership, mixed rollouts and identity drift
+  SHALL NOT satisfy compatibility.
+- **AND** Launch Kit SHALL NOT silently upgrade the shared external controller.
+
 ## Baseline and limits
 
 Standalone DPF HBN-BGP deploy composes the retained management, tenant, enrollment,
@@ -266,7 +323,7 @@ same request and cohort, with resource-version preconditions. An agent-less
 pre-OS reset without the supported completion observations stops explicitly;
 the executor does not manufacture a baseline or wait on a circular dependency.
 
-The root pipeline runs discover/generate/deploy, not automatic validation. Exactly-once dispatch is not a promise of global idempotency or a non-reusable operation object. Discovery may mutate supplied config and use a global logger. It performs pre-clean before some worker validation and defers cleanup only after successful setup. See [effects](../managed-effects/spec.md), [artifacts](../artifact-handoff/spec.md) and [outcomes](../outcomes-evidence/spec.md) for those independent responsibilities.
+The Host root pipeline runs discover/generate/deploy, not automatic validation. Exactly-once dispatch is not a promise of global idempotency or a non-reusable operation object. Discovery may mutate supplied config and use a global logger. It performs pre-clean before some worker validation and defers cleanup only after successful setup. See [effects](../managed-effects/spec.md), [artifacts](../artifact-handoff/spec.md) and [outcomes](../outcomes-evidence/spec.md) for those independent responsibilities.
 
 ## Integration and evidence
 

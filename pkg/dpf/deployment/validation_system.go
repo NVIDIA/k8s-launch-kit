@@ -47,8 +47,11 @@ func systemRoleKind(role systemArtifactRole) string {
 }
 func (o *validationObserver) systemValidationChecks() []validation.CheckSpec {
 	result := []validation.CheckSpec{validationSpec("system/artifact", validation.AreaSystem, "Locked system networking chart", false), validationSpec("system/coverage", validation.AreaSystem, "Enabled system component graph", true), validationSpec("system/dns/management-service", validation.AreaSystem, "Selected management DNS NodePort Service", false), validationSpec("tenant/dns/service", validation.AreaTenant, "Selected tenant DNS Service", false), validationSpec("tenant/dns/endpoints", validation.AreaTenant, "Selected tenant DNS forwarding endpoints", false), validationSpec("tenant/kube-proxy", validation.AreaTenant, "Selected Kamaji kube-proxy addon", false), validationSpec("definitions/tenant/coverage", validation.AreaDefinitions, "Projected tenant API definitions", false)}
+	for _, check := range []struct{ id, title string }{{"source", "Kube-proxy addon ownership and access"}, {"configuration", "Kube-proxy tenant networking configuration"}, {"daemonset", "Kube-proxy DaemonSet rollout"}} {
+		result = append(result, validationSpec("tenant/kube-proxy/"+check.id, validation.AreaTenant, check.title, false))
+	}
 	for _, device := range o.desired.plan.Intent().Devices {
-		result = append(result, validationSpec("tenant/kube-proxy/device/"+device.Serial, validation.AreaTenant, "Kube-proxy device "+device.Serial, false))
+		result = append(result, validationSpec("tenant/kube-proxy/device/"+device.Serial, validation.AreaTenant, "Kube-proxy Pod on DPU "+device.Serial, false))
 	}
 	for _, manager := range validationDirectManagers {
 		result = append(result, validationSpec("system/manager/"+manager.role, validation.AreaSystem, manager.role, false))

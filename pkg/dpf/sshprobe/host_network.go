@@ -11,6 +11,7 @@ import (
 	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/netip"
@@ -72,14 +73,19 @@ type HostNetworkReceipt struct {
 type HostNetworkError struct {
 	ReasonCode string
 	Blocking   bool
+	ackCause   string
+	cause      error
 }
 
 func (e *HostNetworkError) Error() string { return e.ReasonCode }
-func (e *HostNetworkError) Unwrap() error { return &Error{Code: e.ReasonCode, Stage: "host-network"} }
+func (e *HostNetworkError) Unwrap() error {
+	return errors.Join(&Error{Code: e.ReasonCode, Stage: "host-network"}, e.cause)
+}
 
 type hostNetworkRemote interface {
 	Run(context.Context, string, string) (string, error)
 	RunWithInput(context.Context, string, string, []byte) (string, error)
+	RunWithInputTimeout(context.Context, string, string, []byte, time.Duration) (string, error)
 }
 
 type hostNetworkSession struct {
@@ -143,8 +149,8 @@ func hostWorkloadNetwork(ctx context.Context, target config.Target, request Host
 	if err := validateHostNetworkDesired(request); err != nil {
 		return HostNetworkReceipt{}, err
 	}
-	ctx, cancel := context.WithTimeout(ctx, timeout)
-	defer cancel()
+	// The compound transaction owns the caller's existing operation deadline.
+	// Dial and snapshot commands retain their separate short request timeout.
 	session, closeSession, err := openHostNetworkSession(ctx, target, timeout)
 	if err != nil {
 		return HostNetworkReceipt{}, err
@@ -231,15 +237,35 @@ func (s *hostNetworkSession) run(ctx context.Context, action string, payload any
 		return nil, networkError("HOST_NETWORK_INPUT_INVALID", false)
 	}
 	command := "/usr/bin/env -i PATH=/usr/sbin:/usr/bin:/sbin:/bin LC_ALL=C /bin/bash -c '" + strings.ReplaceAll(hostNetworkBackend, "'", "'\\''") + "' -- " + action + " " + base64.StdEncoding.EncodeToString(data)
+	var input []byte
+	if s.sudo {
+		if len(s.secret) == 0 {
+			command = "/usr/bin/sudo -n " + command
+		} else {
+			command = "/usr/bin/sudo -S -p '' " + command
+			input = append(bytes.Clone(s.secret), '\n')
+			defer clear(input)
+		}
+	}
 	var text string
-	if !s.sudo {
-		text, err = s.remote.Run(ctx, "host-network-"+action, command)
-	} else if len(s.secret) == 0 {
-		text, err = s.remote.Run(ctx, "host-network-"+action, "/usr/bin/sudo -n "+command)
+	stage := "host-network-" + action
+	if action == "configure" || action == "inspect" {
+		deadline, bounded := ctx.Deadline()
+		if !bounded {
+			return nil, networkError("HOST_NETWORK_DEADLINE_REQUIRED", false)
+		}
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
+		remaining := time.Until(deadline)
+		if remaining <= 0 {
+			return nil, context.DeadlineExceeded
+		}
+		text, err = s.remote.RunWithInputTimeout(ctx, stage, command, input, remaining)
+	} else if len(input) > 0 {
+		text, err = s.remote.RunWithInput(ctx, stage, command, input)
 	} else {
-		input := append(bytes.Clone(s.secret), '\n')
-		defer clear(input)
-		text, err = s.remote.RunWithInput(ctx, "host-network-"+action, "/usr/bin/sudo -S -p '' "+command, input)
+		text, err = s.remote.Run(ctx, stage, command)
 	}
 	if err != nil {
 		return nil, err

@@ -7,7 +7,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"strings"
 	"testing"
 	"time"
 
@@ -17,33 +16,31 @@ import (
 )
 
 func TestHBNRuntimePhysicalChecksArePhaseBoundaries(t *testing.T) {
-	for _, n := range []int{1, 2} {
-		t.Run(fmt.Sprintf("%d-hosts", n), func(t *testing.T) {
-			serials := make([]string, n)
-			for i := range serials {
-				serials[i] = fmt.Sprintf("SERIAL-%c", 'A'+i)
-			}
+	for _, serials := range [][]string{{"SERIAL-A"}, {"SERIAL-A", "SERIAL-B"}} {
+		t.Run(fmt.Sprint(len(serials)), func(t *testing.T) {
 			f := newRuntimeStageFixture(t, serials)
-			f.client.physicalChecks = 0
-			f.client.physicalCohorts = nil
-			assertObservation := func() {
-				if f.client.physicalChecks != 1 {
-					t.Fatalf("measurement repeated/preceded physical phase verification: %d", f.client.physicalChecks)
+			f.client.physicalChecks, f.client.physicalCohorts = 0, nil
+			fences := fixtureAcceptanceFences(t, f, f.client, testJournal(f.prepared.execution))
+			if err := fences.physical(f.ctx); err != nil {
+				t.Fatal(err)
+			}
+			for range 4 {
+				if err := fences.receipts(f.ctx); err != nil {
+					t.Fatal(err)
 				}
 			}
-			f.commandHook = func(int, hbnRuntimeCommand) { assertObservation() }
-			f.trafficHook = func(int, *sshprobe.HostTrafficResult) { assertObservation() }
-			patches, claims, softwareCreates := len(f.activationIntegrationFixture.client.patches), f.activationIntegrationFixture.client.guardCalls, f.client.createSoftware
-			result, err := f.run(testJournal(f.prepared.execution))
-			if err != nil || len(result.BGP) != n || len(result.Routes) != n*(n-1) || len(result.Traffic) != n*(n-1) || result.TrafficValidated != (n > 1) {
-				t.Fatalf("matrix=%+v err=%v", result, err)
+			if f.client.physicalChecks != 1 {
+				t.Fatal("per-measurement receipt checks repeated physical collection")
 			}
-			if f.client.physicalChecks != 2 || len(f.client.physicalCohorts) != 2 {
-				t.Fatalf("physical boundaries=%d", f.client.physicalChecks)
+			if err := fences.physical(f.ctx); err != nil {
+				t.Fatal(err)
+			}
+			if f.client.physicalChecks != 2 {
+				t.Fatal("missing physical closure")
 			}
 			for _, cohort := range f.client.physicalCohorts {
-				if len(cohort) != n {
-					t.Fatalf("physical boundary narrowed cohort: %v", cohort)
+				if len(cohort) != len(serials) {
+					t.Fatalf("narrowed physical cohort: %v", cohort)
 				}
 				seen := map[string]int{}
 				for _, serial := range cohort {
@@ -51,16 +48,12 @@ func TestHBNRuntimePhysicalChecksArePhaseBoundaries(t *testing.T) {
 				}
 				for _, serial := range serials {
 					if seen[serial] != 1 {
-						t.Fatalf("physical boundary changed selected cohort: %v", cohort)
+						t.Fatalf("changed physical cohort: %v", cohort)
 					}
 				}
 			}
-			m := 2*n*n - n
-			if f.leaseReads != 4*m+4 {
-				t.Fatalf("allocation observation coverage changed: %d want %d", f.leaseReads, 4*m+4)
-			}
-			if f.commandReads != n+n*(n-1) || f.trafficReads != n*(n-1) || len(f.activationIntegrationFixture.client.patches) != patches || f.activationIntegrationFixture.client.guardCalls != claims || f.client.createSoftware != softwareCreates {
-				t.Fatal("read-only runtime omitted reads or introduced mutation")
+			if f.commandReads != 0 || f.trafficReads != 0 {
+				t.Fatal("receipt decorator measured runtime")
 			}
 		})
 	}
@@ -69,29 +62,27 @@ func TestHBNRuntimePhysicalChecksArePhaseBoundaries(t *testing.T) {
 func TestHBNRuntimePhysicalPhaseFailureRevokesAcceptance(t *testing.T) {
 	execution := prepareSoftwareStageExecution(t, []string{"SERIAL-A", "SERIAL-B"})
 	for _, phase := range []int{1, 2} {
-		t.Run(fmt.Sprintf("phase-%d", phase), func(t *testing.T) {
+		t.Run(fmt.Sprint(phase), func(t *testing.T) {
 			f := newRuntimeStageFixtureFromExecution(t, execution)
 			f.client.physicalChecks = 0
-			f.client.physicalCohorts = nil
 			f.client.physicalHook = func(call int) error {
 				if call == phase {
 					return errors.New("physical identity/admin unavailable")
 				}
 				return nil
 			}
-			journal := testJournal(f.prepared.execution)
-			result, err := f.run(journal)
-			if err == nil || result.TrafficValidated || result.State != "failed" || strings.Contains(journal.file.(*managementMemoryFile).String(), "HBN_RUNTIME_COHORT_VALIDATED") {
-				t.Fatalf("physical failure passed: %+v err=%v", result, err)
+			fences := fixtureAcceptanceFences(t, f, f.client, testJournal(execution))
+			observer := &deploymentAcceptanceObserver{receipts: fences.receipts, physical: fences.physical, output: func() error { return nil }}
+			if phase == 2 {
+				if err := observer.fence(f.ctx, true); err != nil {
+					t.Fatal(err)
+				}
 			}
-			if f.client.physicalChecks != phase {
-				t.Fatalf("physical calls=%d want %d", f.client.physicalChecks, phase)
+			if err := observer.fence(f.ctx, true); err == nil || f.client.physicalChecks != phase {
+				t.Fatalf("physical phase %d accepted: %v", phase, err)
 			}
-			if phase == 1 && (f.commandReads != 0 || f.trafficReads != 0 || f.leaseReads != 0) {
-				t.Fatal("failed entry phase reached measurement")
-			}
-			if phase == 2 && (len(result.BGP) != 2 || len(result.Routes) != 2 || len(result.Traffic) != 2) {
-				t.Fatal("exit test did not cross complete matrix")
+			if err := observer.fence(f.ctx, false); err == nil {
+				t.Fatal("poisoned phase re-anchored")
 			}
 		})
 	}
@@ -100,16 +91,19 @@ func TestHBNRuntimePhysicalPhaseFailureRevokesAcceptance(t *testing.T) {
 func TestHBNRuntimeFinalObserveFollowsPhysicalExit(t *testing.T) {
 	f := newRuntimeStageFixture(t, []string{"SERIAL-A", "SERIAL-B"})
 	f.client.physicalChecks = 0
-	f.client.physicalCohorts = nil
+	fences := fixtureAcceptanceFences(t, f, f.client, testJournal(f.prepared.execution))
+	observer := &deploymentAcceptanceObserver{receipts: fences.receipts, physical: fences.physical, output: func() error { return nil }}
+	if err := observer.fence(f.ctx, true); err != nil {
+		t.Fatal(err)
+	}
 	f.client.physicalHook = func(call int) error {
 		if call == 2 {
-			f.pods[1].UID = "replaced-during-final-physical-read"
+			f.snapshot.CIDRPool.SetUID("replaced-during-final-physical-read")
 		}
 		return nil
 	}
-	result, err := f.run(testJournal(f.prepared.execution))
-	if err == nil || result.TrafficValidated || result.ReasonCode != "HBN_RUNTIME_FINAL_FENCE_FAILED" || f.client.physicalChecks != 2 || len(result.Traffic) != 2 {
-		t.Fatalf("final physical-read drift=%+v err=%v", result, err)
+	if err := observer.fence(f.ctx, true); err == nil || f.client.physicalChecks != 2 {
+		t.Fatalf("allocation change during physical closure accepted: %v", err)
 	}
 }
 
@@ -167,19 +161,23 @@ func TestHBNRuntimeResourceFenceKeepsFullCohortDriftChecks(t *testing.T) {
 		t.Run(test.name, func(t *testing.T) {
 			f := newRuntimeStageFixtureFromExecution(t, execution)
 			f.client.physicalChecks = 0
-			f.client.physicalCohorts = nil
-			f.commandHook = func(read int, _ hbnRuntimeCommand) {
-				if read == 1 {
-					test.mutate(t, f)
-				}
+			fences := fixtureAcceptanceFences(t, f, f.client, testJournal(execution))
+			if err := fences.physical(f.ctx); err != nil {
+				t.Fatal(err)
+			}
+			if err := fences.receipts(f.ctx); err != nil {
+				t.Fatal(err)
 			}
 			patches, claims := len(f.activationIntegrationFixture.client.patches), f.activationIntegrationFixture.client.guardCalls
-			result, err := f.run(testJournal(f.prepared.execution))
-			if err == nil || result.TrafficValidated || len(result.BGP) != 1 || result.BGP[0].Fenced || f.commandReads != 1 || f.trafficReads != 0 || f.client.physicalChecks != 1 {
-				t.Fatalf("resource drift accepted/depended on BMC: %+v reads=%d physical=%d err=%v", result, f.commandReads, f.client.physicalChecks, err)
+			test.mutate(t, f)
+			if err := fences.receipts(f.ctx); err == nil {
+				t.Fatal("changed operation receipt accepted")
+			}
+			if f.client.physicalChecks != 1 || f.commandReads != 0 || f.trafficReads != 0 {
+				t.Fatal("receipt checks repeated BMC or measured traffic")
 			}
 			if len(f.activationIntegrationFixture.client.patches) != patches || f.activationIntegrationFixture.client.guardCalls != claims {
-				t.Fatal("negative runtime case mutated activation")
+				t.Fatal("receipt observation mutated activation")
 			}
 		})
 	}
@@ -220,7 +218,10 @@ func TestHostConfigurationKeepsFullPhysicalBoundary(t *testing.T) {
 func TestHBNRuntimePhysicalExitRechecksSelectedScopeAfterBMCRead(t *testing.T) {
 	f := newRuntimeStageFixture(t, []string{"SERIAL-A", "SERIAL-B"})
 	f.client.physicalChecks = 0
-	f.client.physicalCohorts = nil
+	fences := fixtureAcceptanceFences(t, f, f.client, testJournal(f.prepared.execution))
+	if err := fences.physical(f.ctx); err != nil {
+		t.Fatal(err)
+	}
 	f.client.physicalHook = func(call int) error {
 		if call == 2 {
 			selected := f.activation.selected[1]
@@ -228,8 +229,42 @@ func TestHBNRuntimePhysicalExitRechecksSelectedScopeAfterBMCRead(t *testing.T) {
 		}
 		return nil
 	}
-	result, err := f.run(testJournal(f.prepared.execution))
-	if err == nil || result.TrafficValidated || result.ReasonCode != "HBN_RUNTIME_PHYSICAL_EXIT_FAILED" || f.client.physicalChecks != 2 || len(result.Traffic) != 2 {
-		t.Fatalf("post-BMC scope verification changed: %+v err=%v", result, err)
+	if err := fences.physical(f.ctx); err == nil || f.client.physicalChecks != 2 {
+		t.Fatalf("post-BMC selected device drift accepted: %v", err)
 	}
+}
+
+func fixtureAcceptanceFences(t *testing.T, f *runtimeStageFixture, client activationBoundaryReader, journal *executionJournal) deploymentAcceptanceFences {
+	t.Helper()
+	fences, err := newDeploymentAcceptanceFences(testAcceptanceReceiptSource{client}, newControlPlaneVerificationInputs(f.prepared, f.controlPlane, f.workload), f.controlPlane.tenant.Client, f.activation, f.hosts, journal, time.Second, fixtureAcceptanceLeases(f.transports.readLeases))
+	if err != nil {
+		t.Fatal(err)
+	}
+	return fences
+}
+
+// Preserve the exact fake/diagnostic wrapper supplied by each test. Native API
+// composition and boundary behavior are exercised separately through Run.
+type testAcceptanceReceiptSource struct{ activationBoundaryReader }
+
+func (s testAcceptanceReceiptSource) withAcceptanceReceiptReads(ctx context.Context, tenant acceptanceTenantReadSource, collect func(activationControlReader, acceptanceTenantReceiptReader) error) error {
+	return collect(s.activationBoundaryReader, testAcceptanceTenantReads{tenant})
+}
+
+func (f *runtimeStageFake) withAcceptanceReceiptReads(ctx context.Context, tenant acceptanceTenantReadSource, collect func(activationControlReader, acceptanceTenantReceiptReader) error) error {
+	return collect(f, testAcceptanceTenantReads{tenant})
+}
+
+func fixtureAcceptanceLeases(read hostLeaseSnapshotReader) acceptanceLeaseSnapshotReader {
+	return func(ctx context.Context, _ resourceReader, _ currentHostLeaseTenantReader) (hostWorkloadLeaseSnapshot, error) {
+		return read(ctx)
+	}
+}
+
+// Existing fixture collection owns its lease snapshot; preserve its overridden
+// tenant child reads instead of recovering an embedded concrete native client.
+type testAcceptanceTenantReads struct{ tenantVerificationReader }
+
+func (testAcceptanceTenantReads) listCompleteNodes(context.Context) ([]unstructured.Unstructured, error) {
+	return nil, fmt.Errorf("unexpected bounded fixture Node read")
 }

@@ -269,7 +269,7 @@ func runActivationStage(ctx context.Context, client activationStageClient, prepa
 			return receipt, fmt.Errorf("OPERATION_PARENT_CHANGED: established parent missing/unavailable")
 		}
 	}
-	if err := verifyActivationBoundary(ctx, client, newControlPlaneVerificationInputs(prepared, controlPlane, workload), controlPlane.tenant.Client, selected, established, objects, journal, requestTimeout); err != nil {
+	if err := waitActivationBoundary(ctx, client, newControlPlaneVerificationInputs(prepared, controlPlane, workload), controlPlane.tenant.Client, selected, established, objects, journal, interval, requestTimeout); err != nil {
 		return receipt, err
 	}
 	if created == nil {
@@ -278,7 +278,7 @@ func runActivationStage(ctx context.Context, client activationStageClient, prepa
 				return receipt, err
 			}
 			// Source reads may block; refresh physical/selected safety before creation.
-			if err := verifyActivationBoundary(ctx, client, newControlPlaneVerificationInputs(prepared, controlPlane, workload), controlPlane.tenant.Client, selected, "", objects, journal, requestTimeout); err != nil {
+			if err := waitActivationBoundary(ctx, client, newControlPlaneVerificationInputs(prepared, controlPlane, workload), controlPlane.tenant.Client, selected, "", objects, journal, interval, requestTimeout); err != nil {
 				return receipt, err
 			}
 		}
@@ -296,7 +296,7 @@ func runActivationStage(ctx context.Context, client activationStageClient, prepa
 	}
 
 	refreshHoldScope := func(ctx context.Context) (activationObservation, error) {
-		if err := verifyActivationBoundary(ctx, client, newControlPlaneVerificationInputs(prepared, controlPlane, workload), controlPlane.tenant.Client, selected, created.GetUID(), objects, journal, requestTimeout); err != nil {
+		if err := waitActivationBoundary(ctx, client, newControlPlaneVerificationInputs(prepared, controlPlane, workload), controlPlane.tenant.Client, selected, created.GetUID(), objects, journal, interval, requestTimeout); err != nil {
 			return activationObservation{}, err
 		}
 		current, err := observeActivationScope(ctx, client, execution.verificationInputs(), deployment, created.GetUID(), selected, receipt.progress)
@@ -397,6 +397,11 @@ func runActivationStage(ctx context.Context, client activationStageClient, prepa
 					if err != nil {
 						return receipt, err
 					}
+					if len(reboots) == 0 {
+						// Pre-claim deferral discarded this request and its proof.
+						// Refresh the whole cohort before considering another host.
+						break
+					}
 				}
 			}
 		}
@@ -411,7 +416,7 @@ func runActivationStage(ctx context.Context, client activationStageClient, prepa
 			return receipt, activationFailure(journal, code, message, err)
 		}
 	}
-	if err := verifyActivationBoundary(ctx, client, newControlPlaneVerificationInputs(prepared, controlPlane, workload), controlPlane.tenant.Client, selected, created.GetUID(), objects, journal, requestTimeout); err != nil {
+	if err := waitActivationBoundary(ctx, client, newControlPlaneVerificationInputs(prepared, controlPlane, workload), controlPlane.tenant.Client, selected, created.GetUID(), objects, journal, interval, requestTimeout); err != nil {
 		return receipt, err
 	}
 	readyDeployment, err := waitNativeReady(prepared.execution.rules, ctx, client, deployment, created.GetUID(), execution.reconciler.Verify, interval, func(state controllercontract.Readiness, terminal bool) error {
@@ -428,7 +433,7 @@ func runActivationStage(ctx context.Context, client activationStageClient, prepa
 	if err != nil {
 		return receipt, activationFailure(journal, "ACTIVATION_DEPLOYMENT_NOT_READY", "The selected DPUDeployment did not report current controller readiness.", err)
 	}
-	if err := verifyActivationBoundary(ctx, client, newControlPlaneVerificationInputs(prepared, controlPlane, workload), controlPlane.tenant.Client, selected, created.GetUID(), objects, journal, requestTimeout); err != nil {
+	if err := waitActivationBoundary(ctx, client, newControlPlaneVerificationInputs(prepared, controlPlane, workload), controlPlane.tenant.Client, selected, created.GetUID(), objects, journal, interval, requestTimeout); err != nil {
 		return receipt, err
 	}
 	currentDeployment, err := client.Get(ctx, deployment.DeepCopy())
@@ -1174,7 +1179,7 @@ func invokeSelectedHostReboots(ctx context.Context, client activationStageClient
 			return verified, activationFailure(journal, "ACTIVATION_REBOOT_REQUEST_CHANGED", "DPF no longer reports an external reboot request for this selected host.", nil)
 		}
 		if err := verifyActivationBoundary(ctx, client, newControlPlaneVerificationInputs(prepared, controlPlane, workload), controlPlane.tenant.Client, selected, deploymentUID, objects, journal, requestTimeout); err != nil {
-			return verified, err
+			return verified, deferActivationBootstrap(ctx, client, newControlPlaneVerificationInputs(prepared, controlPlane, workload), journal, interval, err)
 		}
 		current, err := observeActivationScope(ctx, client, prepared.execution.verificationInputs(), deployment, deploymentUID, selected, resetProgress)
 		if err != nil {
@@ -1238,7 +1243,7 @@ func invokeSelectedHostReboots(ctx context.Context, client activationStageClient
 			// every resource/credential prerequisite after them, without another
 			// slow physical read, then read the exact request/Arm round below.
 			if err := verifyActivationResourceBoundary(ctx, client, newControlPlaneVerificationInputs(prepared, controlPlane, workload), controlPlane.tenant.Client, selected, deploymentUID, objects, journal); err != nil {
-				return verified, err
+				return verified, deferActivationBootstrap(ctx, client, newControlPlaneVerificationInputs(prepared, controlPlane, workload), journal, interval, err)
 			}
 			// The BMC read can take time. A different request or restarted Arm
 			// invalidates its shutdown proof before the one-time claim is created.

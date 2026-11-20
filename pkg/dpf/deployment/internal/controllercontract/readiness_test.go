@@ -71,6 +71,42 @@ func TestEvaluateReadinessForPinnedDPFResources(t *testing.T) {
 	}
 }
 
+func TestObservedReadyGenerationDistinguishesInvalidFromUnobserved(t *testing.T) {
+	for _, kind := range []string{"DPFOperatorConfig", "DPUDeployment"} {
+		for _, tc := range []struct {
+			name  string
+			value any
+			hard  bool
+		}{
+			{name: "malformed type", value: "2", hard: true},
+			{name: "negative", value: int64(-1), hard: true},
+			{name: "zero", value: int64(0)},
+			{name: "missing"},
+			{name: "stale", value: int64(1)},
+		} {
+			t.Run(kind+"/"+tc.name, func(t *testing.T) {
+				status := map[string]any{"conditions": []any{conditionMap("Ready", "True", "Success", 2)}}
+				if tc.value != nil {
+					status["observedGeneration"] = tc.value
+				}
+				obj := dpfObject(kind, status)
+				before := obj.DeepCopy()
+				got := testRules(t).ResourceReadiness(obj)
+				want := "CONFIG_STATUS_STALE"
+				if kind == "DPUDeployment" {
+					want = "DEPLOYMENT_STATUS_STALE"
+				}
+				if tc.hard {
+					want = "RESOURCE_STATUS_INVALID"
+				}
+				if got.Ready || got.ReasonCode != want || !reflect.DeepEqual(obj, before) {
+					t.Fatalf("observed generation classification = %+v, want immutable blocked %s", got, want)
+				}
+			})
+		}
+	}
+}
+
 func TestEvaluateReadinessForKubernetesResources(t *testing.T) {
 	deployment := &unstructured.Unstructured{Object: map[string]any{
 		"apiVersion": "apps/v1", "kind": "Deployment",

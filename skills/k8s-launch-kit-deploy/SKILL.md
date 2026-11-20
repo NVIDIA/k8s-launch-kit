@@ -98,6 +98,11 @@ without downloading the same large origin artifacts again.
 Transient SSH negotiation during an already-requested reboot stays within the
 remaining wait and never retries the action. Inspect the recorded safe SSH cause
 when completion remains uncertain.
+Host workload network configuration and inspect-only recovery use the remaining
+deployment deadline; SSH connections and prerequisite reads retain their shorter
+request timeout. An unconfirmed transaction remains blocking with a safe cause
+in the report. It may have completed remotely: preserve the operation and use
+explicit resume to inspect its exact saved transaction, never to replay it.
 Every failed standalone DPF deployment result reports `error.transient: false`.
 Inspect the report and current resource/device state before recovery; when safe,
 resume explicitly with the recorded operation reference and unchanged inputs.
@@ -114,8 +119,19 @@ without reimaging or replaying completed host configuration. Do not edit claims
 or checkpoints, change the bundle, or infer completion from Ready alone.
 When the expected tenant Node is absent, deployment verifies current bootstrap credentials before a requested reset, before acknowledgment and while waiting for initial registration. Missing, expired or unverifiable credentials require [owner-coordinated recovery](../../docs/user/dpf-deployment.md#recover-from-unavailable-bootstrap-credentials); preserve existing claims and requests. Resume never rotates credentials or extends their lifetime. Expected-name presence excuses only this credential inspection, not Node ownership or Ready checks.
 
-Standalone DPF validate, the root pipeline and generate `--deploy` remain
-unavailable. The following Network Operator instructions apply to Host.
+DPF deployment finishes with the full standalone validation engine and requires
+all required checks, successful HTML publication and a saved final deployment
+record for `validated`.
+One-host `provisioned` permits only the explicit cross-host coverage gap.
+Standalone validation is available for independent current-state checks:
+
+```sh
+l8k validate --target dpf --inventory dpf-discovered.yaml \
+  --deployment-files ./hbn-bgp
+```
+
+The root DPF pipeline and generate `--deploy` remain unavailable.
+The following Network Operator instructions apply to Host.
 
 ## Host deployment
 The CLI snapshots deployment arguments and runs the standalone Host deploy

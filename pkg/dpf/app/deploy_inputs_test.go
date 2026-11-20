@@ -52,6 +52,8 @@ var _ = Describe("DPF deployment input binding", func() {
 		dir := filepath.Join(root, "retained")
 		_, err = tampered.Publish(context.Background(), dir)
 		Expect(err).NotTo(HaveOccurred())
+		before, err := filepath.Glob(filepath.Join(root, "*"))
+		Expect(err).NotTo(HaveOccurred())
 		// A later configuration/access read would fail differently; the Plan
 		// constructor must reject first, before allocating any report directory.
 		result, err := Deploy(context.Background(), DeploymentRequest{DeploymentFiles: dir, Inventory: filepath.Join(root, "must-not-open")})
@@ -59,9 +61,9 @@ var _ = Describe("DPF deployment input binding", func() {
 		var preparation *PreparationError
 		Expect(errors.As(err, &preparation)).To(BeTrue())
 		Expect(preparation.Stage).To(Equal(DeploymentPlan))
-		reports, err := filepath.Glob(filepath.Join(root, "l8k-dpf-deploy-*"))
+		after, err := filepath.Glob(filepath.Join(root, "*"))
 		Expect(err).NotTo(HaveOccurred())
-		Expect(reports).To(BeEmpty())
+		Expect(after).To(Equal(before), "invalid input must not allocate execution or acceptance reports")
 	})
 
 	It("rejects changed physical hosts and associations", func() {

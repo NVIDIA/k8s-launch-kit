@@ -110,6 +110,12 @@ func (f *trafficFakeRemote) RunWithInput(ctx context.Context, stage, command str
 	return f.Run(ctx, stage, command)
 }
 
+func (f *trafficFakeRemote) RunWithInputTimeout(ctx context.Context, stage, command string, input []byte, timeout time.Duration) (string, error) {
+	ctx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
+	return f.RunWithInput(ctx, stage, command, input)
+}
+
 func trafficTestRequest() HostTrafficRequest {
 	r := HostTrafficRequest{HostNetworkRequest: hostNetworkTestRequest()}
 	r.MTU = MinimumHostWorkloadMTU

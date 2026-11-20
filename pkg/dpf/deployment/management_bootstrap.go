@@ -8,7 +8,9 @@ import (
 	"errors"
 	"time"
 
-	"k8s.io/apimachinery/pkg/types"
+	"github.com/nvidia/k8s-launch-kit/pkg/dpf/deployment/internal/controllercontract"
+	"github.com/nvidia/k8s-launch-kit/pkg/dpf/generation"
+	"github.com/nvidia/k8s-launch-kit/pkg/ui"
 )
 
 // waitManagementBootstrap handles only the known transient configuration
@@ -19,21 +21,102 @@ func waitManagementBootstrap(ctx context.Context, management identityResourceRea
 	receipt managementBootstrapReceipt, journal *executionJournal, interval time.Duration,
 ) error {
 	err := verifyManagementBootstrap(ctx, management, execution, receipt)
-	if !errors.Is(err, errBootstrapConfigNotReady) {
+	if !bootstrapConfigPending(err) {
 		return err
 	}
-	initial, err := management.Get(ctx, execution.configObject.DeepCopy())
-	event := executionEvent{Stage: "management-bootstrap", Operation: "bootstrap-recheck", Subject: execution.configObject.GetNamespace() + "/" + execution.configObject.GetName()}
-	if err != nil {
-		return journalFailure(journal, event, false, "BOOTSTRAP_CONFIG_READ_FAILED", "The operator configuration could not be reread before its readiness wait; dependent work remains stopped.", err)
+	event := executionEvent{Stage: generation.StageOperatorConfig, Operation: "readiness", Subject: execution.configObject.GetNamespace() + "/" + execution.configObject.GetName(), State: "attempted", ReasonCode: "DPF_CONFIG_READINESS_STARTED", Message: "Wait for the exact retained management bootstrap to become Ready."}
+	if writeErr := journal.record(event); writeErr != nil {
+		return writeErr
 	}
-	if initial == nil || initial.GetUID() == "" || initial.GetUID() != types.UID(receipt.OperatorConfigUID) {
-		return journalFailure(journal, event, false, "BOOTSTRAP_CONFIG_IDENTITY_CHANGED", "The operator configuration no longer has the bootstrap receipt's UID; dependent work remains stopped.", nil)
+	for {
+		if stop := ctx.Err(); stop != nil {
+			code := "DPF_CONFIG_READINESS_CANCELED"
+			if errors.Is(stop, context.DeadlineExceeded) {
+				code = "DPF_CONFIG_READINESS_TIMEOUT"
+			}
+			return journalFailure(journal, event, false, code, "The retained management bootstrap did not become Ready before cancellation or deadline.", stop)
+		}
+		if err == nil {
+			event.State, event.ReasonCode, event.Message = "ready", "DPF_CONFIG_READY", "The complete retained management bootstrap is Ready for the selected operator version."
+			return journal.record(event)
+		}
+		if !bootstrapConfigPending(err) {
+			detail, ok := err.(*ReconciliationError)
+			if !ok || detail == nil {
+				return err
+			}
+			return journalFailure(journal, event, false, detail.ReasonCode, "The retained management bootstrap could not be reverified."+bootstrapFailureDiagnostic(err), err)
+		}
+		detail := err.(*ReconciliationError)
+		event.State, event.ReasonCode, event.Message = "waiting", detail.ReasonCode, detail.Message
+		if writeErr := journal.record(event); writeErr != nil {
+			return writeErr
+		}
+		ui.FromContext(ctx).Info("[WAITING] Management bootstrap: %s (%s)", event.Message, event.ReasonCode)
+		if stop := waitInterval(ctx, interval); stop != nil {
+			code := "DPF_CONFIG_READINESS_TIMEOUT"
+			if errors.Is(stop, context.Canceled) {
+				code = "DPF_CONFIG_READINESS_CANCELED"
+			}
+			return journalFailure(journal, event, false, code, "The retained management bootstrap did not become Ready before cancellation or deadline.", stop)
+		}
+		err = verifyManagementBootstrap(ctx, management, execution, receipt)
 	}
-	if _, err := waitOperatorConfigReady(ctx, management, execution.reconciler, execution.configObject, initial, execution.operatorVersion, journal, interval); err != nil {
-		return err
+}
+
+// Keep the first observation's classification. In particular, a terminal or
+// malformed status must not disappear when a later readiness read succeeds.
+func bootstrapConfigReadinessFailure(readiness controllercontract.Readiness) error {
+	code := readiness.ReasonCode
+	switch code {
+	case "CONFIG_STATUS_STALE", "CONDITION_STATUS_STALE", "RESOURCE_NOT_READY", "RESOURCE_READINESS_UNKNOWN":
+		return reconcileError(code, readiness.Message, errBootstrapConfigNotReady)
+	case "RESOURCE_TERMINAL_FAILURE", "RESOURCE_DELETING", "RESOURCE_STATUS_INVALID", "RESOURCE_STATUS_AMBIGUOUS", "RESOURCE_METADATA_INVALID", "RESOURCE_API_UNSUPPORTED", "RESOURCE_KIND_UNSUPPORTED", "RESOURCE_GENERATION_MISSING", "CONDITION_GENERATION_MISSING", "READINESS_CONDITION_MISSING":
+		return reconcileError(code, "The retained DPFOperatorConfig readiness observation is blocking.", nil)
+	default:
+		return reconcileError("RESOURCE_STATUS_INVALID", "The retained DPFOperatorConfig readiness classification is unsupported.", nil)
 	}
-	return verifyManagementBootstrap(ctx, management, execution, receipt)
+}
+
+// Recognize only our exact pending result, optionally wrapped by the activation
+// owner. Traversing arbitrary error trees could hide a joined read/journal error.
+func bootstrapConfigPending(err error) bool {
+	detail, ok := err.(*ReconciliationError)
+	if !ok || detail == nil {
+		return false
+	}
+	if detail.ReasonCode == "ACTIVATION_BOOTSTRAP_CHANGED" {
+		return bootstrapConfigPending(detail.cause)
+	}
+	switch detail.ReasonCode {
+	case "CONFIG_STATUS_STALE", "CONDITION_STATUS_STALE", "RESOURCE_NOT_READY", "RESOURCE_READINESS_UNKNOWN":
+		return detail.cause == errBootstrapConfigNotReady
+	default:
+		return false
+	}
+}
+
+func bootstrapFailureDiagnostic(err error) string {
+	detail, ok := err.(*ReconciliationError)
+	if !ok || detail == nil {
+		return ""
+	}
+	if detail.ReasonCode == "ACTIVATION_BOOTSTRAP_CHANGED" {
+		return bootstrapFailureDiagnostic(detail.cause)
+	}
+	message := bootstrapVerificationMessage(detail.ReasonCode)
+	if message == "" {
+		message = bootstrapWaitFailureMessage(detail.ReasonCode)
+	}
+	if message == "" {
+		switch detail.ReasonCode {
+		case "CONFIG_STATUS_STALE", "CONDITION_STATUS_STALE", "RESOURCE_NOT_READY", "RESOURCE_READINESS_UNKNOWN":
+			message = "The retained configuration is waiting for current readiness."
+		default:
+			return ""
+		}
+	}
+	return " Bootstrap cause " + detail.ReasonCode + ": " + message
 }
 
 func bootstrapVerificationMessage(code string) string {
@@ -91,6 +174,12 @@ func bootstrapWaitFailureMessage(code string) string {
 		return "The retained DPFOperatorConfig is being deleted."
 	case "RESOURCE_STATUS_INVALID":
 		return "The retained DPFOperatorConfig status is invalid."
+	case "RESOURCE_STATUS_AMBIGUOUS":
+		return "The retained DPFOperatorConfig readiness status is ambiguous."
+	case "RESOURCE_METADATA_INVALID":
+		return "The retained DPFOperatorConfig metadata is invalid."
+	case "RESOURCE_GENERATION_MISSING", "CONDITION_GENERATION_MISSING", "READINESS_CONDITION_MISSING":
+		return "The retained DPFOperatorConfig readiness metadata is incomplete."
 	case "RESOURCE_API_UNSUPPORTED", "RESOURCE_KIND_UNSUPPORTED":
 		return "The retained DPFOperatorConfig readiness API or kind is unsupported."
 	default:

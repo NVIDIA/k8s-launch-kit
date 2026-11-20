@@ -58,13 +58,6 @@ func (f *runtimeStageFake) verifyEnrollmentBMCs(ctx context.Context, selected []
 	return nil
 }
 
-func (f *runtimeStageFake) checkHBNRuntimeAccess(context.Context, string, string, string) []PreflightCheck {
-	state := "passed"
-	if f.denyManagement {
-		state = "blocked"
-	}
-	return []PreflightCheck{{ID: "runtime-management", State: state}}
-}
 func (f *runtimeStageFake) listHBNRuntimeObjects(_ context.Context, kind, namespace, selector string) ([]unstructured.Unstructured, error) {
 	switch kind {
 	case "DPUService":
@@ -78,6 +71,13 @@ func (f *runtimeStageFake) getHBNRuntimeApplication(context.Context, string, str
 	return f.app.DeepCopy(), nil
 }
 
+type runtimeFixtureTransports struct {
+	readLeases   hostLeaseSnapshotReader
+	readCommand  hbnRuntimeRead
+	probeTraffic hbnHostTrafficProbe
+	resolveImage hbnImageResolver
+}
+
 type runtimeStageFixture struct {
 	activationIntegrationFixture
 	activation                             activationStageReceipt
@@ -87,7 +87,7 @@ type runtimeStageFixture struct {
 	pods                                   []corev1.Pod
 	ds                                     appsv1.DaemonSet
 	image                                  hbnPodImageIdentity
-	transports                             hbnRuntimeTransports
+	transports                             runtimeFixtureTransports
 	commandReads, trafficReads, leaseReads int
 	denyTenant                             bool
 	commandHook                            func(int, hbnRuntimeCommand)
@@ -204,7 +204,7 @@ func runtimeStageFixtureFromActivated(t *testing.T, base activationIntegrationFi
 	}
 	f.client.service = service
 	f.image = hbnPodImageIdentity{Reference: desired.Generation.ImageRepository + ":" + desired.Generation.ImageTag + "@" + desired.Generation.ImageDigest, ManifestDigest: desired.Generation.ImageDigest, ConfigDigest: "sha256:" + strings.Repeat("b", 64)}
-	intent, err := compileHBNRuntimeBinding(base.prepared.execution.verificationInputs(), activation, fence, service, f.client.interfaces, f.image)
+	intent, err := compileFixtureHBNBinding(base.prepared.execution.verificationInputs(), activation, fence, service, f.client.interfaces, f.image)
 	if err != nil {
 		t.Fatalf("retained plan factory: %v\nservice spec=%#v", err, service.Object["spec"])
 	}
@@ -274,7 +274,7 @@ func runtimeStageFixtureFromActivated(t *testing.T, base activationIntegrationFi
 	if err != nil {
 		t.Fatal(err)
 	}
-	f.transports = hbnRuntimeTransports{
+	f.transports = runtimeFixtureTransports{
 		readLeases: func(context.Context) (hostWorkloadLeaseSnapshot, error) {
 			f.leaseReads++
 			snapshot := cloneHostNetworkStageSnapshot(f.snapshot)
@@ -356,205 +356,13 @@ func runtimePassedTraffic(request sshprobe.HostTrafficRequest) sshprobe.HostTraf
 	return sshprobe.HostTrafficResult{State: sshprobe.TrafficProbePassed, RouteVerified: true, ExpectedSource: netip.MustParsePrefix(request.HostAddressPrefix).Addr().String(), ExpectedDestination: request.Destination.String(), ExpectedInterface: request.Identity.InterfaceName, ExpectedGateway: request.Gateway, MTU: request.MTU,
 		Ordinary: sshprobe.HostTrafficProbe{State: sshprobe.TrafficProbePassed, PayloadBytes: 56, Counters: &sshprobe.PingCounters{Sent: 3, Received: 3}}, MTUProbe: sshprobe.HostTrafficProbe{State: sshprobe.TrafficProbePassed, PayloadBytes: request.MTU - 28, Counters: &sshprobe.PingCounters{Sent: 3, Received: 3}}}
 }
-func (f *runtimeStageFixture) run(journal *executionJournal) (HBNRuntimeResult, error) {
-	return runHBNRuntimeStage(f.ctx, f.client, newControlPlaneVerificationInputs(f.prepared, f.controlPlane, f.workload), f.controlPlane.tenant.Client, f.activation, f.hosts, journal, time.Second, f.transports)
-}
-
-func TestHBNRuntimeStageActualTwoHostFlow(t *testing.T) {
-	f := newRuntimeStageFixture(t, []string{"SERIAL-A", "SERIAL-B"})
-	journal := testJournal(f.prepared.execution)
-	result, err := f.run(journal)
-	if err != nil || !result.TrafficValidated || result.State != "passed" || len(result.BGP) != 2 || len(result.Routes) != 2 || len(result.Traffic) != 2 || f.commandReads != 4 || f.trafficReads != 2 {
-		t.Fatalf("result=%+v commands=%d traffic=%d err=%v", result, f.commandReads, f.trafficReads, err)
-	}
-	for _, row := range result.BGP {
-		if !row.Fenced || row.State != "passed" {
-			t.Fatal("unfenced BGP pass")
-		}
-	}
-	for _, row := range result.Routes {
-		if !row.Fenced || row.State != "passed" {
-			t.Fatal("unfenced route pass")
-		}
-	}
-	for _, row := range result.Traffic {
-		if !row.Fenced {
-			t.Fatal("unfenced traffic pass")
-		}
-	}
-	report := journal.file.(*managementMemoryFile).String()
-	if !strings.Contains(report, "HBN_RUNTIME_COHORT_VALIDATED") || strings.Contains(report, "SpecDigest") || strings.Contains(report, "containerd://") {
-		t.Fatal("unsafe/incomplete report")
-	}
-}
-
-func TestHBNRuntimeStageRejectsPartialMeasurementsAndDrift(t *testing.T) {
-	execution := prepareSoftwareStageExecution(t, []string{"SERIAL-A", "SERIAL-B"})
-	for _, scenario := range []string{"wrong-asn", "wrong-route", "ordinary-loss", "df-loss", "service-values", "container-restart", "sidecar-restart", "completed-init-restart", "sidecar-image", "pod-replacement", "interface-replacement", "lease-replaced", "assignment-drift", "tenant-denied", "management-denied", "incomplete-list", "canceled", "cancel-after-read", "later-exec-failure", "host-receipt-mismatch"} {
-		t.Run(scenario, func(t *testing.T) {
-			f := newRuntimeStageFixtureFromExecution(t, execution)
-			original := f.transports.readCommand
-			switch scenario {
-			case "wrong-asn":
-				f.transports.readCommand = func(ctx context.Context, ns, pod string, command hbnRuntimeCommand, prefix netip.Prefix) ([]byte, error) {
-					if command == hbnReadBGPSummary {
-						return runtimeBGPJSON(64520, 65000), nil
-					}
-					return original(ctx, ns, pod, command, prefix)
-				}
-			case "wrong-route":
-				f.transports.readCommand = func(ctx context.Context, ns, pod string, command hbnRuntimeCommand, prefix netip.Prefix) ([]byte, error) {
-					if command == hbnReadRemoteRoute {
-						return runtimeFIBJSON(prefix.String(), "pf0hpf_if"), nil
-					}
-					return original(ctx, ns, pod, command, prefix)
-				}
-			case "ordinary-loss", "df-loss":
-				f.trafficHook = func(_ int, result *sshprobe.HostTrafficResult) {
-					probe := &result.Ordinary
-					if scenario == "df-loss" {
-						probe = &result.MTUProbe
-					}
-					probe.State = sshprobe.TrafficProbeFailed
-					probe.Counters.Received = 2
-					probe.Counters.LostPct = 33.3333
-					result.State = sshprobe.TrafficProbeFailed
-				}
-			case "service-values":
-				f.commandHook = func(count int, _ hbnRuntimeCommand) {
-					if count == 1 {
-						_ = unstructured.SetNestedField(f.client.service.Object, "unretained-current-startup", "spec", "helmChart", "values", "configuration", "startupYAMLJ2")
-					}
-				}
-			case "container-restart":
-				f.commandHook = func(count int, _ hbnRuntimeCommand) {
-					if count == 1 {
-						f.pods[1].Status.ContainerStatuses[0].RestartCount++
-						f.pods[1].Status.ContainerStatuses[0].ContainerID = "containerd://new-instance"
-					}
-				}
-			case "sidecar-restart", "completed-init-restart", "sidecar-image", "pod-replacement":
-				f.commandHook = func(count int, _ hbnRuntimeCommand) {
-					if count != 1 {
-						return
-					}
-					pod := &f.pods[1] // Drift on the other selected DPU must fence this read too.
-					switch scenario {
-					case "pod-replacement":
-						pod.UID = "replacement-pod"
-					case "sidecar-image":
-						pod.Status.InitContainerStatuses[1].ImageID = "foreign.example/hbn@sha256:" + strings.Repeat("e", 64)
-					case "sidecar-restart":
-						pod.Status.InitContainerStatuses[1].RestartCount++
-						pod.Status.InitContainerStatuses[1].ContainerID = "containerd://new-sidecar"
-					case "completed-init-restart":
-						pod.Status.InitContainerStatuses[0].RestartCount++
-						pod.Status.InitContainerStatuses[0].ContainerID = "containerd://new-init"
-						pod.Status.InitContainerStatuses[0].State.Terminated.ContainerID = "containerd://new-init"
-					}
-				}
-			case "interface-replacement":
-				f.commandHook = func(count int, _ hbnRuntimeCommand) {
-					if count == 1 {
-						f.client.interfaces[0].SetUID("replacement-interface")
-					}
-				}
-			case "lease-replaced":
-				f.commandHook = func(count int, _ hbnRuntimeCommand) {
-					if count == 1 {
-						f.snapshot.CIDRPool.SetUID("replacement-pool")
-					}
-				}
-			case "assignment-drift":
-				f.commandHook = func(count int, _ hbnRuntimeCommand) {
-					if count == 1 {
-						rows, _, _ := unstructured.NestedSlice(f.snapshot.CIDRPool.Object, "status", "allocations")
-						rows[0].(map[string]any)["nodeName"] = "foreign-node"
-						_ = unstructured.SetNestedSlice(f.snapshot.CIDRPool.Object, rows, "status", "allocations")
-					}
-				}
-			case "tenant-denied":
-				f.denyTenant = true
-			case "management-denied":
-				f.client.denyManagement = true
-			case "incomplete-list":
-				f.incompleteList = true
-			case "canceled":
-				canceled, cancel := context.WithCancel(f.ctx)
-				cancel()
-				f.ctx = canceled
-			case "cancel-after-read":
-				canceled, cancel := context.WithCancel(f.ctx)
-				defer cancel()
-				f.ctx = canceled
-				f.commandHook = func(count int, _ hbnRuntimeCommand) {
-					if count == 1 {
-						cancel()
-					}
-				}
-			case "later-exec-failure":
-				f.transports.readCommand = func(ctx context.Context, ns, pod string, command hbnRuntimeCommand, prefix netip.Prefix) ([]byte, error) {
-					if f.commandReads >= 2 {
-						return nil, errors.New("raw-secret-canary")
-					}
-					return original(ctx, ns, pod, command, prefix)
-				}
-			case "host-receipt-mismatch":
-				f.hosts[1].Configuration.RequestID = "wrong-binding"
-			}
-			journal := testJournal(f.prepared.execution)
-			result, err := f.run(journal)
-			if err == nil || result.TrafficValidated || result.State != "failed" {
-				t.Fatalf("unsafe success: result=%+v err=%v", result, err)
-			}
-			if scenario == "service-values" || scenario == "container-restart" || scenario == "sidecar-restart" || scenario == "completed-init-restart" || scenario == "sidecar-image" || scenario == "pod-replacement" || scenario == "interface-replacement" || scenario == "cancel-after-read" || scenario == "lease-replaced" || scenario == "assignment-drift" {
-				if len(result.BGP) != 1 || result.BGP[0].Fenced || f.commandReads != 1 || f.trafficReads != 0 {
-					t.Fatalf("post-fence drift not retained/stopped: %+v", result)
-				}
-			}
-			if scenario == "later-exec-failure" {
-				if len(result.BGP) != 2 || !result.BGP[0].Fenced || len(result.Routes) != 1 || !result.Routes[0].Fenced {
-					t.Fatalf("later partial receipts missing: %+v", result)
-				}
-			}
-			if strings.Contains(journal.file.(*managementMemoryFile).String(), "raw-secret-canary") {
-				t.Fatal("raw transport output leaked")
-			}
-		})
-	}
-}
-
-func TestHBNRuntimeStageSingleHostNeverValidatesTraffic(t *testing.T) {
-	f := newRuntimeStageFixture(t, []string{"SERIAL-A"})
-	result, err := f.run(testJournal(f.prepared.execution))
-	if err != nil || result.TrafficValidated || result.State != "unmeasured" || len(result.BGP) != 1 || f.trafficReads != 0 || len(result.Routes) != 0 {
-		t.Fatalf("one-host result=%+v err=%v", result, err)
-	}
-}
-
-func TestHBNRuntimeStageJournalFailureRetainsPartialResult(t *testing.T) {
-	execution := prepareSoftwareStageExecution(t, []string{"SERIAL-A", "SERIAL-B"})
-	for _, failAt := range []int{1, 2, 3, 19} {
-		t.Run(fmt.Sprint(failAt), func(t *testing.T) {
-			f := newRuntimeStageFixtureFromExecution(t, execution)
-			journal := testJournal(f.prepared.execution)
-			journal.file = &hostNetworkStageFailingJournalFile{managementMemoryFile: journal.file.(*managementMemoryFile), failSyncAt: failAt}
-			result, err := f.run(journal)
-			if err == nil || result.TrafficValidated || journal.failed == nil {
-				t.Fatalf("journal failure passed: result=%+v err=%v", result, err)
-			}
-			if failAt == 1 && (f.commandReads != 0 || len(result.BGP) != 0) {
-				t.Fatal("measurement after undurable attempt")
-			}
-			if failAt == 2 && (f.commandReads != 1 || len(result.BGP) != 1 || result.BGP[0].Fenced) {
-				t.Fatal("lost partial result after failed sync")
-			}
-		})
-	}
-}
 
 // Keep the fixture clone helper honest: a retained expectation must never be
 // an alias of an observed mutable API object.
+func compileFixtureHBNBinding(execution *managementVerificationInputs, activation activationStageReceipt, fence hostNetworkLeaseFence, service *unstructured.Unstructured, interfaces []unstructured.Unstructured, image hbnPodImageIdentity) (hbnPodBindingIntent, error) {
+	return compileCurrentHBNBinding(execution.plan, execution.rules, execution.operatorNamespace, activation.DeploymentUID, fence.activation.deployment, fence.leases, fence.snapshot.TenantNodes, service, interfaces, image)
+}
+
 func TestHBNRuntimeFactoryInputsAreIndependent(t *testing.T) {
 	f := newRuntimeStageFixture(t, []string{"SERIAL-A", "SERIAL-B"})
 	observer, err := newHostNetworkFenceObserver(f.ctx, f.client, f.prepared, f.controlPlane, f.workload, f.activation, testJournal(f.prepared.execution), time.Second, f.transports.readLeases, hbnRuntimeStage, "HBN_RUNTIME")
@@ -565,7 +373,7 @@ func TestHBNRuntimeFactoryInputsAreIndependent(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	intent, err := compileHBNRuntimeBinding(f.prepared.execution.verificationInputs(), f.activation, fence, f.client.service, f.client.interfaces, f.image)
+	intent, err := compileFixtureHBNBinding(f.prepared.execution.verificationInputs(), f.activation, fence, f.client.service, f.client.interfaces, f.image)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -575,7 +383,7 @@ func TestHBNRuntimeFactoryInputsAreIndependent(t *testing.T) {
 	if !jsonEqual(intent.ExpectedServiceSpec, before) || !jsonEqual(intent.ApplicationValues, appBefore) {
 		t.Fatal("factory expectations alias observed API state")
 	}
-	if _, err = compileHBNRuntimeBinding(f.prepared.execution.verificationInputs(), f.activation, fence, f.client.service, f.client.interfaces, f.image); err == nil {
+	if _, err = compileFixtureHBNBinding(f.prepared.execution.verificationInputs(), f.activation, fence, f.client.service, f.client.interfaces, f.image); err == nil {
 		t.Fatal("factory accepted unretained values")
 	}
 }
@@ -660,9 +468,15 @@ func TestRuntimeStagePreparedExecutionKeepsInstancesIndependent(t *testing.T) {
 		if bytes.Contains(observed, []byte(canary)) {
 			t.Fatal("second fixture inherited a first-instance deep API mutation")
 		}
-		result, err := f.run(testJournal(execution))
-		if err != nil || !result.TrafficValidated || result.State != "passed" || len(result.BGP) != 2 || len(result.Routes) != 2 || len(result.Traffic) != 2 || f.commandReads != 4 || f.trafficReads != 2 {
-			t.Fatalf("fresh second real runtime flow failed: result=%+v commands=%d traffic=%d err=%v", result, f.commandReads, f.trafficReads, err)
+		fences, err := newDeploymentAcceptanceFences(f.client, newControlPlaneVerificationInputs(f.prepared, f.controlPlane, f.workload), f.controlPlane.tenant.Client, f.activation, f.hosts, testJournal(execution), time.Second, fixtureAcceptanceLeases(f.transports.readLeases))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := fences.physical(f.ctx); err != nil {
+			t.Fatal(err)
+		}
+		if err := fences.receipts(f.ctx); err != nil {
+			t.Fatal(err)
 		}
 	})
 	if !bytes.Equal(before, snapshotPrepared()) {

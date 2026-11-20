@@ -429,6 +429,8 @@ request, safe shutdown, idle tasks and firmware-copy state are checked at reset 
 
 The native workflow checks every directed host pair sequentially, with three ordinary and three DF packets at one-second intervals. Packet spacing alone requires `4 × N × (N − 1)` seconds for `N` selected physical hosts. Discovery and generation reject a matrix whose lower bound cannot fit the two-hour native maximum. This rejects 43 or more selected hosts under the current protocol; fewer hosts are not guaranteed to finish because provisioning, SSH and API checks take additional time. The deployment readiness check counts distinct selected physical hosts only after unique host/card association; missing or conflicting associations remain blocked.
 
+The CLI also verifies the actual Kamaji controller against the selected release's HBN compatibility requirement. It checks the current owned rollout, named process and immutable running image; Ready alone is insufficient. The HBN beta uses a separately qualified upstream edge dependency exception, not a change to NVIDIA's published BOM. An affected, unqualified, unreadable or mixed controller blocks readiness. Have the prerequisite owner install the indicated compatible image for a clean tenant; Launch Kit does not upgrade shared controllers.
+
 Next: [Required check blocked or unknown](#hbn-bgp-preflight-correct); [Required checks verified](#hbn-bgp-preflight-finish).
 
 ### 4. Infrastructure owner: resolve the reported cause {#hbn-bgp-preflight-correct}
@@ -521,43 +523,46 @@ flowchart TD
   n13["Management and tenant clusters: wait for DPF readiness"]
   n14["CLI operator: recheck current hosts and network before workload configuration"]
   n15["Selected hosts: configure the workload-facing PF"]
-  n16["Tenant cluster and selected hosts: verify HBN and directed traffic"]
-  n17["CLI operator: retain the terminal result"]
-  n18["CLI operator: inspect the reason before another attempt"]
+  n16["Management and tenant clusters, BMCs, switches and hosts: run full validation"]
+  n17["CLI machine: save the validation report and final deployment record"]
+  n18["CLI operator: retain the terminal result"]
+  n19["CLI operator: inspect the reason before another attempt"]
   n1 -->|"Site inputs prepared"| n2
   n2 -->|"Handoff saved"| n3
-  n2 -->|"A required observation is unresolved"| n18
+  n2 -->|"A required observation is unresolved"| n19
   n3 -->|"Required gates are ready"| n4
-  n3 -->|"A required gate remains unresolved"| n18
+  n3 -->|"A required gate remains unresolved"| n19
   n4 -->|"Bundle generated"| n5
-  n4 -->|"Generation failed"| n18
+  n4 -->|"Generation failed"| n19
   n5 -->|"Bundle and effects reviewed"| n6
-  n5 -->|"A bundle input or prerequisite needs correction"| n18
+  n5 -->|"A bundle input or prerequisite needs correction"| n19
   n6 -->|"Fresh checks still match"| n7
-  n6 -->|"A required check fails or is unavailable"| n18
+  n6 -->|"A required check fails or is unavailable"| n19
   n7 -->|"DPF operator and configuration are ready"| n8
-  n7 -->|"Ownership, permissions or readiness block progress"| n18
+  n7 -->|"Ownership, permissions or readiness block progress"| n19
   n8 -->|"Tenant API is available and matches the plan"| n9
-  n8 -->|"Tenant prerequisites or identity do not match"| n18
+  n8 -->|"Tenant prerequisites or identity do not match"| n19
   n9 -->|"Selected DPUs are enrolled and assigned"| n10
-  n9 -->|"A selected card or assignment conflicts"| n18
+  n9 -->|"A selected card or assignment conflicts"| n19
   n10 -->|"Selected software bytes match the plan"| n11
-  n10 -->|"Download, availability or checksum verification fails"| n18
+  n10 -->|"Download, availability or checksum verification fails"| n19
   n11 -->|"Selected workload declarations are accepted"| n12
-  n11 -->|"A declaration conflicts or fails admission"| n18
+  n11 -->|"A declaration conflicts or fails admission"| n19
+  n12 -->|"Services starting before reset claim: wait and recheck"| n12
   n12 -->|"Requested activation and reset work is verified"| n13
-  n12 -->|"Installation, safe reset or readiness cannot be verified"| n18
+  n12 -->|"Conflict, terminal failure, unverified safety or deadline"| n19
   n13 -->|"Selected DPUs are provisioned and ready"| n14
-  n13 -->|"Provisioning remains failed, unknown or pending"| n18
+  n13 -->|"Provisioning remains failed, unknown or pending"| n19
   n14 -->|"Current post-activation prerequisites pass"| n15
-  n14 -->|"A required current identity or network check is unavailable or fails"| n18
+  n14 -->|"A required current identity or network check is unavailable or fails"| n19
   n15 -->|"Host workload networking is applied and verified"| n16
-  n15 -->|"Allocation, interface binding or host network verification fails"| n18
-  n16 -->|"A required HBN, route or traffic check fails, is unknown or unavailable"| n18
-  n16 -->|"The selected required checks pass"| n17
-  n18 -->|"Site inputs or authorization must change"| n1
-  n18 -->|"Live observations need refreshing"| n2
-  n18 -->|"An unchanged, valid bundle is ready for owner re-review"| n5
+  n15 -->|"Allocation, interface binding or host network verification fails"| n19
+  n16 -->|"Validation finishes or stops with failed or partial results"| n17
+  n17 -->|"Checks pass (or only the one-host coverage gap remains) and reports are saved"| n18
+  n17 -->|"A required check failed or remains unverified, or output could not be saved"| n19
+  n19 -->|"Site inputs or authorization must change"| n1
+  n19 -->|"Live observations need refreshing"| n2
+  n19 -->|"An unchanged, valid bundle is ready for owner re-review"| n5
 ```
 
 ### 1. CLI operator: prepare the site and selected estate {#hbn-bgp-deployment-inputs}
@@ -637,6 +642,8 @@ Before image metadata access or discovery probes, fresh and resume runs check th
 
 For a new initial deployment, the CLI checks the existing operation record through the management API before fresh discovery probes or changes. An occupied record blocks this path even when its earlier deployment is gone; an unreadable record also stops the run. It is never adopted, overwritten or deleted automatically. Follow [record retirement](dpf-deployment.md#retire-a-previous-deployment-record) to distinguish recovery of the original operation from an owner-approved new deployment.
 
+The CLI also verifies the actual Kamaji controller against the selected release's HBN compatibility requirement. It checks the current owned rollout, named process and immutable running image; Ready alone is insufficient. The HBN beta uses a separately qualified upstream edge dependency exception, not a change to NVIDIA's published BOM. An affected, unqualified, unreadable or mixed controller blocks readiness. Have the prerequisite owner install the indicated compatible image for a clean tenant; Launch Kit does not upgrade shared controllers.
+
 Next: [Fresh checks still match](#hbn-bgp-deployment-management); [A required check fails or is unavailable](#hbn-bgp-deployment-blocked).
 
 ### 7. Management cluster: install and configure DPF {#hbn-bgp-deployment-management}
@@ -673,11 +680,11 @@ Next: [Selected workload declarations are accepted](#hbn-bgp-deployment-activati
 
 After checking the current device-to-host bindings and deployment plan, Launch Kit allows installation to proceed for the selected DPUs. DPF controllers install their operating systems and agents.
 
-If DPF requests an external host reset, DPF coordinates the selected host maintenance effect. Launch Kit waits for the exact request, device binding and safe shutdown state before using the selected host access to perform the supported system reboot. Normal controller transitions can briefly make the selected-device view incomplete. The CLI waits within the deployment deadline for a complete current view before requesting another host reset. Immediately before the reboot, it rechecks the selected device, host and deployment prerequisites. It then waits for the same host and selected DPU to return with the expected boot observations, rechecks the current prerequisites, and acknowledges the request only when those checks still pass. This wait stays within the configured deployment timeout, which defaults to and is capped at two hours. If the request or current prerequisites cannot be verified within that deadline, the operation stops. Do not repeat a reboot blindly. Unsupported reset methods or unknown safety state stop the operation.
+If DPF requests an external host reset, DPF coordinates the selected host maintenance effect. Launch Kit waits for the exact request, device binding and safe shutdown state before using the selected host access to perform the supported system reboot. Normal controller transitions can briefly make the selected-device view incomplete or make the operator configuration Pending as services start on a newly joined DPU. Before claiming another host reset, the CLI waits within the deployment deadline for the same operator configuration to become Ready. If readiness changes during reset preparation, it repeats preparation with fresh device and safety observations. Changed identities, configuration or versions, terminal failures and unverifiable reads still stop the operation. After a reset is claimed, a failed submission check stops without automatically repeating the reboot. After the DPUs join, the CLI waits for the operator system services to settle and rechecks the complete deployment prerequisites before accepting activation. Immediately before the reboot, it rechecks the selected device, host and deployment prerequisites. It then waits for the same host and selected DPU to return with the expected boot observations, rechecks the current prerequisites, and acknowledges the request only when those checks still pass. This wait stays within the configured deployment timeout, which defaults to and is capped at two hours. If the request or current prerequisites cannot be verified within that deadline, the operation stops. Do not repeat a reboot blindly. Unsupported reset methods or unknown safety state stop the operation.
 
 The CLI checks bootstrap credentials when the expected tenant Node is absent, before a requested reset or its acknowledgment and while waiting for initial registration. Expected-name presence excuses only this credential inspection; it does not establish Node ownership or Ready state. A NotReady Node still has independent readiness checks. For missing, expired or unverifiable credentials, follow [bootstrap credential recovery](dpf-deployment.md#recover-from-unavailable-bootstrap-credentials). Resume never renews tokens or extends their lifetime.
 
-Next: [Requested activation and reset work is verified](#hbn-bgp-deployment-provisioned); [Installation, safe reset or readiness cannot be verified](#hbn-bgp-deployment-blocked).
+Next: [Services starting before reset claim: wait and recheck](#hbn-bgp-deployment-activation); [Requested activation and reset work is verified](#hbn-bgp-deployment-provisioned); [Conflict, terminal failure, unverified safety or deadline](#hbn-bgp-deployment-blocked).
 
 ### 13. Management and tenant clusters: wait for DPF readiness {#hbn-bgp-deployment-provisioned}
 
@@ -693,25 +700,33 @@ Next: [Current post-activation prerequisites pass](#hbn-bgp-deployment-host-netw
 
 ### 15. Selected hosts: configure the workload-facing PF {#hbn-bgp-deployment-host-network}
 
-After DPF allocates each selected DPU's actual workload subnet and gateway, the CLI binds that allocation to the exact associated host PF and configures its workload address, MTU and route through host access. It preserves the management network, other ports and host default route. It does not reuse an address from a prior run or infer an allocation from device ordering. Each host's apply and verification result is retained; an uncertain or mismatched result stops final acceptance.
+After DPF allocates each selected DPU's actual workload subnet and gateway, the CLI binds that allocation to the exact associated host PF and configures its workload address, MTU and route through host access. It preserves the management network, other ports and host default route. It does not reuse an address from a prior run or infer an allocation from device ordering. Connections and prerequisite reads use the request timeout; the configuration transaction uses the remaining deployment deadline. Each host's apply and verification result is retained; an uncertain or mismatched result stops final acceptance with a safe diagnostic reason. The host may have completed a change whose confirmation was lost. Explicit resume inspects the exact saved transaction and current allocation without applying the change again or starting a new transaction deadline.
 
 Next: [Host workload networking is applied and verified](#hbn-bgp-deployment-runtime); [Allocation, interface binding or host network verification fails](#hbn-bgp-deployment-blocked).
 
-### 16. Tenant cluster and selected hosts: verify HBN and directed traffic {#hbn-bgp-deployment-runtime}
+### 16. Management and tenant clusters, BMCs, switches and hosts: run full validation {#hbn-bgp-deployment-runtime}
 
-After host networking, Launch Kit verifies the intended HBN service, container and interface bindings. It checks the expected BGP peers for each selected DPU. With at least two selected hosts, it also verifies remote workload prefixes in the installed forwarding table and tests every directed host pair with ordinary traffic and do-not-fragment (DF) traffic at the configured workload MTU.
+After host networking, Launch Kit runs the same full workflow as standalone DPF validation. It checks the selected management and tenant API definitions, resource ownership and status, installed software, system workloads, DNS and kube-proxy configuration, selected physical facts, and host workload networking. Kube-proxy configuration, DaemonSet rollout and per-DPU Pod health have separate results; a bad configuration does not hide observable Pod health. Missing or unreadable required checks prevent full acceptance.
 
-A complete multi-host run is reported as `validated` only when every required BGP, route and directed traffic check passes. A one-host run can be `provisioned`, but cross-host routes and traffic are unmeasured. These results are point-in-time checks, not a hardware support matrix, performance benchmark or proof of every failover path.
+It then verifies HBN service, container and interface bindings, expected BGP peers, remote workload prefixes in the installed forwarding table, and every directed host pair with ordinary and do-not-fragment (DF) traffic at the configured workload MTU. Identity changes during checks invalidate affected provisional results.
 
-Next: [A required HBN, route or traffic check fails, is unknown or unavailable](#hbn-bgp-deployment-blocked); [The selected required checks pass](#hbn-bgp-deployment-finish).
+A multi-host result is `validated` only when every required check passes and the reports are saved. A one-host result can be `provisioned` only when all other required checks pass and cross-host coverage is the sole gap. These are point-in-time results, not a hardware support matrix, performance benchmark or proof of every failover path.
 
-### 17. CLI operator: retain the terminal result {#hbn-bgp-deployment-finish}
+Next: [Validation finishes or stops with failed or partial results](#hbn-bgp-deployment-acceptance-report).
+
+### 17. CLI machine: save the validation report and final deployment record {#hbn-bgp-deployment-acceptance-report}
+
+Launch Kit attempts to save passed, failed or partial validation results as a self-contained HTML report, and records the final deployment result. The CLI reports successfully saved paths. Failed or incomplete required checks still stop acceptance after reporting. A report or journal write failure also stops successful acceptance even if the measured checks passed. Keep completed effects and partial records for inspection; do not automatically repeat provisioning.
+
+Next: [Checks pass (or only the one-host coverage gap remains) and reports are saved](#hbn-bgp-deployment-finish); [A required check failed or remains unverified, or output could not be saved](#hbn-bgp-deployment-blocked).
+
+### 18. CLI operator: retain the terminal result {#hbn-bgp-deployment-finish}
 
 Read the final state, last completed stage, report location and any failed or unavailable reasons. For automation, keep structured stdout, stderr and process exit status separate. Retain the reported run records. A completed command is not a general qualification beyond the selected checks and devices.
 
 To inspect the existing deployment again without repeating provisioning, use the [standalone validation procedure](#hbn-bgp-validation) with the same inventory and retained bundle. Validation reports current state; it does not authorize replay of an incomplete deployment operation.
 
-### 18. CLI operator: inspect the reason before another attempt {#hbn-bgp-deployment-blocked}
+### 19. CLI operator: inspect the reason before another attempt {#hbn-bgp-deployment-blocked}
 
 Keep the failed report, discovery handoff, stdout and stderr. Unknown is not a pass. Earlier management, tenant, enrollment, software, host networking or DPF effects can remain after a stop. Inspect current resources and device state before retrying; do not retry an operation whose effect is uncertain.
 

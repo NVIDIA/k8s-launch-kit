@@ -112,6 +112,13 @@ releases:
   "26.8.0":
     version: "26.8.0"
     useCases: [hbn-bgp]
+    kamajiCompatibility:
+      image: docker.io/clastix/kamaji:26.8.6-edge@sha256:10fe540fa1876131abf89f88694c258c9a2e88b5069ec1d05b0c0dcec185e3f3
+      platformManifest: sha256:76731684f9745e2b5973de96785ecea4a4867ccbf71209591c7a0e66a4f2f82f
+      configDigest: sha256:b5a58bda59fa928f22efeb47ce310de1b27a1d90543711a09d29d507e77c9fb3
+      platform: linux/amd64
+      supportNote: Upstream edge compatibility exception for the HBN beta recipe; source and artifact reviewed, not NVIDIA vendor GA support. Requires separate runtime qualification.
+      sourceRef: upstream-kamaji-cidr-fix
     hbnWorkload:
       chartRepository: https://helm.ngc.nvidia.com/nvidia/doca
       chart: doca-hbn
@@ -251,6 +258,9 @@ releases:
               sourceRef: bf4-b4240-pldm
         requirements: []
     sources:
+      - id: upstream-kamaji-cidr-fix
+        url: https://github.com/clastix/kamaji/blob/80f32baafe34cba9d739c41208c21090dbe1827d/internal/kubeadm/configuration.go
+        revision: 80f32baafe34cba9d739c41208c21090dbe1827d
       - id: platform-support
         url: https://github.com/NVIDIA/doca-platform/blob/v26.8.0/docs/public/platform-support.md
         revision: fc4974ed3bc026ae27634673c2fdf818a2972235

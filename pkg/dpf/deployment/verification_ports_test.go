@@ -22,16 +22,13 @@ import (
 // This runtime substitute has no embedded executor, concrete API client, store,
 // resetter or host configurer. Adding a writer to the port breaks compilation.
 type runtimeReadOnlyFake struct {
-	get         func(context.Context, *unstructured.Unstructured) (*unstructured.Unstructured, error)
-	list        func(context.Context, *unstructured.Unstructured, string) ([]unstructured.Unstructured, error)
-	identity    func(context.Context) error
-	discover    func(context.Context, string) (*metav1.APIResourceList, error)
-	crd         func(context.Context, string) (*unstructured.Unstructured, error)
-	registry    func(context.Context, string) (registrySnapshot, error)
-	physical    func(context.Context, []enrollmentBMC, time.Duration, *executionJournal) error
-	permissions func(context.Context, string, string, string) []PreflightCheck
-	objects     func(context.Context, string, string, string) ([]unstructured.Unstructured, error)
-	application func(context.Context, string, string) (*unstructured.Unstructured, error)
+	get      func(context.Context, *unstructured.Unstructured) (*unstructured.Unstructured, error)
+	list     func(context.Context, *unstructured.Unstructured, string) ([]unstructured.Unstructured, error)
+	identity func(context.Context) error
+	discover func(context.Context, string) (*metav1.APIResourceList, error)
+	crd      func(context.Context, string) (*unstructured.Unstructured, error)
+	registry func(context.Context, string) (registrySnapshot, error)
+	physical func(context.Context, []enrollmentBMC, time.Duration, *executionJournal) error
 }
 
 func (f *runtimeReadOnlyFake) Get(c context.Context, o *unstructured.Unstructured) (*unstructured.Unstructured, error) {
@@ -52,15 +49,6 @@ func (f *runtimeReadOnlyFake) observeRegistrySnapshot(c context.Context, s strin
 }
 func (f *runtimeReadOnlyFake) verifyEnrollmentBMCs(c context.Context, s []enrollmentBMC, d time.Duration, j *executionJournal) error {
 	return f.physical(c, s, d, j)
-}
-func (f *runtimeReadOnlyFake) checkHBNRuntimeAccess(c context.Context, a, b, s string) []PreflightCheck {
-	return f.permissions(c, a, b, s)
-}
-func (f *runtimeReadOnlyFake) listHBNRuntimeObjects(c context.Context, a, b, s string) ([]unstructured.Unstructured, error) {
-	return f.objects(c, a, b, s)
-}
-func (f *runtimeReadOnlyFake) getHBNRuntimeApplication(c context.Context, a, b string) (*unstructured.Unstructured, error) {
-	return f.application(c, a, b)
 }
 
 type runtimeTenantReadOnlyFake struct {
@@ -103,35 +91,44 @@ func (f *runtimeTenantReadOnlyFake) checkTenantPodExecPermissions(c context.Cont
 	return f.execPermissions(c, n, s)
 }
 
-var _ hbnRuntimeStageClient = (*runtimeReadOnlyFake)(nil)
-var _ runtimeVerificationTenantReader = (*runtimeTenantReadOnlyFake)(nil)
+var _ activationBoundaryReader = (*runtimeReadOnlyFake)(nil)
+var _ tenantVerificationReader = (*runtimeTenantReadOnlyFake)(nil)
 var _ managementRunnerClient = (*APIClient)(nil)
 var _ tenantStageManagementClient = (*APIClient)(nil)
 var _ enrollmentManagementClient = (*APIClient)(nil)
 var _ softwareStageManagementClient = (*APIClient)(nil)
 var _ workloadStageClient = (*APIClient)(nil)
 var _ activationStageClient = (*APIClient)(nil)
-var _ hbnRuntimeStageClient = (*APIClient)(nil)
+var _ activationBoundaryReader = (*APIClient)(nil)
 var _ managementLeaseReader = (*APIClient)(nil)
 
 func TestRuntimeReadOnlyPortsExerciseCompleteVerifierGraph(t *testing.T) {
 	f := newRuntimeStageFixture(t, []string{"SERIAL-A", "SERIAL-B"})
 	c := f.client
-	reader := &runtimeReadOnlyFake{get: c.Get, list: c.List, identity: c.VerifyIdentity, discover: c.discoverResourceList, crd: c.getOperatorCRD, registry: c.observeRegistrySnapshot, physical: c.verifyEnrollmentBMCs, permissions: c.checkHBNRuntimeAccess, objects: c.listHBNRuntimeObjects, application: c.getHBNRuntimeApplication}
+	reader := &runtimeReadOnlyFake{get: c.Get, list: c.List, identity: c.VerifyIdentity, discover: c.discoverResourceList, crd: c.getOperatorCRD, registry: c.observeRegistrySnapshot, physical: c.verifyEnrollmentBMCs}
 	tenant := f.controlPlane.tenant.Client
 	tenantReader := &runtimeTenantReadOnlyFake{identity: tenant.VerifyIdentity, binding: tenant.matchesTenantBinding, target: tenant.matchesTenantTarget, cluster: tenant.clusterIdentity, expected: tenant.expectation, child: tenant.getWorkloadChild, objects: tenant.listRuntimeObjects, pod: tenant.readPod, readPermissions: tenant.checkTenantRuntimeReadPermissions, execPermissions: tenant.checkTenantPodExecPermissions}
-	result, err := runHBNRuntimeStage(f.ctx, reader, newControlPlaneVerificationInputs(f.prepared, f.controlPlane, f.workload), tenantReader, f.activation, f.hosts, testJournal(f.prepared.execution), time.Second, f.transports)
-	if err != nil || !result.TrafficValidated || len(result.BGP) != 2 || len(result.Routes) != 2 || len(result.Traffic) != 2 {
-		t.Fatalf("read-only substitution: %+v error=%v", result, err)
+	fences, err := newDeploymentAcceptanceFences(testAcceptanceReceiptSource{reader}, newControlPlaneVerificationInputs(f.prepared, f.controlPlane, f.workload), tenantReader, f.activation, f.hosts, testJournal(f.prepared.execution), time.Second, fixtureAcceptanceLeases(f.transports.readLeases))
+	if err != nil {
+		t.Fatal(err)
 	}
-	tenantPort := reflect.TypeFor[runtimeVerificationTenantReader]()
-	for _, name := range []string{"readSecret", "readConfigMap", "readNode", "bootstrapCredentialSource", "operationSources", "readRuntimeCommand"} {
+	if err := fences.physical(f.ctx); err != nil {
+		t.Fatal(err)
+	}
+	if err := fences.receipts(f.ctx); err != nil {
+		t.Fatal(err)
+	}
+	if f.commandReads != 0 || f.trafficReads != 0 {
+		t.Fatal("receipt port measured runtime")
+	}
+	tenantPort := reflect.TypeFor[tenantVerificationReader]()
+	for _, name := range []string{"readSecret", "readConfigMap", "readNode", "bootstrapCredentialSource", "operationSources"} {
 		if _, found := tenantPort.MethodByName(name); found {
 			t.Fatalf("runtime tenant received %s", name)
 		}
 	}
-	port := reflect.TypeFor[hbnRuntimeStageClient]()
-	if port.NumMethod() != 10 {
+	port := reflect.TypeFor[activationBoundaryReader]()
+	if port.NumMethod() != 7 {
 		t.Fatalf("runtime management capability grew: %d methods", port.NumMethod())
 	}
 	for _, name := range []string{"Create", "ensureOperatorPlan", "patchEnrollmentSelectors", "patchActivationAnnotation", "openSoftwareRegistry", "executeEnrollmentSecret", "verifyActivationRebootBMCs"} {
