@@ -178,6 +178,10 @@ type Request struct {
 	Timeout           time.Duration
 	RequestTimeout    time.Duration
 	MaxConcurrentBMCs int
+
+	// Validation proof is runtime-only and cannot authorize changed public targets.
+	validationScope         []inventory.ScopeEndpoint
+	validationScopeComplete bool
 }
 
 func regularFile(p string, limit int64) ([]byte, error) {
@@ -292,10 +296,14 @@ func validateKeys(n *yaml.Node, active, visited map[*yaml.Node]bool, depth int) 
 	return nil
 }
 func Resolve(in Input) (Request, error) {
+	return resolve(in, nil)
+}
+
+func resolve(in Input, unavailable *accessAvailability) (Request, error) {
 	r := Request{Input: in, Timeout: 10 * time.Minute, RequestTimeout: 15 * time.Second, MaxConcurrentBMCs: 4, Mode: "inventory"}
 	s := in.Site
 	base := filepath.Dir(in.Path)
-	if err := resolveUseCase(&r); err != nil {
+	if err := resolveUseCase(&r, unavailable); err != nil {
 		return r, err
 	}
 	if s.Discovery.AddressLookup != nil {
@@ -410,11 +418,16 @@ func Resolve(in Input) (Request, error) {
 				if !ok {
 					return r, fmt.Errorf("%s/credentialRef is unknown", ptr)
 				}
-				access, err := resolveSSHAccess(c, *e.SSH, base)
+				target := Target{Name: name, Endpoint: origin, InputRef: ptr, Role: group.role}
+				access, err := unavailable.resolveSSHAccess(c, *e.SSH, base, target)
 				if err != nil {
+					if unavailable.record(ptr, group.role, err) {
+						continue
+					}
 					return r, fmt.Errorf("%s/ssh: %w", ptr, err)
 				}
-				r.Targets = append(r.Targets, Target{Name: name, Endpoint: origin, InputRef: ptr, Role: group.role, SSH: access})
+				target.SSH = access
+				r.Targets = append(r.Targets, target)
 				continue
 			}
 			origin, err := Origin(e.BMCEndpoint)
@@ -452,15 +465,23 @@ func Resolve(in Input) (Request, error) {
 				return r, fmt.Errorf("%s/tls: caFile and insecureSkipVerify: true are mutually exclusive", ptr)
 			}
 			cacheKey := accessKey{credential: e.CredentialRef, caPath: caPath, insecure: insecure}
+			target := Target{Name: name, Endpoint: origin, SystemURI: selector, InputRef: ptr, Role: group.role}
 			a, ok := accesses[cacheKey]
-			if !ok {
-				a, err = resolveAccess(c, caPath, base, insecure)
+			if ok {
+				target.Access = a
+				unavailable.captureScope(target, nil)
+			} else {
+				a, err = unavailable.resolveAccess(c, caPath, base, insecure, target)
 				if err != nil {
+					if unavailable.record(ptr, group.role, err) {
+						continue
+					}
 					return r, fmt.Errorf("%s: %w", ptr, err)
 				}
 				accesses[cacheKey] = a
 			}
-			r.Targets = append(r.Targets, Target{Name: name, Endpoint: origin, SystemURI: selector, InputRef: ptr, Role: group.role, Access: a})
+			target.Access = a
+			r.Targets = append(r.Targets, target)
 		}
 	}
 	return r, nil
@@ -473,13 +494,30 @@ func resolvePath(base, p string) string {
 	return filepath.Join(base, p)
 }
 func resolveAccess(c Credential, caPath, base string, insecure bool) (Access, error) {
-	if c.PrivateKeyRef != nil {
-		return Access{}, fmt.Errorf("redfish requires passwordRef, not privateKeyRef")
+	if err := validateRedfishCredential(c); err != nil {
+		return Access{}, err
 	}
 	password, err := resolvePassword(c.PasswordRef, base)
 	if err != nil {
 		return Access{}, err
 	}
+	access, err := resolveAccessTrust(caPath, insecure)
+	if err != nil {
+		return Access{}, err
+	}
+	access.username, access.password = c.Username, password
+	return access, nil
+}
+
+func validateRedfishCredential(c Credential) error {
+	if c.PrivateKeyRef != nil {
+		return fmt.Errorf("redfish requires passwordRef, not privateKeyRef")
+	}
+	return validatePasswordRef(c.PasswordRef)
+}
+
+// Resolve trust once; successful transports retain this exact CA/root snapshot.
+func resolveAccessTrust(caPath string, insecure bool) (Access, error) {
 	roots, err := x509.SystemCertPool()
 	if err != nil || roots == nil {
 		roots = x509.NewCertPool()
@@ -488,31 +526,25 @@ func resolveAccess(c Credential, caPath, base string, insecure bool) (Access, er
 	if caPath != "" {
 		ca, err = regularFile(caPath, 1<<20)
 		if err != nil || !roots.AppendCertsFromPEM(ca) {
-			return Access{}, fmt.Errorf("invalid CA file")
+			return Access{}, &accessMaterialError{message: "invalid CA file"}
 		}
 	}
-	return Access{username: c.Username, password: password, tls: &tls.Config{MinVersion: tls.VersionTLS12, RootCAs: roots, InsecureSkipVerify: insecure}, ca: ca}, nil
+	return Access{tls: &tls.Config{MinVersion: tls.VersionTLS12, RootCAs: roots, InsecureSkipVerify: insecure}, ca: ca}, nil
 }
 func resolvePassword(p PasswordRef, base string) (string, error) {
-	if (p.Env == nil) == (p.File == nil) {
-		return "", fmt.Errorf("passwordRef requires exactly one env or file")
+	if err := validatePasswordRef(p); err != nil {
+		return "", err
 	}
 	var password string
 	if p.Env != nil {
-		if *p.Env == "" {
-			return "", fmt.Errorf("empty passwordRef.env")
-		}
 		password = os.Getenv(*p.Env)
 	} else {
-		if *p.File == "" {
-			return "", fmt.Errorf("empty passwordRef.file")
-		}
 		b, err := regularFile(resolvePath(base, *p.File), 64<<10)
 		if err != nil {
-			return "", fmt.Errorf("cannot resolve password file")
+			return "", &accessMaterialError{message: "cannot resolve password file"}
 		}
 		if !utf8.Valid(b) {
-			return "", fmt.Errorf("password file must be UTF-8")
+			return "", &accessMaterialError{message: "password file must be UTF-8"}
 		}
 		password = string(b)
 		if strings.HasSuffix(password, "\n") {
@@ -520,9 +552,27 @@ func resolvePassword(p PasswordRef, base string) (string, error) {
 		}
 	}
 	if password == "" || len(password) > 64<<10 {
-		return "", fmt.Errorf("password reference is missing, empty or too large")
+		return "", &accessMaterialError{message: "password reference is missing, empty or too large"}
 	}
 	return password, nil
+}
+
+// Validate source selection before looking up material, so an unavailable file
+// cannot hide malformed or ambiguous authentication configuration.
+func validatePasswordRef(p PasswordRef) error {
+	if (p.Env == nil) == (p.File == nil) {
+		return fmt.Errorf("passwordRef requires exactly one env or file")
+	}
+	if p.Env != nil {
+		if *p.Env == "" {
+			return fmt.Errorf("empty passwordRef.env")
+		}
+	} else {
+		if *p.File == "" {
+			return fmt.Errorf("empty passwordRef.file")
+		}
+	}
+	return nil
 }
 func Origin(s string) (string, error) {
 	u, err := url.Parse(s)
@@ -577,6 +627,36 @@ func Saved(in Input, inv *inventory.Inventory, destination string) ([]byte, erro
 	return yamlinput.Encode(doc)
 }
 func rebase(n *yaml.Node, oldBase, newBase, p string) error {
+	return visitFileReferences(n, p, func(value *yaml.Node) error {
+		abs := resolvePath(oldBase, value.Value)
+		rel, err := filepath.Rel(newBase, abs)
+		if err != nil {
+			return err
+		}
+		value.Value = rel
+		return nil
+	})
+}
+
+// ReferencedFiles returns local input/access paths without opening credentials.
+// It uses the same field rules as inventory publication and includes unused
+// declared credentials, which remain user-owned files.
+func ReferencedFiles(in Input) ([]string, error) {
+	if in.Document == nil || len(in.Document.Content) != 1 || in.Path == "" {
+		return nil, fmt.Errorf("a decoded input document is required to enumerate file references")
+	}
+	files := []string{in.Path}
+	if in.OverridesPath != "" {
+		files = append(files, in.OverridesPath)
+	}
+	err := visitFileReferences(in.Document.Content[0], "", func(value *yaml.Node) error {
+		files = append(files, resolvePath(filepath.Dir(in.Path), value.Value))
+		return nil
+	})
+	return files, err
+}
+
+func visitFileReferences(n *yaml.Node, p string, visit func(*yaml.Node) error) error {
 	if n.Kind == yaml.MappingNode {
 		for i := 0; i < len(n.Content); i += 2 {
 			key := n.Content[i].Value
@@ -587,19 +667,16 @@ func rebase(n *yaml.Node, oldBase, newBase, p string) error {
 			}
 			isFile := key == "caFile" || key == "knownHostsFile" || key == "file" && (p == "/discovery/addressLookup/sources" || strings.HasSuffix(p, "kubeconfigRef") || strings.HasSuffix(p, "passwordRef") || strings.HasSuffix(p, "privateKeyRef"))
 			if isFile && value.Kind == yaml.ScalarNode && value.Tag == "!!str" && value.Value != "" {
-				abs := resolvePath(oldBase, value.Value)
-				rel, err := filepath.Rel(newBase, abs)
-				if err != nil {
+				if err := visit(value); err != nil {
 					return err
 				}
-				value.Value = rel
-			} else if err := rebase(value, oldBase, newBase, next); err != nil {
+			} else if err := visitFileReferences(value, next, visit); err != nil {
 				return err
 			}
 		}
 	} else if n.Kind == yaml.SequenceNode {
 		for _, v := range n.Content {
-			if err := rebase(v, oldBase, newBase, p); err != nil {
+			if err := visitFileReferences(v, p, visit); err != nil {
 				return err
 			}
 		}

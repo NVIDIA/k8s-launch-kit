@@ -173,6 +173,14 @@ runtime phase. A failed final physical or runtime check prevents `validated`,
 even when earlier measurement rows passed. Provisioning, resets and host-network
 changes retain their immediate full physical safety checks.
 
+## Validate current state again
+
+After deployment, run [standalone DPF validation](dpf-validation.md) with the same
+discovery inventory and complete generated bundle. Full mode checks current
+resources, physical facts, BGP, installed routes and directed host traffic.
+`--connectivity=false` requests resource checks only. Validation does not resume
+or repair an incomplete deployment operation.
+
 ## Read the result and recover from a stop
 
 On a fabric ownership stop, inspect the recorded allocation, cabling or route-path reason. Preserve existing routes and resources; correct access or resolve conflicting ownership with the infrastructure owner before rerunning.

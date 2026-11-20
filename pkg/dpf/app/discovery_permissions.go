@@ -6,6 +6,7 @@ package app
 import (
 	"context"
 	"errors"
+	"github.com/nvidia/k8s-launch-kit/pkg/dpf/chartfetch"
 	"strings"
 
 	"github.com/nvidia/k8s-launch-kit/pkg/dpf/bundle"
@@ -33,7 +34,7 @@ type HBNPermissionObserver struct {
 // management authorization against the generated or retained deployment bundle.
 func NewHBNPermissionObserver() HBNPermissionObserver {
 	return HBNPermissionObserver{
-		fetchChart: DownloadChart,
+		fetchChart: (chartfetch.Downloader{}).Fetch,
 		newClient: func(ctx context.Context, request config.Request, identity generation.ManagementIdentity, version string) (callerPermissionClient, error) {
 			return deployment.NewAPIClient(ctx, request, identity, version)
 		},
@@ -161,9 +162,9 @@ func (o HBNPermissionObserver) checkPermissions(ctx context.Context, request con
 // Arbitrary injected errors may contain credentials, so retain a generic reason.
 func callerChartDownloadFailure(chartCode, chartName string, err error) (string, string) {
 	prefix := "CALLER_RBAC_" + chartCode + "_CHART_"
-	var failure *chartDownloadError
+	var failure *chartfetch.Error
 	if errors.As(err, &failure) {
-		return prefix + failure.code, "The selected " + chartName + " chart could not be retrieved: " + failure.Error() + "."
+		return prefix + failure.Code(), "The selected " + chartName + " chart could not be retrieved: " + failure.Error() + "."
 	}
 	return prefix + "UNAVAILABLE", "The selected " + chartName + " chart could not be retrieved; transport details were omitted."
 }

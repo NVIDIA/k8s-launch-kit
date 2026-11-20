@@ -37,8 +37,9 @@ readiness; the selected use case evaluates deployment eligibility.
 Standalone HBN-BGP generation and [deployment](../../docs/user/dpf-deployment.md)
 use typed adapters, resolved desired inputs and a validated staged bundle.
 Deployment includes runtime validation for the selected hosts and DPUs.
-Standalone `validate` and the combined pipeline remain unavailable and cannot
-fall through to Host execution. Hardware and diagnostic-image support remain
+Standalone [DPF validation](../../docs/user/dpf-validation.md) observes the retained
+selection through a separate read/diagnostic service and writes HTML. The combined
+DPF pipeline remains unavailable; neither path falls through to Host execution. Hardware and diagnostic-image support remain
 subject to the documented qualification limits.
 
 Use `l8k schema` to inspect target and phase availability programmatically.

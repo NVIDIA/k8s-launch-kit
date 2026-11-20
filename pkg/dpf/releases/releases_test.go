@@ -42,6 +42,35 @@ var _ = Describe("release BOM resolution", func() {
 		Expect(err).NotTo(HaveOccurred())
 		Expect(fresh.HBNWorkload.ChartVersion).To(Equal("3.5.0"), "resolved releases must be independent copies")
 	})
+	It("pins the validation networking archive only for the reviewed HBN release", func() {
+		generic, err := Resolve("26.4.0")
+		Expect(err).NotTo(HaveOccurred())
+		Expect(generic.SystemNetworking).To(BeNil())
+		release, err := DefaultForUseCase(UseCaseHBNBGP)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(release.SystemNetworking).To(Equal(&SystemNetworking{
+			Chart: "dpu-networking", ChartRepository: "https://helm.ngc.nvidia.com/nvidia/doca", ChartVersion: "v26.8.0",
+			ChartDigest:       "sha256:c41c685380536ce5f2502ab9bc011cb99b3d869ed60aa9136d7eb8cf366fe090",
+			CNIInstallerImage: "nvcr.io/nvidia/doca/dpf-cni-installer:v26.8.0", SourceRef: "published-system-networking-chart",
+		}))
+		Expect(release.SystemNetworking.ArchiveURL()).To(Equal("https://helm.ngc.nvidia.com/nvidia/doca/charts/dpu-networking-v26.8.0.tgz"))
+		for _, mutate := range []func(*SystemNetworking){
+			func(source *SystemNetworking) { source.Chart = "../chart" },
+			func(source *SystemNetworking) { source.ChartRepository = "https://user@example.com/charts" },
+			func(source *SystemNetworking) { source.ChartVersion = "v26.4.0" },
+			func(source *SystemNetworking) { source.ChartDigest = "sha256:bad" },
+			func(source *SystemNetworking) {
+				source.CNIInstallerImage = "nvcr.io/nvidia/doca/dpf-cni-installer:latest"
+			},
+			func(source *SystemNetworking) { source.SourceRef = "unknown" },
+		} {
+			invalid := release
+			source := *release.SystemNetworking
+			invalid.SystemNetworking = &source
+			mutate(&source)
+			Expect(validate(invalid.Version, invalid)).To(MatchError(ContainSubstring("invalid system networking chart coordinates")))
+		}
+	})
 	It("rejects unreviewed releases and does not interpret latest, prefixes or whitespace", func() {
 		for _, version := range []string{"latest", "26.4", "26.4.1", "v26.4.0", " 26.4.0", "26.4.0 "} {
 			_, err := Resolve(version)

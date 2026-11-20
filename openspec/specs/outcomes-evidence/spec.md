@@ -47,7 +47,7 @@ Output extensions SHALL preserve command-specific framing, existing public field
 
 #### Scenario: Validation JSON stream
 
-- **WHEN** automation consumes validation output
+- **WHEN** automation consumes Host validation output
 - **THEN** it can parse the sequence of JSON documents, retain process exit status and distinguish manifest/check results from the separate report-path object.
 
 #### Scenario: New test family
@@ -93,6 +93,33 @@ An advertised report path SHALL identify an artifact that was successfully writt
 - **THEN** result checks, the durable execution report and progress output retain the failing owner's finite reason, subject and safe action, including specific pending timeout/cancellation versus read/access/identity/intent failure categories.
 - **AND** private error causes and arbitrary API/error messages remain absent from serialized results and progress; context cancellation/deadline identity remains available to callers.
 
+### Requirement: DPF validation has one complete selected result
+
+DPF validation SHALL use one result for text, JSON, HTML and exit decisions.
+Required missing, failed, pending or unverified coverage SHALL prevent a pass.
+Resource-only success SHALL be named `resource_checks_passed`, not full validation.
+
+#### Scenario: A runtime observation cannot complete
+
+- **WHEN** a DPF validation measurement or its verification boundary stops
+- **THEN** the canonical result retains a source-safe diagnostic identifying the known stage, reason and action, and text/HTML present the same explanation once.
+- **AND** raw error strings, credentials and transport bodies remain private; replaying a poisoned session does not replace its original diagnostic with a generic later failure.
+- **AND** invalidated measurements remain unverified with prior facts distinguished from accepted results; nonidentity failures do not instruct the user to restore identities that were not shown to have changed.
+- **AND** validation progress describes its required checks without inherited discovery messages promising optional details absent from the validation report.
+
+#### Scenario: Partial preparation, observation or cancellation
+
+- **WHEN** DPF validation starts and later stops
+- **THEN** it attempts one terminal JSON document with the requested mode, per-check reason/action, available coverage and actual report disposition; private causes and raw transport bodies remain absent.
+- **AND** current positive identity drift revokes affected earlier acceptance; missing observations remain explicitly unverified without inventing replacement.
+- **AND** exit priority is input2, access/identity3, failed/incomplete/canceled/timed-out4, then publication-only1; Host behavior is unchanged.
+
+#### Scenario: Safe HTML publication
+
+- **WHEN** DPF validation prepares its report
+- **THEN** the default is a new private directory beside the bundle, explicit destinations cannot alias bundle or declared inventory/access inputs, and an unsafe destination stops before probes.
+- **AND** atomic publication preserves previous complete output on failure; only a successfully published path is advertised, even after cancellation.
+
 ## Baseline and limits
 
 Current acceptance is intentionally not uniform:
@@ -103,7 +130,7 @@ Current acceptance is intentionally not uniform:
 | Connectivity-only | Requires at least one gating row per selected family, except gateway permits explicit no-configured-gateway applicability skips; this does not prove every intended endpoint was covered. |
 | OpenShift validation | When connectivity is enabled, also enforces selected-family gating coverage (including the gateway applicability exception), subject to its supported profile matrix. |
 
-Validation emits multiple JSON documents. Root/discover/generate envelopes, standalone deploy status and other commands have different output shapes. This contract does not introduce a universal result envelope or strengthen all acceptance gates. [Connectivity](../connectivity-checks/spec.md) owns individual measurement truth tables; [resource kinds](../resource-kinds/spec.md) supplies classified resource evidence.
+Host validation emits multiple JSON documents. DPF standalone validation emits one terminal result with explicit coverage and report disposition. Root/discover/generate envelopes, standalone deploy status and other commands have different output shapes. This contract does not introduce a universal result envelope or strengthen all acceptance gates. [Connectivity](../connectivity-checks/spec.md) owns individual measurement truth tables; [resource kinds](../resource-kinds/spec.md) supplies classified resource evidence.
 
 ## Integration and evidence
 

@@ -186,6 +186,28 @@ func issueFor(snapshot fabric.Snapshot, input string) (fabric.Issue, bool) {
 }
 
 var _ = Describe("read-only switch collector", func() {
+	It("observes configuration without invoking SDK diagnostics or losing partial failures", func() {
+		target := testSwitchTarget("sudo-secret", false)
+		session := &fakeSession{outputs: validOutputs(), failures: map[string]error{
+			"vtysh -c 'show bgp vrf all summary json'": &sshprobe.Error{Code: "SSH_COMMAND_FAILED", Stage: "switch"},
+		}}
+		collector := Collector{openSession: func(context.Context, string, *config.SSHAccess, time.Duration) (sshprobe.ReadSession, error) {
+			return session, nil
+		}}
+		snapshot := collector.ObserveConfiguration(context.Background(), target, 3*time.Second)
+		Expect(session.closeSeen).To(BeTrue())
+		Expect(snapshot.ASIC).To(BeNil())
+		Expect(snapshot.Configured.Interfaces).To(HaveLen(1))
+		issue, found := issueFor(snapshot, "frrBGPSummary")
+		Expect(found).To(BeTrue())
+		Expect(issue.Code).To(Equal("SSH_COMMAND_FAILED"))
+		expected := commands(target.Ports)
+		Expect(session.calls).To(HaveLen(len(expected)))
+		for i, call := range session.calls {
+			Expect(wrappedCommand(call.command)).To(Equal(expected[i].command))
+		}
+	})
+
 	It("runs only fixed fact commands and sends sudo passwords through stdin", func() {
 		target := testSwitchTarget("sudo-secret", false)
 		session := &fakeSession{outputs: validOutputs(), failures: map[string]error{}}

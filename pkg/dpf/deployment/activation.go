@@ -485,30 +485,47 @@ func retainedDeploymentObject(execution *managementVerificationInputs) (*unstruc
 	return object, nil
 }
 
-func bindActivationHosts(rules *controllercontract.Rules, selected []enrollmentBMC, enrollment enrollmentStageReceipt, inv *inventory.Inventory, targets []config.Target,
-	deployment *unstructured.Unstructured,
-) ([]activationSelectedDevice, map[string][]int, error) {
-	if inv == nil || deployment == nil || len(selected) == 0 || len(enrollment.Devices) != len(selected) {
+func bindActivationHosts(rules *controllercontract.Rules, selected []enrollmentBMC, enrollment enrollmentStageReceipt, inv *inventory.Inventory, targets []config.Target, deployment *unstructured.Unstructured) ([]activationSelectedDevice, map[string][]int, error) {
+	if len(enrollment.Devices) != len(selected) {
 		return nil, nil, fmt.Errorf("selected inventory and enrollment receipt are incomplete")
 	}
 	devices := make([]generation.ResolvedDevice, len(selected))
-	for i := range selected {
-		devices[i] = selected[i].device
+	for i, item := range selected {
+		devices[i] = item.device
 	}
-	sets, err := rules.ActivationSetIntents(deployment, devices)
+	current, groups, err := bindCurrentHostAssociations(rules, devices, inv, targets, deployment, true)
 	if err != nil {
 		return nil, nil, err
 	}
-	result := make([]activationSelectedDevice, len(selected))
+	result := make([]activationSelectedDevice, len(current))
+	for i, item := range current {
+		receipt := enrollment.Devices[i]
+		if receipt.Serial != item.retained.Serial || receipt.DeviceUID == "" || receipt.DPUNodeUID == "" {
+			return nil, nil, fmt.Errorf("selected DPU inventory or enrollment identity is ambiguous")
+		}
+		result[i] = activationSelectedDevice{item: selected[i], receipt: receipt, device: item.device, host: item.host, adapter: item.adapter, hostTarget: item.hostTarget, nodeName: item.nodeName, dpuName: item.dpuName, dpuSet: item.dpuSet}
+	}
+	return result, groups, nil
+}
+
+func bindCurrentHostAssociations(rules *controllercontract.Rules, selected []generation.ResolvedDevice, inv *inventory.Inventory, targets []config.Target, deployment *unstructured.Unstructured, requireAccess bool) ([]currentSelectedDevice, map[string][]int, error) {
+	if inv == nil || deployment == nil || len(selected) == 0 {
+		return nil, nil, fmt.Errorf("selected physical inventory and desired devices are incomplete")
+	}
+	sets, err := rules.ActivationSetIntents(deployment, selected)
+	if err != nil {
+		return nil, nil, err
+	}
+	result := make([]currentSelectedDevice, len(selected))
 	groups := make(map[string][]int)
 	for index, item := range selected {
-		device := uniqueInventoryDPU(inv, item.device.Serial)
-		if device == nil || enrollment.Devices[index].Serial != item.device.Serial || enrollment.Devices[index].DeviceUID == "" || enrollment.Devices[index].DPUNodeUID == "" {
-			return nil, nil, fmt.Errorf("selected DPU inventory or enrollment identity is ambiguous")
+		device := uniqueInventoryDPU(inv, item.Serial)
+		if device == nil {
+			return nil, nil, fmt.Errorf("selected DPU inventory identity is ambiguous")
 		}
 		associations := make([]inventory.Association, 0, 1)
 		for _, association := range inv.Associations {
-			if association.DPUID == device.ID && association.SerialNumber == item.device.Serial {
+			if association.DPUID == device.ID && association.SerialNumber == item.Serial {
 				associations = append(associations, association)
 			}
 		}
@@ -521,7 +538,7 @@ func bindActivationHosts(rules *controllercontract.Rules, selected []enrollmentB
 		}
 		adapters := make([]inventory.Adapter, 0, 1)
 		for _, adapter := range host.Adapters {
-			if adapter.Key == associations[0].HostAdapterKey && adapter.SerialNumber == item.device.Serial {
+			if adapter.Key == associations[0].HostAdapterKey && adapter.SerialNumber == item.Serial {
 				adapters = append(adapters, adapter)
 			}
 		}
@@ -530,24 +547,24 @@ func bindActivationHosts(rules *controllercontract.Rules, selected []enrollmentB
 		}
 		hostTargets := make([]config.Target, 0, 1)
 		for _, target := range targets {
-			if target.Role == "hosts" && target.InputRef == host.InputRef && target.Endpoint == host.SSHEndpoint && target.SSH != nil {
+			if target.Role == "hosts" && target.InputRef == host.InputRef && target.Endpoint == host.SSHEndpoint && (!requireAccess || target.SSH != nil) {
 				hostTargets = append(hostTargets, target)
 			}
 		}
 		if len(hostTargets) != 1 {
 			return nil, nil, fmt.Errorf("associated host has no unique explicit SSH access target")
 		}
-		nodeName := "dpu-node-" + strings.ToLower(item.device.Serial)
-		deviceName := strings.ToLower(item.device.Serial)
+		nodeName := "dpu-node-" + strings.ToLower(item.Serial)
+		deviceName := strings.ToLower(item.Serial)
 		if len(deviceName) == 0 || len(deviceName) > 62 || len(validation.IsDNS1123Label(deviceName)) != 0 {
 			return nil, nil, fmt.Errorf("selected serial cannot produce a valid DPF device name")
 		}
 		dpuName := rules.GeneratedDPUEName(nodeName, deviceName)
-		set, found := sets[strings.ToLower(item.device.Serial)]
+		set, found := sets[strings.ToLower(item.Serial)]
 		if !found {
 			return nil, nil, fmt.Errorf("retained DPUDeployment has no exact selector for a selected serial")
 		}
-		result[index] = activationSelectedDevice{item: item, receipt: enrollment.Devices[index], device: *device, host: *host, adapter: adapters[0],
+		result[index] = currentSelectedDevice{retained: item, device: *device, host: *host, adapter: adapters[0],
 			hostTarget: hostTargets[0], nodeName: nodeName, dpuName: dpuName, dpuSet: set}
 		groups[host.ID] = append(groups[host.ID], index)
 	}
@@ -784,14 +801,18 @@ func (s activationSelectedDevice) deviceName() string { return strings.ToLower(s
 // Read only the qualified consumed references; other controller-populated
 // template fields retain their existing dedicated activation checks.
 
-func activationDPUSetMatches(rules *controllercontract.Rules, set *unstructured.Unstructured, selected activationSelectedDevice) bool {
+func activationDPUSetMatches(rules *controllercontract.Rules, object *unstructured.Unstructured, selected activationSelectedDevice) bool {
+	return currentActivationDPUSetMatches(rules, object, currentSelection(selected))
+}
+
+func currentActivationDPUSetMatches(rules *controllercontract.Rules, set *unstructured.Unstructured, selected currentSelectedDevice) bool {
 	software, flavor, err := rules.ActivationSetReferences(set)
 	wantSoftware, wantFlavor, wantErr := rules.ActivationSetReferences(selected.dpuSet)
 	if err != nil || wantErr != nil || software != wantSoftware || flavor != wantFlavor {
 		return false
 	}
 	selector, found, err := unstructured.NestedStringMap(set.Object, "spec", "dpuDeviceSelector", "matchLabels")
-	if err != nil || !found || !reflect.DeepEqual(selector, selected.item.device.SelectorLabels) {
+	if err != nil || !found || !reflect.DeepEqual(selector, selected.retained.SelectorLabels) {
 		return false
 	}
 	clusterSelector, found, err := unstructured.NestedStringMap(set.Object, "spec", "dpuTemplate", "spec", "cluster", "selector", "matchLabels")
@@ -810,7 +831,11 @@ func activationDPUSetMatches(rules *controllercontract.Rules, set *unstructured.
 	return err == nil && (!found || !force)
 }
 
-func activationDPUMatches(rules *controllercontract.Rules, dpu *unstructured.Unstructured, selected activationSelectedDevice) bool {
+func activationDPUMatches(rules *controllercontract.Rules, object *unstructured.Unstructured, selected activationSelectedDevice) bool {
+	return currentActivationDPUMatches(rules, object, currentSelection(selected))
+}
+
+func currentActivationDPUMatches(rules *controllercontract.Rules, dpu *unstructured.Unstructured, selected currentSelectedDevice) bool {
 	wantSoftware, wantFlavor, wantErr := rules.ActivationSetReferences(selected.dpuSet)
 	software, softwareFound, softwareErr := unstructured.NestedString(dpu.Object, "spec", "blueFieldSoftware")
 	flavor, flavorFound, flavorErr := unstructured.NestedString(dpu.Object, "spec", "dpuFlavor")
@@ -821,7 +846,7 @@ func activationDPUMatches(rules *controllercontract.Rules, dpu *unstructured.Uns
 	deviceName, _, deviceErr := unstructured.NestedString(dpu.Object, "spec", "dpuDeviceName")
 	serial, _, serialErr := unstructured.NestedString(dpu.Object, "spec", "serialNumber")
 	labels := dpu.GetLabels()
-	return nodeErr == nil && deviceErr == nil && serialErr == nil && nodeName == selected.nodeName && deviceName == selected.deviceName() && serial == selected.item.device.Serial &&
+	return nodeErr == nil && deviceErr == nil && serialErr == nil && nodeName == selected.nodeName && deviceName == selected.deviceName() && serial == selected.retained.Serial &&
 		labels[activationDPUSetNameLabel] == selected.dpuSet.GetName() && labels[activationDPUSetNSLabel] == selected.dpuSet.GetNamespace() && labels[activationDPUDeviceLabel] == selected.deviceName()
 }
 

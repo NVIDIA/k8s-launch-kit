@@ -55,15 +55,29 @@ func newAPIClient(ctx context.Context, request config.Request, expected generati
 	if err != nil {
 		return nil, err
 	}
-	d, err := dynamic.NewForConfig(access.REST)
+	c, err := apiClientForAccess(access, expected, version, collector, tenantDial, limiter)
 	if err != nil {
-		return nil, fmt.Errorf("cannot construct bound management resource client")
+		return nil, err
 	}
-	c := &APIClient{access: access, dynamic: d, expected: expected, version: version, enrollmentCollector: collector, tenantDial: tenantDial, requestLimiter: limiter}
 	if err := c.VerifyIdentity(ctx); err != nil {
 		return nil, err
 	}
 	return c, nil
+}
+
+// apiClientForAccess assembles transports from one already frozen explicit
+// access snapshot. It performs no remote reads or lifecycle effects.
+func apiClientForAccess(access managementaccess.Client, expected generation.ManagementIdentity, version string,
+	collector enrollmentBMCCollector, tenantDial tenantDialContext, limiter flowcontrol.RateLimiter,
+) (*APIClient, error) {
+	if access.REST == nil || access.Client == nil || expected.APIEndpoint == "" || expected.SystemNamespaceUID == "" || expected.TrustDigest == "" || version == "" {
+		return nil, fmt.Errorf("bound access and complete generated management identity are required")
+	}
+	d, err := dynamic.NewForConfig(access.REST)
+	if err != nil {
+		return nil, fmt.Errorf("cannot construct bound management resource client")
+	}
+	return &APIClient{access: access, dynamic: d, expected: expected, version: version, enrollmentCollector: collector, tenantDial: tenantDial, requestLimiter: limiter}, nil
 }
 
 // VerifyIdentity refreshes the cluster UID and server version through the same
@@ -94,6 +108,19 @@ func (c *APIClient) Get(ctx context.Context, desired *unstructured.Unstructured)
 	if err := c.VerifyIdentity(ctx); err != nil {
 		return nil, err
 	}
+	object, err := c.getCurrentResource(ctx, desired)
+	if err != nil {
+		return nil, err
+	}
+	if err := c.VerifyIdentity(ctx); err != nil {
+		return nil, err
+	}
+	return object, nil
+}
+
+// getCurrentResource is shared by guarded deployment reads and finite validation
+// collections. The caller owns source identity verification.
+func (c *APIClient) getCurrentResource(ctx context.Context, desired *unstructured.Unstructured) (*unstructured.Unstructured, error) {
 	resource, err := c.resource(ctx, desired, true)
 	if err != nil {
 		return nil, err
@@ -101,9 +128,6 @@ func (c *APIClient) Get(ctx context.Context, desired *unstructured.Unstructured)
 	object, err := resource.Get(ctx, desired.GetName(), metav1.GetOptions{})
 	if err != nil {
 		return nil, safeAPIError("read resource", err)
-	}
-	if err := c.VerifyIdentity(ctx); err != nil {
-		return nil, err
 	}
 	return object, nil
 }
@@ -145,6 +169,17 @@ func (c *APIClient) List(ctx context.Context, template *unstructured.Unstructure
 	if err := c.VerifyIdentity(ctx); err != nil {
 		return nil, err
 	}
+	objects, err := c.listCurrentResources(ctx, template, selector)
+	if err != nil {
+		return nil, err
+	}
+	if err := c.VerifyIdentity(ctx); err != nil {
+		return nil, err
+	}
+	return objects, nil
+}
+
+func (c *APIClient) listCurrentResources(ctx context.Context, template *unstructured.Unstructured, selector string) ([]unstructured.Unstructured, error) {
 	resource, err := c.resource(ctx, template, false)
 	if err != nil {
 		return nil, err
@@ -163,9 +198,6 @@ func (c *APIClient) List(ctx context.Context, template *unstructured.Unstructure
 		objects = append(objects, page.Items...)
 		cursor = page.GetContinue()
 		if cursor == "" {
-			if err := c.VerifyIdentity(ctx); err != nil {
-				return nil, err
-			}
 			return objects, nil
 		}
 		if seen[cursor] {
@@ -182,6 +214,12 @@ func (c *APIClient) resource(ctx context.Context, object *unstructured.Unstructu
 	}
 	gvk := object.GroupVersionKind()
 	namespaced, known := bundle.ResourceNamespaced(gvk.Group, gvk.Kind)
+	// ReplicaSets are observed controller children, never retained desired
+	// resources. Authorize only their namespace-bound apps/v1 List path; keep
+	// Get/Create and the bundle's render/mutation kind registry unchanged.
+	if !requireName && gvk.Group == "apps" && gvk.Version == "v1" && gvk.Kind == "ReplicaSet" && object.GetNamespace() != "" {
+		namespaced, known = true, true
+	}
 	if !known || gvk.Version == "" || (requireName && object.GetName() == "") {
 		return nil, fmt.Errorf("resource requires a reviewed kind, API version and explicit identity")
 	}

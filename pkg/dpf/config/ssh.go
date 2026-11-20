@@ -69,20 +69,30 @@ func SSHOrigin(address string) (string, error) {
 }
 
 func resolveSSHAccess(c Credential, endpoint SSH, base string) (*SSHAccess, error) {
-	if c.Username == "" || strings.ContainsAny(c.Username, "\x00\r\n") {
-		return nil, fmt.Errorf("SSH credential requires a username")
+	if err := validateSSHAccess(c, endpoint); err != nil {
+		return nil, err
 	}
-	a := &SSHAccess{username: c.Username, Sudo: endpoint.Sudo != nil && *endpoint.Sudo}
+	a, err := resolveSSHAuthentication(c, base)
+	if err != nil {
+		return nil, err
+	}
+	a.knownHosts, err = resolveSSHTrust(endpoint, base)
+	if err != nil {
+		return nil, err
+	}
+	a.Sudo = endpoint.Sudo != nil && *endpoint.Sudo
+	return a, nil
+}
+
+func resolveSSHAuthentication(c Credential, base string) (*SSHAccess, error) {
+	a := &SSHAccess{username: c.Username}
 	if c.PrivateKeyRef != nil {
-		if c.PasswordRef.Env != nil || c.PasswordRef.File != nil || c.PrivateKeyRef.File == "" {
-			return nil, fmt.Errorf("SSH requires exactly one passwordRef or privateKeyRef")
-		}
 		key, err := regularFile(resolvePath(base, c.PrivateKeyRef.File), 1<<20)
 		if err != nil {
-			return nil, fmt.Errorf("cannot resolve SSH private key")
+			return nil, &accessMaterialError{message: "cannot resolve SSH private key"}
 		}
 		if _, err := ssh.ParsePrivateKey(key); err != nil {
-			return nil, fmt.Errorf("invalid or encrypted SSH private key")
+			return nil, &accessMaterialError{message: "invalid or encrypted SSH private key"}
 		}
 		a.privateKey = key
 	} else {
@@ -92,13 +102,32 @@ func resolveSSHAccess(c Credential, endpoint SSH, base string) (*SSHAccess, erro
 		}
 		a.password = password
 	}
-	if endpoint.KnownHostsFile == "" {
-		return nil, fmt.Errorf("knownHostsFile is required")
-	}
+	return a, nil
+}
+
+func resolveSSHTrust(endpoint SSH, base string) ([]byte, error) {
 	known, err := regularFile(resolvePath(base, endpoint.KnownHostsFile), 1<<20)
 	if err != nil || len(bytes.TrimSpace(known)) == 0 {
-		return nil, fmt.Errorf("cannot resolve nonempty SSH knownHostsFile")
+		return nil, &accessMaterialError{message: "cannot resolve nonempty SSH knownHostsFile"}
 	}
-	a.knownHosts = known
-	return a, nil
+	return known, nil
+}
+
+func validateSSHAccess(c Credential, endpoint SSH) error {
+	if c.Username == "" || strings.ContainsAny(c.Username, "\x00\r\n") {
+		return fmt.Errorf("SSH credential requires a username")
+	}
+	if c.PrivateKeyRef != nil {
+		if c.PasswordRef.Env != nil || c.PasswordRef.File != nil || c.PrivateKeyRef.File == "" {
+			return fmt.Errorf("SSH requires exactly one passwordRef or privateKeyRef")
+		}
+	} else {
+		if err := validatePasswordRef(c.PasswordRef); err != nil {
+			return err
+		}
+	}
+	if endpoint.KnownHostsFile == "" {
+		return fmt.Errorf("knownHostsFile is required")
+	}
+	return nil
 }

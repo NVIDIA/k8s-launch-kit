@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"reflect"
 	"strings"
+	"sync"
 	"testing"
 
 	"github.com/nvidia/k8s-launch-kit/pkg/dpf/bootstrap"
@@ -327,4 +328,122 @@ func marshalYAML(t *testing.T, value any) []byte {
 
 func structArtifact() config.Artifact {
 	return config.Artifact{URL: "https://mutated.example/fw.pldm", SHA256: strings.Repeat("a", 64)}
+}
+
+// Exported structs can be overwritten even when all their fields are private.
+// Retained owners must therefore be isolated from every exported outer wrapper.
+func TestPlanRetainsIsolatedBundleAndConcurrentSchemas(t *testing.T) {
+	retained, err := Generate(generationInputs(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	plan, err := LoadPlan(retained)
+	if err != nil {
+		t.Fatal(err)
+	}
+	wantIndex, wantFiles := retained.Index(), retained.Files()
+	var object *unstructured.Unstructured
+	for _, stage := range plan.Stages() {
+		for _, document := range stage.Documents() {
+			if candidate := document.ObjectCopy(); candidate.GetKind() == "DPUCluster" {
+				object = candidate
+			}
+		}
+	}
+	if object == nil {
+		t.Fatal("fixture lacks DPUCluster")
+	}
+	before := object.DeepCopy()
+	want, err := plan.ObjectSchemas().DefaultedCopy(object)
+	if err != nil {
+		t.Fatal(err)
+	}
+	*retained = bundle.Bundle{}
+	*plan.Bundle() = bundle.Bundle{}
+	*plan.ObjectSchemas() = ObjectSchemas{}
+	if !reflect.DeepEqual(wantIndex, plan.Bundle().Index()) || !reflect.DeepEqual(wantFiles, plan.Bundle().Files()) {
+		t.Fatal("replacing original or accessor bundle changed the retained owner")
+	}
+	if _, err := LoadPlan(plan.Bundle()); err != nil {
+		t.Fatalf("independent consumer lost validated bytes: %v", err)
+	}
+	invalid := object.DeepCopy()
+	_ = unstructured.SetNestedField(invalid.Object, "invalid", "spec", "notInSelectedSchema")
+	invalidBefore := invalid.DeepCopy()
+	var workers sync.WaitGroup
+	for i := 0; i < 8; i++ {
+		workers.Add(1)
+		go func() {
+			defer workers.Done()
+			for j := 0; j < 3; j++ {
+				wrapper := plan.ObjectSchemas()
+				got, err := wrapper.DefaultedCopy(object)
+				if err != nil || !reflect.DeepEqual(got, want) {
+					t.Errorf("shared defaulting changed output: %v", err)
+					return
+				}
+				// Mutate nested maps in the returned resource/defaults, then
+				// replace both wrappers while other consumers keep reading.
+				_ = unstructured.SetNestedField(got.Object, "changed", "spec", "clusterEndpoint", "keepalived", "vip")
+				_ = unstructured.SetNestedField(got.Object, int64(99), "spec", "maxNodes")
+				if result, err := wrapper.DefaultedCopy(invalid); err == nil || result != nil {
+					t.Error("shared schema accepted invalid resource")
+				}
+				*wrapper = ObjectSchemas{}
+				*plan.Bundle() = bundle.Bundle{}
+			}
+		}()
+	}
+	workers.Wait()
+	// Exercise nested collection outputs from every served generated resource,
+	// including list-bearing HBN configuration as well as scalar CRD defaults.
+	slicesChanged := 0
+	for _, stage := range plan.Stages() {
+		for _, document := range stage.Documents() {
+			input := document.ObjectCopy()
+			defaulted, err := plan.ObjectSchemas().DefaultedCopy(input)
+			if err != nil { // Core resources have no selected DPF CRD schema.
+				if input.GroupVersionKind().Group == "" {
+					continue
+				}
+				t.Fatal(err)
+			}
+			expected := defaulted.DeepCopy()
+			slicesChanged += mutatePlanTestCollections(defaulted.Object)
+			again, err := plan.ObjectSchemas().DefaultedCopy(input)
+			if err != nil || !reflect.DeepEqual(again, expected) {
+				t.Fatalf("nested output mutation changed later %s defaults: %v", input.GetKind(), err)
+			}
+		}
+	}
+	if slicesChanged == 0 {
+		t.Fatal("fixture did not exercise a nested slice output")
+	}
+	if !reflect.DeepEqual(object, before) || !reflect.DeepEqual(invalid, invalidBefore) {
+		t.Fatal("shared defaulting mutated input")
+	}
+	if got, err := plan.ObjectSchemas().DefaultedCopy(object); err != nil || !reflect.DeepEqual(got, want) {
+		t.Fatalf("shared default state changed: %v", err)
+	}
+}
+
+// mutatePlanTestCollections corrupts only consumer-owned output containers.
+func mutatePlanTestCollections(value any) int {
+	slicesChanged := 0
+	switch current := value.(type) {
+	case map[string]any:
+		for _, nested := range current {
+			slicesChanged += mutatePlanTestCollections(nested)
+		}
+		current["consumer-only"] = "changed"
+	case []any:
+		for _, nested := range current {
+			slicesChanged += mutatePlanTestCollections(nested)
+		}
+		if len(current) > 0 {
+			current[0] = "changed"
+			slicesChanged++
+		}
+	}
+	return slicesChanged
 }

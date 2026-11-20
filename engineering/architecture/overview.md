@@ -293,8 +293,15 @@ separate authority. Each resume repeats this prerequisite, and runtime resolves
 metadata afresh; an early identity is not a future-pull or traffic receipt. It
 then refreshes prerequisites and runs management, tenant, enrollment, software,
 workload declarations, activation, host networking and native HBN runtime checks.
-It never enters a Host lifecycle service. DPF standalone validation and the root
-pipeline remain capability rejections before client construction.
+It never enters a Host lifecycle service. The DPF root pipeline remains a
+capability rejection before client construction. Standalone DPF validation binds
+its own app service: pure retained preparation → immutable validation plan →
+read/diagnostic observer → shared result evaluation → atomic HTML publication.
+The observer reuses native current-state readers without deployment journals,
+reset callbacks, install/apply methods or host-configuration authority. The
+consumer-owned `validation.Observer` and `RuntimeSession` interfaces separate
+resource polling from bounded runtime measurements. Host and DPF HTML share
+`validationreport` page rendering while preserving target-specific acceptance.
 
 DPF deploy reserves one typed, nonsecret ConfigMap checkpoint in the existing
 operator namespace before DPUDeployment creation. `--resume` binds its exact
@@ -325,6 +332,14 @@ management/tenant readers, plus explicit bounded command, traffic and image I/O.
 Its inputs and lease closure retain no operation store, first-create callback,
 installer, selector/activation patcher, resetter or host configurer. The retained
 plan, bundle and compiled schemas remain immutable data owners.
+`LoadPlan` regenerates and exactly compares the retained bundle before management
+access, retaining its immutable bundle and the schemas used for strict generation
+validation. `RunRequest` accepts this Plan alone; each Run composes fresh execution
+with current deadlines, access, identity, authorization and lifecycle fences. Plan
+accessors return isolated outer wrappers over private immutable data. Management
+desired preparation then reuses that
+validated stage's raw operator projection and explicit Helm values for chart
+comparison and readiness; standalone operator requests still render their inputs.
 Management preparation selects one concrete immutable controller rules value from
 the validated retained release, profile and renderer, with the existing compiled
 `generation.ObjectSchemas`, before opening management access. Catalog discovery
@@ -606,3 +621,39 @@ diagram node is renamed, moved, added, or removed, update its adjacent edges in
 the same commit. Keep implementation plans separate from this page: this
 document describes the current architecture, while files such as the
 [DPF integration roadmap](dpf-integration-plan.md) describe intended changes.
+
+## Standalone DPF validation composition
+
+```mermaid
+flowchart TD
+    CLI[validate command] --> Target[DPF target adapter: signals and presentation]
+    Target --> App[DPF app: retained inputs and protected report destination]
+    App --> Plan[Validation plan and runner]
+    App --> Reader[Native read/diagnostic observer]
+    Plan --> Reader
+    Reader --> API[Existing management and tenant readers]
+    Reader --> Physical[Shared Redfish / SSH / switch collectors]
+    Reader --> Runtime[Shared current HBN / route / host traffic checks]
+    Plan --> Result[Canonical checks, coverage and verdict]
+    Result --> Terminal[Text / JSON / exit status]
+    Result --> DPFHTML[DPF report view]
+    HostHTML[Existing Host report view] --> Page[Shared validationreport page renderer]
+    DPFHTML --> Page
+    Page --> DPFFile[DPF app: protected atomic HTML publication]
+    Page --> HostFile[Existing Host report publication]
+```
+
+The deployment package implements the consumer-owned observation interfaces to
+reuse current-state helpers; it does not give the validation runner lifecycle
+methods. Resource-only mode omits physical and runtime reads. Polling refreshes
+current observations against one immutable desired plan; runtime sessions retain
+one current cohort and invalidate measurements when its binding changes.
+
+Current management and tenant reads are grouped into finite validation capture
+scopes. Each scope verifies the frozen sources at entry and exit, collects fresh
+objects through narrower read-only ports, and accepts its result only after the
+closing checks succeed. Resource completions remain provisional until the source
+and semantic comparisons close. Identity results are not cached across captures;
+pre/post-measurement and final cohort checks remain separate. Deployment readers
+retain their individual guarded operations. This is a bounded consistency check,
+not an atomic Kubernetes snapshot or a guarantee to observe every transient change.

@@ -5,6 +5,11 @@ SPDX-License-Identifier: Apache-2.0
 
 # Validation
 
+Omitting `--target` selects Host validation, described below. For a generated DPF
+HBN-BGP deployment, follow the [DPF validation guide](dpf-validation.md) and
+[standalone procedure](dpf-workflows.md#hbn-bgp-validation). DPF requires explicit
+inventory and bundle paths and has its own resource/full scope and JSON result.
+
 `l8k validate` checks generated manifests against the live cluster, runs
 configured data-plane checks, and writes an acceptance report. Read the
 [acceptance outcomes](#acceptance-outcomes) together with the test coverage:

@@ -11,6 +11,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/url"
+	"sort"
 	"strings"
 
 	"github.com/nvidia/k8s-launch-kit/pkg/dpf/config"
@@ -19,6 +20,7 @@ import (
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/rest"
 	"k8s.io/client-go/tools/clientcmd"
+	clientcmdapi "k8s.io/client-go/tools/clientcmd/api"
 	"k8s.io/client-go/util/flowcontrol"
 )
 
@@ -35,22 +37,9 @@ type Client struct {
 // limiter preserves client-go pacing; an explicit limiter changes only pacing.
 func Open(r config.Request, limiter flowcontrol.RateLimiter) (Client, error) {
 	rules := &clientcmd.ClientConfigLoadingRules{ExplicitPath: r.Kubeconfig}
-	content, err := config.ReadReference(r.Kubeconfig, 16<<20)
+	raw, err := loadLocalConfiguration(r.Kubeconfig)
 	if err != nil {
-		return Client{}, fmt.Errorf("invalid bounded management kubeconfig")
-	}
-	raw, err := clientcmd.Load(content)
-	if err != nil {
-		return Client{}, fmt.Errorf("cannot load explicit management kubeconfig")
-	}
-	for _, a := range raw.AuthInfos {
-		a.LocationOfOrigin = r.Kubeconfig
-	}
-	for _, c := range raw.Clusters {
-		c.LocationOfOrigin = r.Kubeconfig
-	}
-	if err := clientcmd.ResolveLocalPaths(raw); err != nil {
-		return Client{}, fmt.Errorf("cannot resolve kubeconfig file references")
+		return Client{}, err
 	}
 	selected := r.Context
 	if selected == "" {
@@ -61,6 +50,65 @@ func Open(r config.Request, limiter flowcontrol.RateLimiter) (Client, error) {
 			}
 		}
 	}
+	return openSelectedConfiguration(raw, selected, rules, r, limiter)
+}
+
+func loadLocalConfiguration(filename string) (*clientcmdapi.Config, error) {
+	content, err := config.ReadReference(filename, 16<<20)
+	if err != nil {
+		return nil, fmt.Errorf("invalid bounded management kubeconfig")
+	}
+	raw, err := clientcmd.Load(content)
+	if err != nil {
+		return nil, fmt.Errorf("cannot load explicit management kubeconfig")
+	}
+	for _, a := range raw.AuthInfos {
+		if a == nil {
+			return nil, fmt.Errorf("management kubeconfig contains an invalid auth entry")
+		}
+		a.LocationOfOrigin = filename
+	}
+	for _, c := range raw.Clusters {
+		if c == nil {
+			return nil, fmt.Errorf("management kubeconfig contains an invalid cluster entry")
+		}
+		c.LocationOfOrigin = filename
+	}
+	if err := clientcmd.ResolveLocalPaths(raw); err != nil {
+		return nil, fmt.Errorf("cannot resolve kubeconfig file references")
+	}
+	return raw, nil
+}
+
+// ReferencedFiles enumerates every declared local auth/trust reference, including
+// unused contexts. It reads only the bounded kubeconfig, never the referenced
+// credentials, and neither runs plugins nor contacts the cluster.
+func ReferencedFiles(filename string) ([]string, error) {
+	raw, err := loadLocalConfiguration(filename)
+	if err != nil {
+		return nil, err
+	}
+	files := []string{filename}
+	for _, auth := range raw.AuthInfos {
+		if auth.Exec != nil || auth.AuthProvider != nil {
+			return nil, fmt.Errorf("cannot enumerate local file references in kubeconfig authentication plugins")
+		}
+		for _, path := range []string{auth.ClientCertificate, auth.ClientKey, auth.TokenFile} {
+			if path != "" {
+				files = append(files, path)
+			}
+		}
+	}
+	for _, cluster := range raw.Clusters {
+		if cluster.CertificateAuthority != "" {
+			files = append(files, cluster.CertificateAuthority)
+		}
+	}
+	sort.Strings(files)
+	return files, nil
+}
+
+func openSelectedConfiguration(raw *clientcmdapi.Config, selected string, rules *clientcmd.ClientConfigLoadingRules, r config.Request, limiter flowcontrol.RateLimiter) (Client, error) {
 	contextConfig := raw.Contexts[selected]
 	if contextConfig == nil {
 		return Client{}, fmt.Errorf("management context selection is required")

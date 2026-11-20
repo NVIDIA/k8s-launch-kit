@@ -158,5 +158,13 @@ func TestExternalRebootExpiresWhileOpeningCommandChannelWithoutExec(t *testing.T
 	case <-time.After(time.Second):
 		t.Fatal("expired channel setup did not return")
 	}
+	runner := session.(*externalRebootSession).runner
+	Expect(runner.closed).To(BeTrue())
+	_, err = runner.Run(context.Background(), "after-cancel", "query")
+	Expect(Code(err)).To(Equal("SSH_COMMAND_FAILED"))
+	retryCtx, stopRetry := context.WithTimeout(context.Background(), time.Second)
+	defer stopRetry()
+	Expect(Code(session.RebootSystemLevel(retryCtx))).To(Equal("SSH_CONFIGURATION_INVALID"))
+	Expect(channels.Load()).To(Equal(int32(4)))
 	Expect(reboots.Load()).To(BeZero())
 }

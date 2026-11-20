@@ -4,9 +4,13 @@
 package app
 
 import (
+	"context"
 	"encoding/json"
+	"errors"
 	"os"
+	"path/filepath"
 
+	"github.com/nvidia/k8s-launch-kit/pkg/dpf/bundle"
 	"github.com/nvidia/k8s-launch-kit/pkg/dpf/config"
 	"github.com/nvidia/k8s-launch-kit/pkg/dpf/generation"
 	"github.com/nvidia/k8s-launch-kit/pkg/dpf/inventory"
@@ -24,6 +28,42 @@ func deploymentSite() config.Input {
 }
 
 var _ = Describe("DPF deployment input binding", func() {
+	It("rejects a structurally valid rehashed altered bundle before access or report creation", func() {
+		_, retained := generatedUseCaseSite(deploymentSite())
+		index, files := retained.Index(), retained.Files()
+		index.BundleDigest = ""
+		for i := range index.Files {
+			index.Files[i].SHA256 = ""
+		}
+		changed := false
+		for i := range files {
+			for _, record := range index.Files {
+				if record.Path == files[i].Path && record.Role == bundle.Projection {
+					files[i].Data = append(files[i].Data, []byte("\n# unreviewed projection change\n")...)
+					changed = true
+				}
+			}
+		}
+		Expect(changed).To(BeTrue())
+		tampered, err := bundle.New(index, files)
+		Expect(err).NotTo(HaveOccurred())
+		root, err := filepath.EvalSymlinks(GinkgoT().TempDir())
+		Expect(err).NotTo(HaveOccurred())
+		dir := filepath.Join(root, "retained")
+		_, err = tampered.Publish(context.Background(), dir)
+		Expect(err).NotTo(HaveOccurred())
+		// A later configuration/access read would fail differently; the Plan
+		// constructor must reject first, before allocating any report directory.
+		result, err := Deploy(context.Background(), DeploymentRequest{DeploymentFiles: dir, Inventory: filepath.Join(root, "must-not-open")})
+		Expect(result).To(BeNil())
+		var preparation *PreparationError
+		Expect(errors.As(err, &preparation)).To(BeTrue())
+		Expect(preparation.Stage).To(Equal(DeploymentPlan))
+		reports, err := filepath.Glob(filepath.Join(root, "l8k-dpf-deploy-*"))
+		Expect(err).NotTo(HaveOccurred())
+		Expect(reports).To(BeEmpty())
+	})
+
 	It("rejects changed physical hosts and associations", func() {
 		t := GinkgoT()
 		before := deploymentSite().Site.Inventory
@@ -53,7 +93,7 @@ var _ = Describe("DPF deployment input binding", func() {
 					t.Fatal(err)
 				}
 				test.change(&current)
-				if err := verifyDeploymentPhysicalBindings(before, &current); (err == nil) != test.valid {
+				if err := config.VerifyRetainedPhysicalBindings(before, &current); (err == nil) != test.valid {
 					t.Fatalf("valid=%v, got %v", test.valid, err)
 				}
 			}

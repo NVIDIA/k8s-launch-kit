@@ -7,6 +7,7 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"github.com/nvidia/k8s-launch-kit/pkg/dpf/chartfetch"
 	"os"
 	"path/filepath"
 	"strings"
@@ -78,7 +79,7 @@ func Deploy(ctx context.Context, r DeploymentRequest) (*deployment.RunResult, er
 	}
 	progress.Info("[RUNNING] Deployment records: %s", runDir)
 	result, runErr := deployment.Run(ctx, deployment.RunRequest{
-		Bundle: retained, Access: access, Resume: r.Resume,
+		Plan: plan, Access: access, Resume: r.Resume,
 		ReportPath: filepath.Join(runDir, "deployment.jsonl"), ProbeJournalPath: filepath.Join(runDir, "probe-resources.json"),
 		VerifyPrerequisites: DeploymentPrerequisites(retained, runDir, r.Resume != nil), VerifyChartSource: verifyDeploymentChart,
 		Rebooter:     rebooter,
@@ -93,7 +94,7 @@ func verifyDeploymentChart(ctx context.Context, plan *generation.Plan) (deployme
 		return check, fmt.Errorf("retained deployment plan is required")
 	}
 	selected := plan.Intent().Generation
-	data, err := DownloadChart(ctx, strings.TrimSuffix(selected.ChartRepository, "/")+"/charts/"+selected.ChartName+"-"+selected.ChartVersion+".tgz")
+	data, err := (chartfetch.Downloader{}).Fetch(ctx, strings.TrimSuffix(selected.ChartRepository, "/")+"/charts/"+selected.ChartName+"-"+selected.ChartVersion+".tgz")
 	if err != nil {
 		return check, err
 	}

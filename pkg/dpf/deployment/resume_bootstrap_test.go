@@ -136,7 +136,7 @@ func TestRunResumeRestoresPendingBootstrapBeforeTenantOrEffects(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	execution, err := prepareManagementExecution(retained, time.Minute)
+	execution, err := loadManagementExecution(retained, time.Minute)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -189,7 +189,7 @@ func TestRunResumeRestoresPendingBootstrapBeforeTenantOrEffects(t *testing.T) {
 			cancelRead = cancel
 			mu.Unlock()
 			provider := false
-			request := imagePrerequisiteRunRequest(t, retained, func(context.Context, config.Request, *generation.Plan, PrerequisitePhase) (PrerequisiteVerification, error) {
+			request := imagePrerequisiteRunRequest(t, execution.plan, func(context.Context, config.Request, *generation.Plan, PrerequisitePhase) (PrerequisiteVerification, error) {
 				provider = true
 				return PrerequisiteVerification{}, errors.New("must not reach fresh provider")
 			})

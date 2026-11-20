@@ -579,7 +579,7 @@ func (r nativeNoReboot) ObserveExternal(context.Context, ActivationRequest, stri
 func (h *nativeRuntimeHarness) run() (RunResult, []byte, string, error) {
 	h.t.Helper()
 	dir := h.t.TempDir()
-	request := RunRequest{Resume: &OperationRef{Namespace: h.operation.Namespace, Name: h.operation.Name, UID: h.operation.UID}, Bundle: h.fixture.prepared.execution.retained, Access: h.access, ReportPath: filepath.Join(dir, "report.jsonl"), ProbeJournalPath: filepath.Join(dir, "probes.json"), PollInterval: time.Millisecond, RequestTimeout: 2 * time.Minute, MaxSoftwareBytes: 1 << 20, Rebooter: nativeNoReboot{h: h}}
+	request := RunRequest{Resume: &OperationRef{Namespace: h.operation.Namespace, Name: h.operation.Name, UID: h.operation.UID}, Plan: h.fixture.prepared.execution.plan, Access: h.access, ReportPath: filepath.Join(dir, "report.jsonl"), ProbeJournalPath: filepath.Join(dir, "probes.json"), PollInterval: time.Millisecond, RequestTimeout: 2 * time.Minute, MaxSoftwareBytes: 1 << 20, Rebooter: nativeNoReboot{h: h}}
 	request.VerifyChartSource = func(context.Context, *generation.Plan) (PreflightCheck, error) {
 		h.mu.Lock()
 		defer h.mu.Unlock()

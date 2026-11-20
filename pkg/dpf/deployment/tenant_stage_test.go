@@ -165,7 +165,7 @@ func TestRunTenantStageStopsBeforeCreateOnPrerequisiteFailure(t *testing.T) {
 				if err != nil {
 					t.Fatal(err)
 				}
-				execution, err = prepareManagementExecution(generated, time.Minute)
+				execution, err = loadManagementExecution(generated, time.Minute)
 				if err != nil {
 					t.Fatal(err)
 				}
@@ -250,7 +250,7 @@ func TestRunTenantStagePreservesMissingAllocationAsUnknown(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	execution, err := prepareManagementExecution(generated, time.Minute)
+	execution, err := loadManagementExecution(generated, time.Minute)
 	if err != nil {
 		t.Fatal(err)
 	}

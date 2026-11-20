@@ -46,7 +46,8 @@ Output contracts differ by command:
 | Root pipeline, `discover`, `generate` | One `JSONResult` envelope, including collected `messages`. |
 | `clean` | One result with a `cleanup` summary. |
 | Standalone `deploy` | No finalized success JSON envelope. Use the process exit status; progress is sent to stderr. |
-| `validate` | A sequence of JSON objects: manifest/version summary when full validation runs, connectivity when run, and `reportPath` when the HTML report is written. Do not parse the stream as one document. |
+| Host `validate` | A sequence of JSON objects: manifest/version summary when full validation runs, connectivity when run, and `reportPath` when the HTML report is written. Do not parse the stream as one document. |
+| DPF `validate` | One terminal result after validation starts, including partial results and actual HTML report disposition. See [DPF automation](../user/dpf-validation.md#automate-without-losing-the-result) for status-preserving capture and target-specific exit meanings. |
 | `schema` | One capability object; this command always emits JSON. |
 | `version` | One version/build object. |
 | `preset list`, `preset update`, `sosreport` | Text output; these commands do not provide a JSON success contract despite accepting the inherited flag. |

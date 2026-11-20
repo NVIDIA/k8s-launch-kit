@@ -114,6 +114,22 @@ type HBNWorkload struct {
 	ResetSafety     *ResetSafetyContract `json:"resetSafety,omitempty" yaml:"resetSafety,omitempty"`
 }
 
+// SystemNetworking pins the chart used to verify system workloads and tenant
+// API definitions for the selected native deployment.
+type SystemNetworking struct {
+	Chart             string `json:"chart" yaml:"chart"`
+	ChartRepository   string `json:"chartRepository" yaml:"chartRepository"`
+	ChartVersion      string `json:"chartVersion" yaml:"chartVersion"`
+	ChartDigest       string `json:"chartDigest" yaml:"chartDigest"`
+	CNIInstallerImage string `json:"cniInstallerImage" yaml:"cniInstallerImage"`
+	SourceRef         string `json:"sourceRef" yaml:"sourceRef"`
+}
+
+// ArchiveURL returns the public chart fetch coordinate for a resolved lock.
+func (s SystemNetworking) ArchiveURL() string {
+	return strings.TrimSuffix(s.ChartRepository, "/") + "/charts/" + s.Chart + "-" + s.ChartVersion + ".tgz"
+}
+
 // ResetSafetyContract is the exact firmware/model contract consumed by the
 // native Redfish reset-safety reader. It does not qualify broader BF4 support.
 type ResetSafetyContract struct {
@@ -139,15 +155,16 @@ type Release struct {
 	// TenantKubernetesVersion is the release-owned Kamaji tenant control-plane
 	// version. It is separate from SupportedKubernetes, which describes the
 	// management cluster running the DPF operator.
-	TenantKubernetesVersion string        `json:"tenantKubernetesVersion,omitempty" yaml:"tenantKubernetesVersion,omitempty"`
-	Operator                Operator      `json:"operator" yaml:"operator"`
-	UseCases                []string      `json:"useCases,omitempty" yaml:"useCases,omitempty"`
-	HBNWorkload             *HBNWorkload  `json:"hbnWorkload,omitempty" yaml:"hbnWorkload,omitempty"`
-	Capabilities            Capabilities  `json:"capabilities,omitempty" yaml:"capabilities,omitempty"`
-	Components              []Component   `json:"components" yaml:"components"`
-	Hardware                []HardwareBOM `json:"hardware" yaml:"hardware"`
-	Sources                 []Source      `json:"sources" yaml:"sources"`
-	Limitations             []string      `json:"limitations" yaml:"limitations"`
+	TenantKubernetesVersion string            `json:"tenantKubernetesVersion,omitempty" yaml:"tenantKubernetesVersion,omitempty"`
+	Operator                Operator          `json:"operator" yaml:"operator"`
+	UseCases                []string          `json:"useCases,omitempty" yaml:"useCases,omitempty"`
+	HBNWorkload             *HBNWorkload      `json:"hbnWorkload,omitempty" yaml:"hbnWorkload,omitempty"`
+	SystemNetworking        *SystemNetworking `json:"systemNetworking,omitempty" yaml:"systemNetworking,omitempty"`
+	Capabilities            Capabilities      `json:"capabilities,omitempty" yaml:"capabilities,omitempty"`
+	Components              []Component       `json:"components" yaml:"components"`
+	Hardware                []HardwareBOM     `json:"hardware" yaml:"hardware"`
+	Sources                 []Source          `json:"sources" yaml:"sources"`
+	Limitations             []string          `json:"limitations" yaml:"limitations"`
 }
 
 type catalog struct {
@@ -329,6 +346,11 @@ func validate(key string, r Release) error {
 	} else if r.HBNWorkload != nil || r.Capabilities.NativeOperatorProjection || r.Capabilities.BF4ProvisioningAPI {
 		return fmt.Errorf("HBN workload coordinates and native HBN capabilities require HBN-BGP support")
 	}
+	if r.SystemNetworking != nil {
+		if err := validateSystemNetworking(r, sources); err != nil {
+			return err
+		}
+	}
 	if r.SupportedKubernetes != nil && !validVersionRange(*r.SupportedKubernetes) {
 		return fmt.Errorf("invalid supported Kubernetes version range")
 	}
@@ -394,6 +416,18 @@ func validateHBNWorkload(w HBNWorkload, sources map[string]bool) error {
 	}
 	if !validResetSafetyContract(w.ResetSafety) {
 		return fmt.Errorf("invalid HBN reset-safety contract")
+	}
+	return nil
+}
+
+func validateSystemNetworking(r Release, sources map[string]bool) error {
+	s := r.SystemNetworking
+	repository, tag, tagged := strings.Cut(s.CNIInstallerImage, ":")
+	if !r.SupportsUseCase(UseCaseHBNBGP) || !r.Capabilities.NativeOperatorProjection ||
+		s.Chart != "dpu-networking" || !summaryHTTPS(s.ChartRepository) || s.ChartVersion != r.Operator.Version ||
+		!summaryDigest(s.ChartDigest) || !tagged || !hbnImageRepoPattern.MatchString(repository) ||
+		tag != s.ChartVersion || !sources[s.SourceRef] {
+		return fmt.Errorf("invalid system networking chart coordinates, CNI installer image or source")
 	}
 	return nil
 }

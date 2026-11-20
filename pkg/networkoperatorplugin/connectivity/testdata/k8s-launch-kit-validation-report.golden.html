@@ -120,6 +120,11 @@ main {
   border-color: var(--error-bd);
   color: var(--error);
 }
+.verdict-banner.verdict-warning {
+  background: var(--warn-bg);
+  border-color: var(--warn-bd);
+  color: var(--warn);
+}
 .verdict-headline {
   font-size: 18px;
   font-weight: 700;
@@ -228,26 +233,6 @@ code {
   border: 1px solid var(--border-soft);
 }
 
- 
-tr.manifest-row-has-expand > td { border-bottom-color: transparent; }
-tr.manifest-expand > td { background: var(--bg); }
-tr.manifest-expand:hover > td { background: var(--bg); }
-.manifest-expand-cell {
-  padding: 4px 14px 14px 28px !important;
-  border-bottom: 1px solid var(--border);
-}
-.manifest-expand-cell > details {
-  margin-top: 6px;
-  padding-top: 0;
-  border-top: 0;
-}
-.manifest-expand-cell > details:first-child { margin-top: 0; }
- 
-tr.manifest-expand.state-success    > td { box-shadow: inset 2px 0 0 var(--success); }
-tr.manifest-expand.state-inprogress > td { box-shadow: inset 2px 0 0 var(--warn); }
-tr.manifest-expand.state-error      > td { box-shadow: inset 2px 0 0 var(--error); }
-tr.manifest-expand.state-missing    > td { box-shadow: inset 2px 0 0 var(--missing); }
-
 details {
   margin-top: 10px;
   padding-top: 6px;
@@ -277,6 +262,64 @@ details table {
   border-radius: 6px;
 }
 details table th, details table td { padding: 6px 10px; }
+
+.summary-line {
+  font-size: 14px;
+  color: var(--text);
+  margin-bottom: 4px;
+}
+.summary-line strong { color: var(--text); font-weight: 600; }
+
+.muted { color: var(--text-muted); }
+
+.warning-list {
+  list-style: none;
+  padding-left: 0;
+}
+.warning-list li {
+  padding: 10px 14px;
+  margin-bottom: 8px;
+  border: 1px solid var(--warn-bd);
+  background: var(--warn-bg);
+  color: var(--warn);
+  border-radius: 6px;
+  font-size: 13.5px;
+}
+
+.empty {
+  color: var(--text-faint);
+  font-style: italic;
+  font-size: 13.5px;
+}
+
+footer {
+  text-align: center;
+  padding: 24px 16px 32px;
+  font-size: 12px;
+  color: var(--text-faint);
+  border-top: 1px solid var(--border);
+  margin-top: 8px;
+}
+footer strong { color: var(--text-muted); }
+
+tr.manifest-row-has-expand > td { border-bottom-color: transparent; }
+tr.manifest-expand > td { background: var(--bg); }
+tr.manifest-expand:hover > td { background: var(--bg); }
+.manifest-expand-cell {
+  padding: 4px 14px 14px 28px !important;
+  border-bottom: 1px solid var(--border);
+}
+.manifest-expand-cell > details {
+  margin-top: 6px;
+  padding-top: 0;
+  border-top: 0;
+}
+.manifest-expand-cell > details:first-child { margin-top: 0; }
+
+tr.manifest-expand.state-success    > td { box-shadow: inset 2px 0 0 var(--success); }
+tr.manifest-expand.state-inprogress > td { box-shadow: inset 2px 0 0 var(--warn); }
+tr.manifest-expand.state-error      > td { box-shadow: inset 2px 0 0 var(--error); }
+tr.manifest-expand.state-missing    > td { box-shadow: inset 2px 0 0 var(--missing); }
 
 .yaml-block {
   margin-top: 6px;
@@ -374,13 +417,6 @@ details table th, details table td { padding: 6px 10px; }
   border-radius: 4px;
 }
 
-.summary-line {
-  font-size: 14px;
-  color: var(--text);
-  margin-bottom: 4px;
-}
-.summary-line strong { color: var(--text); font-weight: 600; }
-
 .nodegroup {
   border-top: 1px solid var(--border);
   padding-top: 20px;
@@ -420,7 +456,6 @@ details table th, details table td { padding: 6px 10px; }
   border: 1px solid rgba(118, 185, 0, 0.30);
   border-radius: 10px;
 }
-.muted { color: var(--text-muted); }
 
  
 .mismatch-inline {
@@ -444,35 +479,6 @@ details table th, details table td { padding: 6px 10px; }
   border-bottom: 1px solid rgba(234, 88, 12, 0.32);
 }
 
-.warning-list {
-  list-style: none;
-  padding-left: 0;
-}
-.warning-list li {
-  padding: 10px 14px;
-  margin-bottom: 8px;
-  border: 1px solid var(--warn-bd);
-  background: var(--warn-bg);
-  color: var(--warn);
-  border-radius: 6px;
-  font-size: 13.5px;
-}
-
-.empty {
-  color: var(--text-faint);
-  font-style: italic;
-  font-size: 13.5px;
-}
-
-footer {
-  text-align: center;
-  padding: 24px 16px 32px;
-  font-size: 12px;
-  color: var(--text-faint);
-  border-top: 1px solid var(--border);
-  margin-top: 8px;
-}
-footer strong { color: var(--text-muted); }
   </style>
 </head>
 <body>
@@ -482,9 +488,9 @@ footer strong { color: var(--text-muted); }
   <dl class="meta">
     <dt>Generated</dt>           <dd>2026-05-23 11:30:00 UTC</dd>
     <dt>l8k version</dt>         <dd>v0.0.0-test</dd>
-    <dt>Kube context</dt>        <dd>kubernetes-admin@kubernetes</dd>
-    <dt>API server</dt>          <dd>v1.35.0</dd>
-    <dt>Operator namespace</dt>  <dd>network-operator</dd>
+    <dt>Kube context</dt> <dd>kubernetes-admin@kubernetes</dd>
+    <dt>API server</dt> <dd>v1.35.0</dd>
+    <dt>Operator namespace</dt> <dd>network-operator</dd>
   </dl>
 </header>
 <main>

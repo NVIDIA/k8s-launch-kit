@@ -31,8 +31,9 @@ const maxInput = 1 << 20
 // ReadSession is an authenticated, bounded SSH connection to one explicit
 // endpoint for callers that enforce their own read-only command allowlist. It
 // has no ambient configuration or endpoint fallback.
-// Calls must be made sequentially; the transport reconnects after an individual
-// command deadline but not after caller cancellation.
+// Calls must be made sequentially. A command deadline permits reconnection
+// while the caller context is active. Caller cancellation of an attempted
+// command closes the session permanently.
 type ReadSession interface {
 	Run(context.Context, string, string) (string, error)
 	RunWithInput(context.Context, string, string, []byte) (string, error)
@@ -124,18 +125,20 @@ func (r *reconnectingRunner) RunWithInput(ctx context.Context, stage, command st
 // authenticated connection's dial/reconnect deadline. It remains private to
 // this package so longer bounded capture commands do not relax identity reads.
 func (r *reconnectingRunner) RunWithInputTimeout(ctx context.Context, stage, command string, input []byte, timeout time.Duration) (string, error) {
-	if r.closed {
-		return "", &Error{Code: "SSH_COMMAND_FAILED", Stage: stage, Tool: commandTool(command)}
-	}
 	if ctx == nil || len(input) > maxInput || timeout <= 0 {
 		return "", &Error{Code: "SSH_CONFIGURATION_INVALID", Stage: stage, Tool: commandTool(command)}
 	}
+	// Keep the cancellation diagnostic for callers that continue reporting
+	// observations with an already-canceled context.
 	if err := ctx.Err(); err != nil {
 		code := "SSH_TIMEOUT_OR_CANCELLED"
 		if stage == externalRebootStage {
 			code = "SSH_REBOOT_NOT_STARTED"
 		}
 		return "", &Error{Code: code, Stage: stage, Tool: commandTool(command)}
+	}
+	if r.closed {
+		return "", &Error{Code: "SSH_COMMAND_FAILED", Stage: stage, Tool: commandTool(command)}
 	}
 	if r.reconnectErr != nil {
 		return "", r.reconnectErr
@@ -153,7 +156,11 @@ func (r *reconnectingRunner) RunWithInputTimeout(ctx context.Context, stage, com
 		r.reconnect = false
 	}
 	text, err := r.client.RunWithInputTimeout(ctx, stage, command, input, timeout)
-	if Code(err) == "SSH_TIMEOUT_OR_CANCELLED" && ctx.Err() == nil {
+	if ctx.Err() != nil {
+		// Caller cancellation abandons the transport. Close it before any later
+		// call can try to open another channel on the canceled connection.
+		_ = r.Close()
+	} else if Code(err) == "SSH_TIMEOUT_OR_CANCELLED" {
 		// Run's private command deadline expired. Its cancellation hook closed
 		// this transport to interrupt an unresponsive channel; reconnect before
 		// the next independent read, with the original endpoint and trust.

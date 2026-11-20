@@ -10,8 +10,10 @@ import (
 	"strings"
 
 	"github.com/nvidia/k8s-launch-kit/pkg/dpf/deployment/internal/controllercontract"
+	"github.com/nvidia/k8s-launch-kit/pkg/dpf/generation"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/apimachinery/pkg/util/validation"
 )
 
@@ -25,13 +27,21 @@ import (
 func compileHBNRuntimeBinding(execution *managementVerificationInputs, activation activationStageReceipt, fence hostNetworkLeaseFence,
 	service *unstructured.Unstructured, interfaces []unstructured.Unstructured, image hbnPodImageIdentity,
 ) (hbnPodBindingIntent, error) {
+	if execution == nil || execution.plan == nil || execution.reconciler == nil || !image.valid() {
+		return hbnPodBindingIntent{}, fmt.Errorf("HBN_RUNTIME_EXPECTATION_MISMATCH")
+	}
+	return compileCurrentHBNBinding(execution.plan, execution.rules, execution.operatorNamespace, activation.DeploymentUID, fence.activation.deployment, fence.leases, fence.snapshot.TenantNodes, service, interfaces, image)
+}
+
+// compileCurrentHBNBinding has only retained desired and fresh current inputs.
+func compileCurrentHBNBinding(plan *generation.Plan, rules *controllercontract.Rules, operatorNamespace string, deploymentUID types.UID, deployment *unstructured.Unstructured, leases []hostWorkloadLease, tenantNodes []unstructured.Unstructured, service *unstructured.Unstructured, interfaces []unstructured.Unstructured, image hbnPodImageIdentity) (hbnPodBindingIntent, error) {
 	bad := func() (hbnPodBindingIntent, error) {
 		return hbnPodBindingIntent{}, fmt.Errorf("HBN_RUNTIME_EXPECTATION_MISMATCH")
 	}
-	if execution == nil || execution.plan == nil || execution.reconciler == nil || service == nil || fence.activation.deployment == nil || !image.valid() {
+	if plan == nil || rules == nil || service == nil || deployment == nil {
 		return bad()
 	}
-	objects, err := retainedWorkloadObjects(execution)
+	objects, err := retainedPlanWorkloadObjects(plan)
 	if err != nil {
 		return bad()
 	}
@@ -47,18 +57,17 @@ func compileHBNRuntimeBinding(execution *managementVerificationInputs, activatio
 	if template == nil || configuration == nil {
 		return bad()
 	}
-	template, err = execution.rules.DefaultedCopy(template)
+	template, err = rules.DefaultedCopy(template)
 	if err != nil {
 		return bad()
 	}
-	configuration, err = execution.rules.DefaultedCopy(configuration)
+	configuration, err = rules.DefaultedCopy(configuration)
 	if err != nil {
 		return bad()
 	}
-	desired := execution.plan.Intent()
-	deployment := fence.activation.deployment
+	desired := plan.Intent()
 	reference := desired.Generation.ChartName
-	if reference != hbnContainerName || template.GetName() != reference || configuration.GetName() != reference || deployment.GetUID() != activation.DeploymentUID {
+	if reference != hbnContainerName || template.GetName() != reference || configuration.GetName() != reference || deployment.GetUID() != deploymentUID {
 		return bad()
 	}
 	parent := desired.Namespace + "_" + deployment.GetName()
@@ -66,7 +75,7 @@ func compileHBNRuntimeBinding(execution *managementVerificationInputs, activatio
 	id, _, err := unstructured.NestedString(service.Object, "spec", "serviceID")
 	_, systemComponent := service.GetLabels()[dpfComponentLabel]
 	if len(service.GetOwnerReferences()) != 1 || err != nil || version == "" || id != deployment.GetName()+"_"+reference+"_"+version && id != "dpudeployment_"+deployment.GetName()+"_"+reference ||
-		!activationOwnerMatches(service, "svc.dpu.nvidia.com/v1alpha1", "DPUDeployment", deployment.GetName(), activation.DeploymentUID) || service.GetLabels()[activationParentLabel] != parent ||
+		!activationOwnerMatches(service, "svc.dpu.nvidia.com/v1alpha1", "DPUDeployment", deployment.GetName(), deploymentUID) || service.GetLabels()[activationParentLabel] != parent ||
 		service.GetLabels()[hbnServiceReferenceLabel] != reference || systemComponent {
 		return bad()
 	}
@@ -74,8 +83,8 @@ func compileHBNRuntimeBinding(execution *managementVerificationInputs, activatio
 	// it to every allocated selected tenant Node, never copy a Service selector.
 	versionKey := "svc.dpu.nvidia.com/dpuservice-" + reference + "-version"
 	versionName := ""
-	for _, lease := range fence.leases {
-		node := uniqueObjectByName(fence.snapshot.TenantNodes, lease.TenantNodeName)
+	for _, lease := range leases {
+		node := uniqueObjectByName(tenantNodes, lease.TenantNodeName)
 		if node == nil || node.GetUID() != lease.NodeUID || node.GetLabels()[activationParentLabel] != parent {
 			return bad()
 		}
@@ -96,11 +105,11 @@ func compileHBNRuntimeBinding(execution *managementVerificationInputs, activatio
 		clusterExpressions = append(clusterExpressions, map[string]any{"key": key, "operator": "In", "values": []any{desired.Bootstrap.Tenant.Labels[key]}})
 	}
 	clusterSelector := map[string]any{"matchExpressions": clusterExpressions}
-	names, networks, err := compileHBNServiceInterfaces(execution, service, interfaces, configuration, selector, clusterSelector, id, version)
+	names, networks, err := compileCurrentHBNServiceInterfaces(rules, service, interfaces, configuration, selector, clusterSelector, id, version)
 	if err != nil {
 		return bad()
 	}
-	projection, err := execution.rules.HBNServiceSpec(template, configuration, service.GetName(), desired.Namespace, reference, id, nodeSelector, clusterSelector, names)
+	projection, err := rules.HBNServiceSpec(template, configuration, service.GetName(), desired.Namespace, reference, id, nodeSelector, clusterSelector, names)
 	if err != nil || !jsonEqual(service.Object["spec"], projection.Spec) {
 		return bad()
 	}
@@ -116,23 +125,23 @@ func compileHBNRuntimeBinding(execution *managementVerificationInputs, activatio
 		annotations = map[string]any{}
 	}
 	existing, _ := annotations["k8s.v1.cni.cncf.io/networks"].(string)
-	annotation, err := execution.rules.HBNNetworkAnnotation(existing, networks)
+	annotation, err := rules.HBNNetworkAnnotation(existing, networks)
 	if err != nil {
 		return bad()
 	}
 	annotations["k8s.v1.cni.cncf.io/networks"] = annotation
 	effectiveSDS["annotations"] = annotations
-	effective, err := execution.rules.HBNApplicationValues(effectiveSDS, values)
+	effective, err := rules.HBNApplicationValues(effectiveSDS, values)
 	if err != nil {
 		return bad()
 	}
-	return hbnPodBindingIntent{DPUDeploymentName: deployment.GetName(), DPUDeploymentUID: string(activation.DeploymentUID), DPUServiceUID: string(service.GetUID()),
-		ExpectedServiceSpec: expectedSpec, ApplicationValues: effective, ArgoNamespace: execution.operatorNamespace, DPUServiceName: service.GetName(), DPUServiceNamespace: desired.Namespace,
+	return hbnPodBindingIntent{DPUDeploymentName: deployment.GetName(), DPUDeploymentUID: string(deploymentUID), DPUServiceUID: string(service.GetUID()),
+		ExpectedServiceSpec: expectedSpec, ApplicationValues: effective, ArgoNamespace: operatorNamespace, DPUServiceName: service.GetName(), DPUServiceNamespace: desired.Namespace,
 		DPUServiceCreatedAt: service.GetCreationTimestamp().Time, DPUClusterName: desired.Bootstrap.Tenant.Name, DPUClusterNamespace: desired.Bootstrap.Tenant.Namespace, TargetNamespace: desired.Namespace,
 		ChartRepoURL: strings.TrimPrefix(stringValue(source, "repoURL"), "oci://"), ChartName: desired.Generation.Chart, ChartPath: stringValue(source, "path"), ChartVersion: stringValue(source, "version"), ChartReleaseName: stringValue(source, "releaseName"), ServiceID: id, Image: image}, nil
 }
 
-func compileHBNServiceInterfaces(execution *managementVerificationInputs, service *unstructured.Unstructured, observed []unstructured.Unstructured, configuration *unstructured.Unstructured, selector, clusterSelector map[string]any, id, version string) ([]any, []controllercontract.HBNNetworkSelection, error) {
+func compileCurrentHBNServiceInterfaces(rules *controllercontract.Rules, service *unstructured.Unstructured, observed []unstructured.Unstructured, configuration *unstructured.Unstructured, selector, clusterSelector map[string]any, id, version string) ([]any, []controllercontract.HBNNetworkSelection, error) {
 	bad := func() ([]any, []controllercontract.HBNNetworkSelection, error) {
 		return nil, nil, fmt.Errorf("HBN_RUNTIME_INTERFACES_MISMATCH")
 	}
@@ -188,7 +197,7 @@ func compileHBNServiceInterfaces(execution *managementVerificationInputs, servic
 		if len(owners) != 2 || !deploymentOwner || !serviceOwner {
 			return bad()
 		}
-		expected, err := execution.rules.HBNServiceInterface(selected.GetName(), selected.GetNamespace(), name, id, selector, clusterSelector)
+		expected, err := rules.HBNServiceInterface(selected.GetName(), selected.GetNamespace(), name, id, selector, clusterSelector)
 		if err != nil || !jsonEqual(expected.Object["spec"], selected.Object["spec"]) {
 			return bad()
 		}

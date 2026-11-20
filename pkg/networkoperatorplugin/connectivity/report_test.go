@@ -317,7 +317,10 @@ func TestRenderHTML_SurfacesUnexpectedICMPRouteDiagnostic(t *testing.T) {
 			},
 			OK: true, ObservedOK: false, Expectation: ExpectObserve,
 			Route: RouteCheck{
-				Command: "ip route get", Output: "198.51.100.20 dev net2 src 192.0.2.10", Dev: "net2", OK: true,
+				Command: "ip route get",
+				Output:  "198.51.100.20 dev net2 src 192.0.2.10 <unexpected>",
+				Dev:     "net2",
+				OK:      true,
 			},
 		}}},
 	}
@@ -330,6 +333,8 @@ func TestRenderHTML_SurfacesUnexpectedICMPRouteDiagnostic(t *testing.T) {
 	assert.Contains(t, html, "worker-a")
 	assert.Contains(t, html, "worker-b")
 	assert.Contains(t, html, `source route selected dev &#34;net2&#34;, expected &#34;net1&#34;`)
+	assert.Contains(t, html, "198.51.100.20 dev net2 src 192.0.2.10 &lt;unexpected&gt;")
+	assert.NotContains(t, html, "<unexpected>")
 }
 
 func TestRenderHTML_GPUDirectFamilyIncludesEndpointEvidence(t *testing.T) {

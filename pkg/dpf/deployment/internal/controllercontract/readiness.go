@@ -477,8 +477,11 @@ func findCondition(obj *unstructured.Unstructured, conditionType string) (*condi
 
 func listConditions(obj *unstructured.Unstructured) ([]condition, Readiness) {
 	items, found, err := unstructured.NestedSlice(obj.Object, "status", "conditions")
-	if err != nil || !found {
-		return nil, result("RESOURCE_CONDITIONS_MISSING", "The resource status conditions are missing or malformed.")
+	if err != nil {
+		return nil, result("RESOURCE_STATUS_INVALID", "The resource status conditions are malformed.")
+	}
+	if !found {
+		return nil, result("RESOURCE_CONDITIONS_MISSING", "The resource status conditions are missing.")
 	}
 	return parseConditions(items)
 }

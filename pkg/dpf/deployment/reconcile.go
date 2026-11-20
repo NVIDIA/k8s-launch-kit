@@ -10,8 +10,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"maps"
-	"reflect"
 	"strings"
 
 	"github.com/nvidia/k8s-launch-kit/pkg/dpf/deployment/internal/controllercontract"
@@ -66,20 +64,16 @@ const (
 // Reconciler verifies DPF objects against the CRD schemas retained from the
 // selected operator chart and one immutable bundle identity.
 type Reconciler struct {
-	rules              *controllercontract.Rules
-	bundleDigest       string
-	controllerMetadata controllercontract.MetadataPolicy
+	*desiredVerifier
 }
 
 // newReconciler binds explicitly selected immutable rules and metadata.
 func newReconciler(rules *controllercontract.Rules, bundleDigest string, policy controllercontract.MetadataPolicy) (*Reconciler, error) {
-	if err := rules.Validate(); err != nil {
+	verifier, err := newDesiredVerifier(rules, bundleDigest, policy)
+	if err != nil {
 		return nil, err
 	}
-	if !validSHA256Digest(bundleDigest) {
-		return nil, fmt.Errorf("bundle digest must be a lowercase sha256 digest")
-	}
-	return &Reconciler{rules: rules, bundleDigest: bundleDigest, controllerMetadata: policy}, nil
+	return &Reconciler{desiredVerifier: verifier}, nil
 }
 
 // BundleDigest returns the immutable bundle identity bound to this reconciler.
@@ -87,7 +81,7 @@ func (r *Reconciler) BundleDigest() string {
 	if r == nil {
 		return ""
 	}
-	return r.bundleDigest
+	return r.desiredVerifier.BundleDigest()
 }
 
 // Ensure reads before creating. AlreadyExists races are resolved by a fresh
@@ -142,60 +136,12 @@ func (r *Reconciler) Ensure(ctx context.Context, client ResourceClient, desired 
 	return created, DispositionCreated, nil
 }
 
-// Verify checks identity, ownership, metadata, and the complete defaulted CR
-// body. It works on defensive copies and can also be used for later readback.
+// Verify uses the same pure desired/live comparison as read-only observation.
 func (r *Reconciler) Verify(desired, current *unstructured.Unstructured) error {
 	if r == nil {
 		return reconcileError("RECONCILER_INVALID", "reconciler is required", nil)
 	}
-	marked, err := r.markedDesired(desired)
-	if err != nil {
-		return reconcileError("DESIRED_OBJECT_INVALID", "desired DPF resource failed validation", err)
-	}
-	if current == nil {
-		return reconcileError("RESOURCE_IDENTITY_MISMATCH", "current resource is missing", nil)
-	}
-	if marked.GroupVersionKind() != current.GroupVersionKind() || marked.GetName() != current.GetName() || marked.GetNamespace() != current.GetNamespace() {
-		return reconcileError("RESOURCE_IDENTITY_MISMATCH", "current resource identity differs from desired", nil)
-	}
-	if current.GetUID() == "" || current.GetResourceVersion() == "" || current.GetDeletionTimestamp() != nil {
-		return reconcileError("RESOURCE_UNAVAILABLE", "current resource lacks server identity or is deleting", nil)
-	}
-	if current.GetAnnotations()[BundleDigestAnnotation] != r.bundleDigest || current.GetAnnotations()[IntentDigestAnnotation] != marked.GetAnnotations()[IntentDigestAnnotation] {
-		return reconcileError("RESOURCE_OWNERSHIP_CONFLICT", "current resource is not marked for this bundle and desired object", nil)
-	}
-	if !r.rules.LabelsMatch(marked, current) {
-		return reconcileError("RESOURCE_METADATA_CONFLICT", "current resource labels differ from desired", nil)
-	}
-	if !maps.Equal(marked.GetAnnotations(), current.GetAnnotations()) {
-		return reconcileError("RESOURCE_METADATA_CONFLICT", "current resource annotations differ from desired", nil)
-	}
-	if !reflect.DeepEqual(marked.GetOwnerReferences(), current.GetOwnerReferences()) {
-		return reconcileError("RESOURCE_METADATA_CONFLICT", "current resource owner references differ from desired", nil)
-	}
-	if err := r.rules.ValidateMetadata(current, r.controllerMetadata); err != nil {
-		return reconcileError("RESOURCE_METADATA_CONFLICT", "current resource has unsupported controller metadata", err)
-	}
-	want, err := r.rules.DefaultedCopy(marked)
-	if err != nil {
-		return reconcileError("RESOURCE_SCHEMA_INVALID", "desired resource fails the retained DPF schema", err)
-	}
-	got, err := r.rules.DefaultedCopy(current)
-	if err != nil {
-		return reconcileError("RESOURCE_SCHEMA_INVALID", "current resource fails the retained DPF schema", err)
-	}
-	want, got, err = r.rules.ComparisonCopies(want, got)
-	if err != nil {
-		return reconcileError("RESOURCE_CONTENT_CONFLICT", "current DPUCluster controller field differs from the expected value", err)
-	}
-	for _, object := range []*unstructured.Unstructured{want, got} {
-		delete(object.Object, "metadata")
-		delete(object.Object, "status")
-	}
-	if !jsonEqual(want.Object, got.Object) {
-		return reconcileError("RESOURCE_CONTENT_CONFLICT", "current resource content differs from desired", nil)
-	}
-	return nil
+	return r.desiredVerifier.Verify(desired, current)
 }
 
 // Keep post-create ambiguity while naming only a verifier-owned finite category.
@@ -212,43 +158,6 @@ func postCreateConflictMessage(err error) string {
 		}
 	}
 	return prefix + suffix
-}
-
-func (r *Reconciler) markedDesired(desired *unstructured.Unstructured) (*unstructured.Unstructured, error) {
-	if r == nil || desired == nil {
-		return nil, reconcileError("DESIRED_OBJECT_INVALID", "reconciler and desired object are required", nil)
-	}
-	if desired.GetAPIVersion() == "" || desired.GetKind() == "" || desired.GetName() == "" || desired.GetNamespace() == "" {
-		return nil, reconcileError("DESIRED_OBJECT_INVALID", "desired custom resource requires apiVersion, kind, name, and namespace", nil)
-	}
-	if desired.GetUID() != "" || desired.GetResourceVersion() != "" || desired.GetDeletionTimestamp() != nil || desired.GetGenerateName() != "" {
-		return nil, reconcileError("DESIRED_OBJECT_INVALID", "desired resource contains server-owned identity metadata", nil)
-	}
-	if _, found := desired.Object["status"]; found {
-		return nil, reconcileError("DESIRED_OBJECT_INVALID", "desired resource must not contain status", nil)
-	}
-	if !strings.Contains(desired.GetAPIVersion(), "/") {
-		return nil, reconcileError("DESIRED_OBJECT_INVALID", "desired object must be a namespaced DPF custom resource", nil)
-	}
-	if desired.GetAnnotations()[BundleDigestAnnotation] != "" || desired.GetAnnotations()[IntentDigestAnnotation] != "" {
-		return nil, reconcileError("DESIRED_OBJECT_INVALID", "desired object must not supply deployment ownership annotations", nil)
-	}
-	copy := desired.DeepCopy()
-	annotations := copy.GetAnnotations()
-	if annotations == nil {
-		annotations = make(map[string]string, 2)
-	}
-	annotations[BundleDigestAnnotation] = r.bundleDigest
-	intentDigest, err := objectDigest(desired)
-	if err != nil {
-		return nil, reconcileError("DESIRED_OBJECT_INVALID", "desired object cannot be encoded for ownership", err)
-	}
-	annotations[IntentDigestAnnotation] = intentDigest
-	copy.SetAnnotations(annotations)
-	if _, err := r.rules.DefaultedCopy(copy); err != nil {
-		return nil, reconcileError("RESOURCE_SCHEMA_INVALID", "desired resource fails the retained DPF schema", err)
-	}
-	return copy, nil
 }
 
 func objectDigest(object *unstructured.Unstructured) (string, error) {

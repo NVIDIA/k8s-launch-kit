@@ -15,7 +15,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/nvidia/k8s-launch-kit/pkg/dpf/bundle"
 	"github.com/nvidia/k8s-launch-kit/pkg/dpf/config"
 	"github.com/nvidia/k8s-launch-kit/pkg/dpf/generation"
 	"k8s.io/apimachinery/pkg/types"
@@ -28,10 +27,10 @@ func retainedTestImageResolver(_ context.Context, reference string, _ time.Durat
 	return hbnPodImageIdentity{Reference: reference, ManifestDigest: digest, ConfigDigest: "sha256:" + strings.Repeat("b", 64)}, nil
 }
 
-func imagePrerequisiteRunRequest(t *testing.T, retained *bundle.Bundle, prerequisites PrerequisiteVerifier) RunRequest {
+func imagePrerequisiteRunRequest(t *testing.T, plan *generation.Plan, prerequisites PrerequisiteVerifier) RunRequest {
 	t.Helper()
 	root := t.TempDir()
-	return RunRequest{Bundle: retained, Access: config.Request{Kubeconfig: filepath.Join(root, "must-not-be-opened")},
+	return RunRequest{Plan: plan, Access: config.Request{Kubeconfig: filepath.Join(root, "must-not-be-opened")},
 		ReportPath: filepath.Join(root, "run.jsonl"), ProbeJournalPath: filepath.Join(root, "probes.json"),
 		VerifyPrerequisites: prerequisites,
 		VerifyChartSource: func(context.Context, *generation.Plan) (PreflightCheck, error) {
@@ -51,10 +50,11 @@ func TestRunImageMetadataFailureStopsFreshAndResumeBeforeEffects(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	plan := requireRunPlan(t, retained)
 	for _, resume := range []bool{false, true} {
 		for _, scenario := range []string{"private-basic", "foreign-bearer", "unavailable", "wrong-digest"} {
 			t.Run(fmt.Sprintf("resume-%t/%s", resume, scenario), func(t *testing.T) {
-				request := imagePrerequisiteRunRequest(t, retained, func(context.Context, config.Request, *generation.Plan, PrerequisitePhase) (PrerequisiteVerification, error) {
+				request := imagePrerequisiteRunRequest(t, plan, func(context.Context, config.Request, *generation.Plan, PrerequisitePhase) (PrerequisiteVerification, error) {
 					t.Fatal("discovery/probes/selector work ran after failed metadata")
 					return PrerequisiteVerification{}, nil
 				})
@@ -127,6 +127,7 @@ func TestRunImageMetadataAcceptsRetainedAnonymousRepositoryBeforeDiscovery(t *te
 			if err != nil {
 				t.Fatal(err)
 			}
+			plan := requireRunPlan(t, retained)
 			expected := hbnImageReference(input.Workload.Generation)
 			host, path, _ := strings.Cut(repository, "/")
 			metadataReads, tokens, prerequisites := 0, 0, 0
@@ -156,7 +157,7 @@ func TestRunImageMetadataAcceptsRetainedAnonymousRepositoryBeforeDiscovery(t *te
 				}
 				return &http.Response{StatusCode: status, Header: header, Body: io.NopCloser(strings.NewReader(string(data))), ContentLength: int64(len(data)), Request: r}, nil
 			})
-			request := imagePrerequisiteRunRequest(t, retained, func(_ context.Context, _ config.Request, plan *generation.Plan, _ PrerequisitePhase) (PrerequisiteVerification, error) {
+			request := imagePrerequisiteRunRequest(t, plan, func(_ context.Context, _ config.Request, plan *generation.Plan, _ PrerequisitePhase) (PrerequisiteVerification, error) {
 				prerequisites++
 				if metadataReads != 2 || tokens != 1 || hbnImageReference(plan.Intent().Generation) != expected {
 					t.Fatal("discovery preceded exact retained metadata identity")
@@ -196,7 +197,7 @@ func TestEarlyImageMetadataSuccessDoesNotReplaceRuntimeRead(t *testing.T) {
 		}
 		return hbnPodImageIdentity{}, errors.New("metadata became unavailable")
 	}
-	request := imagePrerequisiteRunRequest(t, fixture.prepared.execution.retained, func(context.Context, config.Request, *generation.Plan, PrerequisitePhase) (PrerequisiteVerification, error) {
+	request := imagePrerequisiteRunRequest(t, fixture.prepared.execution.plan, func(context.Context, config.Request, *generation.Plan, PrerequisitePhase) (PrerequisiteVerification, error) {
 		return PrerequisiteVerification{}, errors.New("stop after early metadata")
 	})
 	_, err := runWithTransports(fixture.ctx, request, runTransports{resolveImage: resolver})

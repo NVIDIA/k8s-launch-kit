@@ -1,0 +1,143 @@
+<!--
+ SPDX-FileCopyrightText: Copyright 2026 NVIDIA CORPORATION & AFFILIATES
+ SPDX-License-Identifier: Apache-2.0
+-->
+{{define "target-style"}}
+.dpf-checks { overflow-x: auto; }
+.dpf-checks td { overflow-wrap: anywhere; }
+.dpf-check-table { table-layout: fixed; min-width: 56rem; }
+.dpf-check-table th:nth-child(1) { width: 23%; }
+.dpf-check-table th:nth-child(2) { width: 14%; }
+.dpf-check-table th:nth-child(3) { width: 43%; }
+.dpf-check-table th:nth-child(4) { width: 20%; }
+.dpf-checks td.dpf-status { white-space: nowrap; overflow-wrap: normal; }
+.dpf-status .badge { white-space: nowrap; }
+{{end}}
+{{define "body"}}
+
+{{- with .Diagnostic}}
+<section>
+  <h2>Observation failure</h2>
+  <div class="body">
+    <p>{{.Stage.Label}} · {{reasonText .Reason}}</p>
+    <p>{{.Summary}}</p>
+    {{- if .Action}}<p>Next: {{.Action}}</p>{{end}}
+  </div>
+</section>
+{{- end}}
+
+{{- if .AttentionRows}}
+<section>
+  <h2>Needs attention</h2>
+  <div class="body dpf-checks">
+    {{template "check-table" .AttentionRows}}
+    {{- if .RemainingAttention}}
+    <p class="summary-line">Additional checks needing attention in the grouped tables below ({{.RemainingAttention}}).</p>
+    {{- end}}
+  </div>
+</section>
+{{- end}}
+
+<section>
+  <h2>Selected deployment scope</h2>
+  <div class="body">
+  {{- if or .Hosts .Devices}}
+    <dl class="kv">
+      {{- if .Hosts}}
+      <dt>Hosts attached to DPUs ({{len .Hosts}})</dt>
+      <dd>Identified by the attached DPU serial: {{range $i, $host := .Hosts}}{{if $i}}, {{end}}<code>{{$host}}</code>{{end}}</dd>
+      {{- end}}
+      {{- if .Devices}}
+      <dt>DPUs ({{len .Devices}})</dt>
+      <dd>{{range $i, $device := .Devices}}{{if $i}}, {{end}}<code>{{$device}}</code>{{end}}</dd>
+      {{- end}}
+      {{- if .RuntimeBudget}}
+      <dt>Connectivity timeout</dt><dd>{{.RuntimeBudget}}</dd>
+      {{- end}}
+    </dl>
+  {{- else}}
+    <p class="empty">Selected deployment identities are unavailable.</p>
+  {{- end}}
+  </div>
+</section>
+
+{{- with .DisabledRuntime}}
+<section>
+  <h2>Connectivity excluded by resource-only scope</h2>
+  <div class="body">
+    <dl class="kv">
+      <dt>DPU BGP checks</dt><dd>{{.BGP}}</dd>
+      <dt>Directed installed route checks</dt><dd>{{.Routes}}</dd>
+      <dt>Directed ordinary ICMP probes</dt><dd>{{.OrdinaryTraffic}}</dd>
+      <dt>Directed MTU-sized DF ICMP probes</dt><dd>{{.DFTraffic}}</dd>
+    </dl>
+  </div>
+</section>
+{{- end}}
+
+{{- range .Groups}}
+<section>
+  <h2>{{.Title}}</h2>
+  <div class="body">
+    <p class="summary-line">{{.Passed}} passed · {{.Failed}} failed · {{.Pending}} pending · {{.Unverified}} unverified · {{.Skipped}} skipped</p>
+    <details class="dpf-checks"{{if .OpenDetails}} open{{end}}>
+      <summary>Show {{len .Rows}} checks</summary>
+      {{template "check-table" .Rows}}
+    </details>
+  </div>
+</section>
+{{- else}}
+<section>
+  <h2>Checks</h2>
+  <div class="body"><p class="empty">No check results were available for this run.</p></div>
+</section>
+{{- end}}
+
+{{end}}
+
+{{define "check-table"}}
+<table class="dpf-check-table">
+  <thead><tr><th>Subject</th><th>Status</th><th>Details</th><th>Action</th></tr></thead>
+  <tbody>
+    {{- range .}}{{template "check-row" .}}{{end}}
+  </tbody>
+</table>
+{{end}}
+
+{{define "check-row"}}
+<tr>
+  <td>
+    {{.Subject}}
+    {{- with .Group}}<br><span class="muted">{{.}}</span>{{end}}
+  </td>
+  <td class="dpf-status">
+    <span class="badge {{stateClass .Outcome.State}}">{{or .Outcome.State "unverified"}}</span>
+    {{- with .Outcome.Reason}}<br><span class="muted">{{reasonText .}}</span>{{end}}
+  </td>
+  <td>
+    {{- with .Outcome.Summary}}{{.}}{{end}}
+    {{- template "outcome-facts" .Outcome}}
+    {{- with .PriorOutcome}}
+    <div class="muted">
+      <p>At measurement time: {{.State}}{{if .Summary}} · {{.Summary}}{{end}}</p>
+      {{- template "outcome-facts" .}}
+    </div>
+    {{- end}}
+  </td>
+  <td>{{.Outcome.Action}}</td>
+</tr>
+{{end}}
+
+{{define "outcome-facts"}}
+{{- with .BGP}}
+<p>BGP peers established {{.EstablishedPeers}} of {{.ExpectedPeers}}{{if .LocalASN}} · local ASN {{.LocalASN}}{{end}}</p>
+{{- end}}
+{{- with .Route}}
+{{- if .Prefix.IsValid}}
+<p>Route <code>{{.Prefix}}</code> {{if .Installed}}installed{{else}}missing from the routing table{{end}}</p>
+{{- end}}
+{{- end}}
+{{- with .Traffic}}
+<p>ICMP packets transmitted {{.Transmitted}} · received {{.Received}} · payload {{.PayloadBytes}} bytes</p>
+{{- end}}
+{{- end}}

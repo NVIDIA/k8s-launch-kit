@@ -171,8 +171,15 @@ func retainedWorkloadObjects(execution *managementVerificationInputs) ([]*unstru
 	if execution == nil || execution.plan == nil {
 		return nil, fmt.Errorf("validated retained plan is required")
 	}
-	intent := execution.plan.Intent()
-	view, ok := execution.planStage(generation.StageWorkload)
+	return retainedPlanWorkloadObjects(execution.plan)
+}
+
+func retainedPlanWorkloadObjects(plan *generation.Plan) ([]*unstructured.Unstructured, error) {
+	if plan == nil {
+		return nil, fmt.Errorf("validated retained plan is required")
+	}
+	intent := plan.Intent()
+	view, ok := retainedPlanStage(plan, generation.StageWorkload)
 	if !ok {
 		return nil, fmt.Errorf("retained workload stage is missing")
 	}
@@ -208,7 +215,11 @@ func (e *managementVerificationInputs) planStage(id string) (bundle.StageView, b
 	if e == nil || e.plan == nil {
 		return bundle.StageView{}, false
 	}
-	for _, stage := range e.plan.Stages() {
+	return retainedPlanStage(e.plan, id)
+}
+
+func retainedPlanStage(plan *generation.Plan, id string) (bundle.StageView, bool) {
+	for _, stage := range plan.Stages() {
 		if stage.Stage().ID == id {
 			return stage, true
 		}

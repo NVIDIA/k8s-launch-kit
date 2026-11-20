@@ -17,7 +17,7 @@
 package connectivity
 
 import (
-	_ "embed"
+	"embed"
 	"fmt"
 	"html/template"
 	"io"
@@ -28,17 +28,11 @@ import (
 	"github.com/nvidia/k8s-launch-kit/pkg/networkoperatorplugin/crstate"
 	"github.com/nvidia/k8s-launch-kit/pkg/networkoperatorplugin/preflight"
 	"github.com/nvidia/k8s-launch-kit/pkg/presetmatch"
+	"github.com/nvidia/k8s-launch-kit/pkg/validationreport"
 )
 
-// reportTemplate is the embedded HTML body the validate CLI's
-// `--report-path` writes after a connectivity run completes. Inlined
-// into a single file (CSS in <style>, layout in semantic HTML5) so
-// the report is self-contained — drop the file in a chat, attach it
-// to a ticket, open it offline, and it renders identically. No JS,
-// no external assets.
-//
 //go:embed report.html.tmpl
-var reportTemplate string
+var reportTemplate embed.FS
 
 // OverallVerdict captures the high-level pass/fail outcome rendered
 // as a prominent banner at the top of the report. PASS means every
@@ -226,16 +220,45 @@ func RenderHTML(w io.Writer, data ReportData) error {
 	if data.Matrix != nil {
 		data.Warnings = append(append([]string(nil), data.Warnings...), data.Matrix.PartitionWarnings...)
 	}
-	tmpl, err := template.New("validation-report").
-		Funcs(reportFuncMap()).
-		Parse(reportTemplate)
+	tmpl, err := validationreport.NewTemplate(reportTemplate, "report.html.tmpl", reportFuncMap())
 	if err != nil {
-		return fmt.Errorf("parse report template: %w", err)
+		return err
 	}
 	if data.Cluster.GeneratedAt.IsZero() {
 		data.Cluster.GeneratedAt = time.Now()
 	}
-	return tmpl.Execute(w, data)
+	return tmpl.Execute(w, validationreport.View[ReportData]{
+		Page: reportPage(data.Cluster, data.Verdict),
+		Body: data,
+	})
+}
+
+func reportPage(cluster ClusterInfo, verdict OverallVerdict) validationreport.Page {
+	metadata := []validationreport.Field{
+		{Label: "Kube context", Value: cluster.KubeContext},
+		{Label: "API server", Value: cluster.APIServerVersion},
+	}
+	if cluster.OperatorNamespace != "" {
+		metadata = append(metadata, validationreport.Field{Label: "Operator namespace", Value: cluster.OperatorNamespace})
+	}
+	outcome := validationreport.OutcomeView{
+		Label:   "✗ VALIDATION FAILED",
+		Style:   validationreport.OutcomeFailure,
+		Reasons: verdict.Reasons,
+		Notes:   verdict.Notes,
+	}
+	if verdict.Pass {
+		outcome.Label = "✓ VALIDATION PASSED"
+		outcome.Style = validationreport.OutcomeSuccess
+	}
+	return validationreport.Page{
+		Title:       "NVIDIA Kubernetes Launch Kit Validation Report — " + cluster.KubeContext,
+		Heading:     "Validation Report",
+		GeneratedAt: cluster.GeneratedAt,
+		Version:     cluster.L8kVersion,
+		Metadata:    metadata,
+		Outcome:     outcome,
+	}
 }
 
 // reportFuncMap returns the helpers exposed inside the template. Kept
@@ -315,10 +338,6 @@ func reportFuncMap() template.FuncMap {
 				return "MISSING"
 			}
 			return "UNKNOWN"
-		},
-		// formatTime renders timestamps in the report header.
-		"formatTime": func(t time.Time) string {
-			return t.UTC().Format("2006-01-02 15:04:05 UTC")
 		},
 		// sortedKeys returns the keys of a string-keyed map in
 		// deterministic order so the rendered Details sub-tables

@@ -70,6 +70,7 @@ func TestRunInitialReservationStopsBeforeFreshCollectionOrEffects(t *testing.T) 
 	if err != nil {
 		t.Fatal(err)
 	}
+	plan := requireRunPlan(t, retained)
 	stage, _ := retained.Stage(generation.StageDeployment)
 	deployment := stage.Documents()[0].ObjectCopy()
 	for _, tc := range []struct {
@@ -126,7 +127,7 @@ func TestRunInitialReservationStopsBeforeFreshCollectionOrEffects(t *testing.T) 
 			before, _ := json.Marshal(object)
 			mu.Unlock()
 			called := false
-			request := imagePrerequisiteRunRequest(t, retained, func(context.Context, config.Request, *generation.Plan, PrerequisitePhase) (PrerequisiteVerification, error) {
+			request := imagePrerequisiteRunRequest(t, plan, func(context.Context, config.Request, *generation.Plan, PrerequisitePhase) (PrerequisiteVerification, error) {
 				called = true
 				return PrerequisiteVerification{}, errors.New("stop after cold-core vacancy proof")
 			})
@@ -234,7 +235,7 @@ func TestInitialReservationRechecksManagementIdentityBeforeCoreAbsence(t *testin
 	if err != nil {
 		t.Fatal(err)
 	}
-	execution, err := prepareManagementExecution(retained, time.Minute)
+	execution, err := loadManagementExecution(retained, time.Minute)
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -68,7 +68,7 @@ func addTargetFlag(cmd *cobra.Command) {
 		&targetName,
 		"target",
 		string(target.Host),
-		"Deployment target: host (default) or dpf (HBN-BGP discovery, generation and deployment)",
+		"Deployment target: host (default) or dpf (HBN-BGP discovery, generation, deployment and validation)",
 	)
 	setFlagGroup(cmd, "target", GroupTarget)
 	setFlagTargetScope(cmd, []target.Name{target.Host, target.DPF}, "target")
@@ -327,9 +327,12 @@ func markDeployTargetScopes() {
 }
 
 func markValidateTargetScopes() {
+	setFlagTargetScope(validateCmd, []target.Name{target.DPF}, "inventory", "quiet")
+	setFlagTargetScope(validateCmd, []target.Name{target.Host, target.DPF},
+		"deployment-files", "user-config", "connectivity", "connectivity-timeout", "wait", "report-path")
 	setFlagTargetScope(validateCmd, []target.Name{target.Host},
-		"flavor", "kubeconfig", "deployment-files", "user-config", "network-operator-namespace", "skip-network-operator-helm", "connectivity",
-		"keep", "connectivity-timeout", "validation-mode", "validation-checks",
+		"flavor", "kubeconfig", "network-operator-namespace", "skip-network-operator-helm",
+		"keep", "validation-mode", "validation-checks",
 		"rdma-rping-iterations", "rdma-ib-write-size", "rdma-ib-write-min-bandwidth-gbps",
-		"wait", "report-path", "junit-path")
+		"junit-path")
 }

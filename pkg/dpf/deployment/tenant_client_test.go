@@ -6,6 +6,7 @@ package deployment
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -191,5 +192,32 @@ func TestTenantClientRejectsIncompleteBindingBeforeConnecting(t *testing.T) {
 	source.sources.secret.Data = map[string][]byte{"admin.conf": []byte("secret-canary")}
 	if _, err := newTenantClient(context.Background(), testRules(t), source, expected, "dc-uid", time.Second, nil, nil); err == nil || strings.Contains(err.Error(), "secret-canary") {
 		t.Fatal("invalid credential source accepted or leaked")
+	}
+}
+
+func TestTenantSourcesMeasuredReplacementPrecedesReadiness(t *testing.T) {
+	for _, state := range []string{"old-child-owner", "pending", "deleting", "unready-same-uid", "absent-uid", "absent-cluster"} {
+		t.Run(state, func(t *testing.T) {
+			expected, sources := tenantSourceFixture(t)
+			replaced := state == "old-child-owner" || state == "pending" || state == "deleting"
+			if replaced {
+				sources.observed.DPUCluster.SetUID("replacement")
+			}
+			switch state {
+			case "pending", "unready-same-uid":
+				unstructured.RemoveNestedField(sources.observed.DPUCluster.Object, "status", "conditions")
+			case "deleting":
+				now := metav1.Now()
+				sources.observed.DPUCluster.SetDeletionTimestamp(&now)
+			case "absent-uid":
+				sources.observed.DPUCluster.SetUID("")
+			case "absent-cluster":
+				sources.observed.DPUCluster = nil
+			}
+			_, _, _, err := validateTenantSources(testRules(t), expected, "dc-uid", sources)
+			if err == nil || errors.Is(err, errTenantIdentityChanged) != replaced {
+				t.Fatalf("replacement=%v err=%v", replaced, err)
+			}
+		})
 	}
 }

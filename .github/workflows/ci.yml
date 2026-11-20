@@ -19,6 +19,25 @@ jobs:
         make build
         python3 scripts/check-docs.py --binary build/l8k
         make build-all
-      test-command: |
-        go test -v -race -timeout=45m -count=1 -coverprofile=coverage.out ./...
-        go tool cover -func=coverage.out
+      test-command: bash scripts/test-ci.sh core
+      validate-command: bash scripts/test-ci.sh validation
+
+  lifecycle-tests:
+    uses: Mellanox/cloud-orchestration-reusable-workflows/.github/workflows/go-check-reusable.yml@main
+    with:
+      timeout-minutes: 60
+      command: bash scripts/test-ci.sh lifecycle
+
+  test-gate:
+    name: Complete test suite
+    if: ${{ always() }}
+    needs: [ci, lifecycle-tests]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Require every test lane
+        env:
+          L8K_CI_RESULT: ${{ needs.ci.result }}
+          L8K_LIFECYCLE_RESULT: ${{ needs['lifecycle-tests'].result }}
+        run: |
+          test "$L8K_CI_RESULT" = success
+          test "$L8K_LIFECYCLE_RESULT" = success

@@ -23,6 +23,8 @@ import (
 // Its fields are private; accessors return copies so later lifecycle steps
 // cannot mutate the source bundle or another consumer's view.
 type Plan struct {
+	retained        bundle.Bundle
+	schemas         ObjectSchemas
 	digest          string
 	intent          ResolvedIntent
 	flavor          map[string]any
@@ -83,11 +85,11 @@ func LoadPlan(retained *bundle.Bundle) (*Plan, error) {
 		return nil, fmt.Errorf("retained source configuration is missing")
 	}
 	input := inputsFromIntent(intent, values, operatorArchive.Data, hbnArchive.Data, source.Data, flavor, resources)
-	expected, err := Generate(input)
+	expected, err := generate(input)
 	if err != nil {
 		return nil, fmt.Errorf("validate retained DPF generation: %w", err)
 	}
-	if err := compareBundles(expected, retained); err != nil {
+	if err := compareBundles(expected.bundle, retained); err != nil {
 		return nil, err
 	}
 	stages := make([]bundle.StageView, 0, len(index.Stages))
@@ -99,6 +101,8 @@ func LoadPlan(retained *bundle.Bundle) (*Plan, error) {
 		stages = append(stages, view)
 	}
 	return &Plan{
+		retained:        *retained,
+		schemas:         *expected.schemas,
 		digest:          index.BundleDigest,
 		intent:          cloneResolvedIntent(intent),
 		flavor:          cloneAnyMap(flavor),
@@ -108,6 +112,26 @@ func LoadPlan(retained *bundle.Bundle) (*Plan, error) {
 		hbnChart:        bytes.Clone(hbnArchive.Data),
 		stages:          stages,
 	}, nil
+}
+
+// Bundle returns an isolated outer wrapper for the immutable validated bundle.
+// Its nested data remains private and its public views return defensive copies.
+func (p *Plan) Bundle() *bundle.Bundle {
+	if p == nil || p.digest == "" {
+		return nil
+	}
+	retained := p.retained
+	return &retained
+}
+
+// ObjectSchemas returns an isolated wrapper sharing immutable compiled schemas.
+// Replacing the returned value cannot replace the Plan's retained schema owner.
+func (p *Plan) ObjectSchemas() *ObjectSchemas {
+	if p == nil || p.digest == "" || len(p.schemas.byGVK) == 0 {
+		return nil
+	}
+	schemas := p.schemas
+	return &schemas
 }
 
 // Intent returns a deep copy of the retained effective inputs.

@@ -99,6 +99,21 @@ type Inputs struct {
 // the generated custom resources against schemas rendered from the exact DPF
 // operator chart, and returns one closed immutable bundle.
 func Generate(input Inputs) (*bundle.Bundle, error) {
+	result, err := generate(input)
+	if err != nil {
+		return nil, err
+	}
+	return result.bundle, nil
+}
+
+// generated owns both products of a completely successful generation. The
+// schemas are the same strict validators used on the original rendered files.
+type generated struct {
+	bundle  *bundle.Bundle
+	schemas *ObjectSchemas
+}
+
+func generate(input Inputs) (*generated, error) {
 	release, err := releases.Resolve(input.Operator.ReleaseVersion)
 	if err != nil {
 		return nil, fmt.Errorf("resolve selected DPF release: %w", err)
@@ -143,7 +158,8 @@ func Generate(input Inputs) (*bundle.Bundle, error) {
 	if err := validateRenderedHBNChart(input.HBNChartArchive, input.Workload, workloadFiles); err != nil {
 		return nil, fmt.Errorf("render retained HBN chart: %w", err)
 	}
-	if err := validateGeneratedSchemas(operator.Manifest, bootstrapFiles, workloadFiles); err != nil {
+	schemas, err := validateGeneratedSchemas(operator.Manifest, bootstrapFiles, workloadFiles)
+	if err != nil {
 		return nil, err
 	}
 
@@ -178,7 +194,7 @@ func Generate(input Inputs) (*bundle.Bundle, error) {
 	if err != nil {
 		return nil, fmt.Errorf("validate composed DPF bundle: %w", err)
 	}
-	return result, nil
+	return &generated{bundle: result, schemas: schemas}, nil
 }
 
 // validateRenderedHBNChart renders the exact retained archive with the values
@@ -660,17 +676,17 @@ type versionSchema struct {
 	structural *structuralschema.Structural
 }
 
-func validateGeneratedSchemas(operatorManifest []byte, bootstrapFiles, workloadFiles []bundle.File) error {
-	schemas, err := schemasFromOperatorManifest(operatorManifest)
+func validateGeneratedSchemas(operatorManifest []byte, bootstrapFiles, workloadFiles []bundle.File) (*ObjectSchemas, error) {
+	schemas, err := NewObjectSchemas(operatorManifest)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	for _, file := range append(slices.Clone(bootstrapFiles), workloadFiles...) {
-		if err := validateCustomResourceFile(file, schemas); err != nil {
-			return err
+		if err := validateCustomResourceFile(file, schemas.byGVK); err != nil {
+			return nil, err
 		}
 	}
-	return nil
+	return schemas, nil
 }
 
 func schemasFromOperatorManifest(manifest []byte) (map[resourceKey]dpfSchema, error) {

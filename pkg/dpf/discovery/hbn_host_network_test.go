@@ -98,7 +98,7 @@ func TestHostLLDPProgressQuotesObservedHost(t *testing.T) {
 		return hostLLDPCaptureResult(), nil
 	})
 
-	collectHostHBNCabling(ctx, request, &inv, capturer)
+	CollectHostHBNCabling(ctx, request, &inv, capturer)
 	output := progress.String()
 	if strings.Contains(output, "\x1b") || strings.Contains(output, "\u202e") || !strings.Contains(output, strconv.Quote(hostname)) {
 		t.Fatalf("LLDP progress did not safely quote the observed host: %q", output)
@@ -123,7 +123,7 @@ func TestHostLLDPUnavailableProgressQuotesObservedDPU(t *testing.T) {
 	}
 	var progress strings.Builder
 	ctx := ui.WithOutput(context.Background(), ui.NewWithWriter(&progress))
-	collectHostHBNCabling(ctx, request, &inv, nil)
+	CollectHostHBNCabling(ctx, request, &inv, nil)
 	output := progress.String()
 	if strings.Contains(output, "\x1b") || strings.Contains(output, "\u202e") || !strings.Contains(output, strconv.Quote(serial)) {
 		t.Fatalf("unavailable LLDP progress did not safely quote the observed DPU: %q", output)

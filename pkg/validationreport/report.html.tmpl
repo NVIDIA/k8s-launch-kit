@@ -1,0 +1,366 @@
+<!--
+ Copyright 2026 NVIDIA CORPORATION & AFFILIATES
+
+ Licensed under the Apache License, Version 2.0 (the "License");
+ you may not use this file except in compliance with the License.
+ You may obtain a copy of the License at
+
+     http://www.apache.org/licenses/LICENSE-2.0
+
+ Unless required by applicable law or agreed to in writing, software
+ distributed under the License is distributed on an "AS IS" BASIS,
+ WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ See the License for the specific language governing permissions and
+ limitations under the License.
+-->
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>{{.Page.Title}}</title>
+  <style>
+/* Styled after the NVIDIA AICR documentation light theme:
+   white background, system-font stack, blue link accent, NVIDIA-green
+   reserved for the small brand mark, status colors used as soft
+   tinted pills rather than solid badges. */
+:root {
+  --bg:           #FFFFFF;
+  --bg-soft:      #F9FAFB;
+  --bg-code:      #F3F4F6;
+  --text:         #111827;
+  --text-muted:   #6B7280;
+  --text-faint:   #9CA3AF;
+  --border:       #E5E7EB;
+  --border-soft:  #F3F4F6;
+  --link:         #1F6FEB;
+  --brand:        #76B900;
+  --brand-dark:   #5A8F00;
+
+  --success:      #047857;
+  --success-bg:   #ECFDF5;
+  --success-bd:   #A7F3D0;
+  --warn:         #B45309;
+  --warn-bg:      #FFFBEB;
+  --warn-bd:      #FDE68A;
+  --error:        #B91C1C;
+  --error-bg:     #FEF2F2;
+  --error-bd:     #FECACA;
+  --missing:      #4B5563;
+  --missing-bg:   #F3F4F6;
+  --missing-bd:   #E5E7EB;
+}
+
+* { margin: 0; padding: 0; box-sizing: border-box; }
+
+html { -webkit-font-smoothing: antialiased; -moz-osx-font-smoothing: grayscale; }
+
+body {
+  font-family: "Inter", "DM Sans", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  color: var(--text);
+  background: var(--bg);
+  line-height: 1.55;
+  font-size: 15px;
+}
+
+a { color: var(--link); text-decoration: none; }
+a:hover { text-decoration: underline; }
+
+/* Header: white with NVIDIA-green accent bar + brand mark.
+   Mirrors the docs.nvidia.com chrome — small green strip top, then a
+   light page header with title + metadata. */
+header {
+  background: var(--bg);
+  color: var(--text);
+  padding: 28px 40px 24px;
+  border-bottom: 1px solid var(--border);
+  position: relative;
+}
+header::before {
+  content: "";
+  position: absolute;
+  top: 0; left: 0; right: 0;
+  height: 3px;
+  background: var(--brand);
+}
+
+header .brand {
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 1.6px;
+  text-transform: uppercase;
+  color: var(--brand-dark);
+  margin-bottom: 4px;
+}
+header h1 {
+  color: var(--text);
+  font-size: 28px;
+  font-weight: 600;
+  letter-spacing: -0.4px;
+  margin-bottom: 16px;
+}
+
+header .meta {
+  font-size: 13px;
+  color: var(--text-muted);
+  display: grid;
+  grid-template-columns: max-content 1fr;
+  column-gap: 20px;
+  row-gap: 4px;
+  max-width: 760px;
+}
+
+header .meta dt { font-weight: 500; color: var(--text-muted); }
+header .meta dd {
+  font-family: ui-monospace, "SF Mono", "JetBrains Mono", Menlo, Consolas, monospace;
+  font-size: 12.5px;
+  color: var(--text);
+}
+
+main {
+  max-width: 1100px;
+  margin: 0 auto;
+  padding: 32px 40px 48px;
+}
+
+.verdict-banner {
+  border-radius: 8px;
+  padding: 20px 24px;
+  margin-bottom: 28px;
+  border: 1px solid;
+}
+.verdict-banner.verdict-pass {
+  background: var(--success-bg);
+  border-color: var(--success-bd);
+  color: var(--success);
+}
+.verdict-banner.verdict-fail {
+  background: var(--error-bg);
+  border-color: var(--error-bd);
+  color: var(--error);
+}
+.verdict-banner.verdict-warning {
+  background: var(--warn-bg);
+  border-color: var(--warn-bd);
+  color: var(--warn);
+}
+.verdict-headline {
+  font-size: 18px;
+  font-weight: 700;
+  letter-spacing: 0.4px;
+}
+.verdict-list {
+  margin-top: 10px;
+  padding-left: 20px;
+  font-size: 13.5px;
+  color: var(--text);
+}
+.verdict-list li { margin-top: 2px; }
+.verdict-notes { color: var(--text-muted); }
+
+section {
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  margin-bottom: 28px;
+  overflow: hidden;
+}
+
+section > h2 {
+  background: var(--bg);
+  border-bottom: 1px solid var(--border);
+  padding: 14px 24px;
+  font-size: 16px;
+  font-weight: 600;
+  color: var(--text);
+  letter-spacing: -0.2px;
+}
+
+section > .body { padding: 20px 24px; }
+
+dl.kv {
+  display: grid;
+  grid-template-columns: max-content 1fr;
+  column-gap: 24px;
+  row-gap: 8px;
+}
+dl.kv dt {
+  font-weight: 500;
+  color: var(--text-muted);
+  font-size: 13.5px;
+}
+dl.kv dd {
+  font-family: ui-monospace, "SF Mono", "JetBrains Mono", Menlo, Consolas, monospace;
+  font-size: 13px;
+  color: var(--text);
+}
+
+table {
+  width: 100%;
+  border-collapse: collapse;
+}
+
+table th, table td {
+  text-align: left;
+  padding: 10px 14px;
+  border-bottom: 1px solid var(--border);
+  vertical-align: top;
+}
+
+table th {
+  background: var(--bg-soft);
+  font-weight: 600;
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.4px;
+  color: var(--text-muted);
+  border-bottom: 1px solid var(--border);
+}
+
+table tr:last-child td { border-bottom: none; }
+table tr:hover td { background: var(--bg-soft); }
+
+/* Soft-tinted status pills (docs.nvidia.com style — colored text on a
+   tinted background with a matching border). Replaces the heavier
+   solid badges of the previous theme. */
+.badge {
+  display: inline-block;
+  padding: 2px 10px;
+  border-radius: 12px;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.4px;
+  border: 1px solid;
+}
+.badge.state-success    { color: var(--success); background: var(--success-bg); border-color: var(--success-bd); }
+.badge.state-inprogress { color: var(--warn);    background: var(--warn-bg);    border-color: var(--warn-bd); }
+.badge.state-error      { color: var(--error);   background: var(--error-bg);   border-color: var(--error-bd); }
+.badge.state-missing    { color: var(--missing); background: var(--missing-bg); border-color: var(--missing-bd); }
+.badge.state-unknown    { color: var(--missing); background: var(--missing-bg); border-color: var(--missing-bd); }
+
+/* Per-row accent stripe on the left to scan a long table fast. */
+tr.state-success    > td:first-child { box-shadow: inset 2px 0 0 var(--success); }
+tr.state-inprogress > td:first-child { box-shadow: inset 2px 0 0 var(--warn); }
+tr.state-error      > td:first-child { box-shadow: inset 2px 0 0 var(--error); }
+tr.state-missing    > td:first-child { box-shadow: inset 2px 0 0 var(--missing); }
+
+code {
+  font-family: ui-monospace, "SF Mono", "JetBrains Mono", Menlo, Consolas, monospace;
+  font-size: 12.5px;
+  background: var(--bg-code);
+  color: var(--text);
+  padding: 1px 6px;
+  border-radius: 4px;
+  border: 1px solid var(--border-soft);
+}
+
+details {
+  margin-top: 10px;
+  padding-top: 6px;
+  border-top: 1px dashed var(--border);
+}
+details summary {
+  cursor: pointer;
+  font-size: 12.5px;
+  color: var(--link);
+  user-select: none;
+  list-style: none;
+  padding: 4px 0;
+}
+details summary::-webkit-details-marker { display: none; }
+details summary::before {
+  content: "▸";
+  display: inline-block;
+  margin-right: 6px;
+  color: var(--text-muted);
+  transition: transform 0.15s;
+}
+details[open] summary::before { transform: rotate(90deg); }
+details table {
+  margin-top: 6px;
+  font-size: 12.5px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+}
+details table th, details table td { padding: 6px 10px; }
+
+.summary-line {
+  font-size: 14px;
+  color: var(--text);
+  margin-bottom: 4px;
+}
+.summary-line strong { color: var(--text); font-weight: 600; }
+
+.muted { color: var(--text-muted); }
+
+.warning-list {
+  list-style: none;
+  padding-left: 0;
+}
+.warning-list li {
+  padding: 10px 14px;
+  margin-bottom: 8px;
+  border: 1px solid var(--warn-bd);
+  background: var(--warn-bg);
+  color: var(--warn);
+  border-radius: 6px;
+  font-size: 13.5px;
+}
+
+.empty {
+  color: var(--text-faint);
+  font-style: italic;
+  font-size: 13.5px;
+}
+
+footer {
+  text-align: center;
+  padding: 24px 16px 32px;
+  font-size: 12px;
+  color: var(--text-faint);
+  border-top: 1px solid var(--border);
+  margin-top: 8px;
+}
+footer strong { color: var(--text-muted); }
+{{block "target-style" ""}}{{end}}  </style>
+</head>
+<body>
+<header>
+  <div class="brand">NVIDIA · Kubernetes Launch Kit</div>
+  <h1>{{.Page.Heading}}</h1>
+  <dl class="meta">
+    <dt>Generated</dt>           <dd>{{.Page.FormattedTime}}</dd>
+    <dt>l8k version</dt>         <dd>{{.Page.Version}}</dd>
+    {{- range .Page.Metadata}}
+    <dt>{{.Label}}</dt> <dd>{{.Value}}</dd>
+    {{- end}}
+  </dl>
+</header>
+<main>
+
+<div class="verdict-banner verdict-{{.Page.Outcome.Style}}">
+  <div class="verdict-headline">
+    {{.Page.Outcome.Label}}
+  </div>
+  {{- if .Page.Outcome.Reasons}}
+  <ul class="verdict-list verdict-reasons">
+    {{- range .Page.Outcome.Reasons}}
+    <li>{{.}}</li>
+    {{- end}}
+  </ul>
+  {{- end}}
+  {{- if .Page.Outcome.Notes}}
+  <ul class="verdict-list verdict-notes">
+    {{- range .Page.Outcome.Notes}}
+    <li>{{.}}</li>
+    {{- end}}
+  </ul>
+  {{- end}}
+</div>
+{{template "body" .Body}}
+</main>
+<footer>
+  Generated by <strong>NVIDIA Kubernetes Launch Kit</strong> · {{.Page.Version}} · {{.Page.FormattedTime}}
+</footer>
+</body>
+</html>

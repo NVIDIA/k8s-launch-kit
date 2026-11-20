@@ -6,6 +6,7 @@ package app
 import (
 	"context"
 	"fmt"
+	"github.com/nvidia/k8s-launch-kit/pkg/dpf/chartfetch"
 	"strings"
 
 	"github.com/nvidia/k8s-launch-kit/pkg/dpf/bundle"
@@ -49,7 +50,7 @@ type ChartFetcher func(context.Context, string) ([]byte, error)
 // Publishing the bundle remains the caller's explicit responsibility.
 func Generate(ctx context.Context, resolved ResolvedGeneration, fetch ChartFetcher) (*bundle.Bundle, error) {
 	if fetch == nil {
-		fetch = DownloadChart
+		fetch = (chartfetch.Downloader{}).Fetch
 	}
 	progress := ui.FromContext(ctx)
 	progress.Info("[RUNNING] Charts: retrieving the selected DPF operator archive")

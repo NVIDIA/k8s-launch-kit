@@ -17,15 +17,16 @@ import (
 )
 
 type trafficFakeRemote struct {
-	snapshot    hostNetworkSnapshot
-	calls       []string
-	jumboOK     bool
-	route       string
-	change      bool
-	routeErr    bool
-	remoteErr   error
-	jumboErr    error
-	jumboOutput string
+	snapshot     hostNetworkSnapshot
+	calls        []string
+	jumboOK      bool
+	route        string
+	change       bool
+	routeErr     bool
+	remoteErr    error
+	jumboErr     error
+	jumboOutput  string
+	ordinaryLoss bool
 }
 
 func (f *trafficFakeRemote) Run(ctx context.Context, stage, command string) (string, error) {
@@ -55,6 +56,10 @@ func (f *trafficFakeRemote) Run(ctx context.Context, stage, command string) (str
 		}
 		return `[{"dst":"172.25.1.2","from":"172.25.0.2","gateway":"172.25.0.1","dev":"test0","flags":[],"uid":0,"cache":[]}]`, nil
 	case "host-traffic-ping":
+		if f.ordinaryLoss && !strings.Contains(command, "-M do") {
+			exit := 1
+			return "3 packets transmitted, 1 received, 66.6667% packet loss, time 4ms\n", &Error{Code: "SSH_COMMAND_FAILED", Stage: stage, Tool: "/usr/bin/ping", ExitStatus: &exit}
+		}
 		if strings.Contains(command, "-M do") && !f.jumboOK {
 			output := f.jumboOutput
 			if output == "" {
@@ -70,6 +75,34 @@ func (f *trafficFakeRemote) Run(ctx context.Context, stage, command string) (str
 		return "PING summary\n3 packets transmitted, 3 received, 0% packet loss, time 2ms\nrtt min/avg/max/mdev = 0.1/0.2/0.3/0.0 ms\n", nil
 	default:
 		return "", errors.New("unexpected stage")
+	}
+}
+
+func TestHostTrafficOrdinaryLossStillMeasuresDFAndFinalFences(t *testing.T) {
+	for _, dfPass := range []bool{true, false} {
+		t.Run(fmt.Sprint(dfPass), func(t *testing.T) {
+			remote := &trafficFakeRemote{snapshot: trafficTestSnapshot(), ordinaryLoss: true, jumboOK: dfPass}
+			result, err := runTrafficProbeForTest(remote, trafficTestRequest())
+			if Code(err) != "HOST_NETWORK_TRAFFIC_PING_INCOMPLETE" || result.Ordinary.State != TrafficProbeFailed || result.Ordinary.Counters == nil || result.Ordinary.Counters.Received != 1 || !result.RouteVerified {
+				t.Fatalf("ordinary loss lost counters or final qualification: %+v %v", result, err)
+			}
+			expected := TrafficProbeFailed
+			if dfPass {
+				expected = TrafficProbePassed
+			}
+			if result.MTUProbe.State != expected || result.MTUProbe.Counters == nil {
+				t.Fatalf("required DF not measured: %+v", result)
+			}
+			assertTrafficCommands(t, remote.calls, 3)
+			if strings.Count(strings.Join(remote.calls, "\n"), "host-network-snapshot") != 2 {
+				t.Fatal("health failure skipped final host identity snapshot")
+			}
+		})
+	}
+	remote := &trafficFakeRemote{snapshot: trafficTestSnapshot(), ordinaryLoss: true, jumboOK: true, change: true}
+	result, err := runTrafficProbeForTest(remote, trafficTestRequest())
+	if Code(err) != "HOST_NETWORK_RUNTIME_CHANGED" || result.RouteVerified || result.Ordinary.Counters == nil || result.MTUProbe.State != TrafficProbePassed {
+		t.Fatalf("final drift did not override packet health: %+v %v", result, err)
 	}
 }
 

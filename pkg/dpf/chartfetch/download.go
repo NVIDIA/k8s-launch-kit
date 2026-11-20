@@ -1,7 +1,8 @@
 // Copyright 2026 NVIDIA CORPORATION & AFFILIATES
 // SPDX-License-Identifier: Apache-2.0
 
-package app
+// Package chartfetch retrieves public Helm archives with bounded, redacted transport.
+package chartfetch
 
 import (
 	"context"
@@ -14,31 +15,39 @@ import (
 	"time"
 )
 
-const maximumGenerationChartBytes = 32 << 20
+const maximumChartBytes = 32 << 20
 
-// chartDownloadError carries only diagnostics constructed by the downloader.
+// Error carries only diagnostics constructed by the downloader.
 // Underlying HTTP errors, response bodies and signed redirect URLs are excluded.
-type chartDownloadError struct {
+type Error struct {
 	code    string
 	message string
 }
 
-func (e *chartDownloadError) Error() string { return e.message }
+func (e *Error) Error() string { return e.message }
 
-// DownloadChart retrieves one public HTTPS coordinate with bounded redirects,
-// duration and response size. Returned diagnostics omit server text and signed URLs.
-func DownloadChart(ctx context.Context, address string) ([]byte, error) {
-	return downloadChart(ctx, address, http.DefaultTransport)
-}
+// Downloader uses an explicit transport, or the standard HTTPS transport when nil.
+// It never reads Helm or registry credential stores.
+type Downloader struct{ Transport http.RoundTripper }
+
+// Code is a finite transport reason; Error omits signed URLs and server text.
+func (e *Error) Code() string { return e.code }
 
 // Inputs remain unsigned public coordinates. NGC redirects these coordinates to
 // signed HTTPS object URLs; queries are allowed only on those server redirects.
 // Integrity is verified against the selected digest before bundle publication.
-func downloadChart(ctx context.Context, address string, transport http.RoundTripper) ([]byte, error) {
+func (d Downloader) Fetch(ctx context.Context, address string) ([]byte, error) {
+	if ctx == nil {
+		return nil, &Error{code: "CONTEXT_REQUIRED", message: "chart download requires a context"}
+	}
+	transport := d.Transport
+	if transport == nil {
+		transport = http.DefaultTransport
+	}
 	validate := func(address string, redirected bool) error {
 		parsed, err := url.Parse(address)
 		if err != nil || parsed.Scheme != "https" || parsed.Hostname() == "" || parsed.User != nil || (!redirected && parsed.RawQuery != "") || parsed.Fragment != "" {
-			return &chartDownloadError{code: "URL_INVALID", message: "chart URL requires HTTPS without user information or fragment; input coordinates must not contain a query"}
+			return &Error{code: "URL_INVALID", message: "chart URL requires HTTPS without user information or fragment; input coordinates must not contain a query"}
 		}
 		return nil
 	}
@@ -47,10 +56,10 @@ func downloadChart(ctx context.Context, address string, transport http.RoundTrip
 	}
 	request, err := http.NewRequestWithContext(ctx, http.MethodGet, address, nil)
 	if err != nil {
-		return nil, &chartDownloadError{code: "URL_INVALID", message: "cannot construct chart download request"}
+		return nil, &Error{code: "URL_INVALID", message: "cannot construct chart download request"}
 	}
-	unsafeRedirect := &chartDownloadError{code: "REDIRECT_REJECTED", message: "chart redirect requires HTTPS without user information or fragment"}
-	redirectLimit := &chartDownloadError{code: "REDIRECT_LIMIT", message: "chart redirect limit exceeded"}
+	unsafeRedirect := &Error{code: "REDIRECT_REJECTED", message: "chart redirect requires HTTPS without user information or fragment"}
+	redirectLimit := &Error{code: "REDIRECT_LIMIT", message: "chart redirect limit exceeded"}
 	client := &http.Client{Transport: transport, Timeout: 90 * time.Second, CheckRedirect: func(req *http.Request, via []*http.Request) error {
 		if len(via) >= 5 {
 			return redirectLimit
@@ -77,30 +86,30 @@ func downloadChart(ctx context.Context, address string, transport http.RoundTrip
 		}
 		var timeout net.Error
 		if errors.As(err, &timeout) && timeout.Timeout() {
-			return nil, &chartDownloadError{code: "TIMEOUT", message: "chart download timed out"}
+			return nil, &Error{code: "TIMEOUT", message: "chart download timed out"}
 		}
-		return nil, &chartDownloadError{code: "TRANSPORT_UNAVAILABLE", message: "chart download failed; verify HTTPS connectivity and CA trust"}
+		return nil, &Error{code: "TRANSPORT_UNAVAILABLE", message: "chart download failed; verify HTTPS connectivity and CA trust"}
 	}
 	defer response.Body.Close()
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
 	if response.StatusCode != http.StatusOK {
-		return nil, &chartDownloadError{code: "HTTP_ERROR", message: fmt.Sprintf("chart server returned HTTP %d", response.StatusCode)}
+		return nil, &Error{code: "HTTP_ERROR", message: fmt.Sprintf("chart server returned HTTP %d", response.StatusCode)}
 	}
-	data, err := io.ReadAll(io.LimitReader(response.Body, maximumGenerationChartBytes+1))
+	data, err := io.ReadAll(io.LimitReader(response.Body, maximumChartBytes+1))
 	if contextErr := ctx.Err(); contextErr != nil {
 		return nil, contextErr
 	}
 	if err != nil {
 		var timeout net.Error
 		if errors.As(err, &timeout) && timeout.Timeout() {
-			return nil, &chartDownloadError{code: "TIMEOUT", message: "chart download timed out"}
+			return nil, &Error{code: "TIMEOUT", message: "chart download timed out"}
 		}
-		return nil, &chartDownloadError{code: "READ_ERROR", message: "cannot read complete chart archive"}
+		return nil, &Error{code: "READ_ERROR", message: "cannot read complete chart archive"}
 	}
-	if len(data) == 0 || len(data) > maximumGenerationChartBytes {
-		return nil, &chartDownloadError{code: "SIZE_INVALID", message: fmt.Sprintf("chart archive must be between 1 byte and %d bytes", maximumGenerationChartBytes)}
+	if len(data) == 0 || len(data) > maximumChartBytes {
+		return nil, &Error{code: "SIZE_INVALID", message: fmt.Sprintf("chart archive must be between 1 byte and %d bytes", maximumChartBytes)}
 	}
 	return data, nil
 }

@@ -96,7 +96,7 @@ var schemaCmd = &cobra.Command{
 					Example:     "l8k clean --kubeconfig ~/.kube/config [--keep-helm-chart]",
 				},
 				"validate": {
-					Description: "Verify generated deployment state and connectivity, or run connectivity only when --deployment-files contains only example test DaemonSets",
+					Description: "Verify target deployment state and connectivity. Host also supports connectivity-only example directories. DPF requires explicit inventory and retained deployment-files; connectivity=false selects resource-only scope and JSON emits one terminal result.",
 					Example:     "l8k validate --user-config ./cluster-config.yaml --deployment-files ./deployment",
 				},
 				"sosreport": {
@@ -248,7 +248,7 @@ var schemaCmd = &cobra.Command{
 				"--quiet": {
 					Type:        "bool",
 					Default:     "false",
-					Description: "Suppress informational output (errors still shown)",
+					Description: "Suppress informational output for the root pipeline and discovery. With validate, supported only for --target dpf; the terminal result and errors remain visible.",
 				},
 				"--groups": {
 					Type:        "[]string",
@@ -328,7 +328,7 @@ func annotateSchemaFlagTargets(s *schema) {
 	}
 	// DPF-specific inputs use typed request fields rather than Host config
 	// options. Discover their schema from registered flags and target metadata.
-	for _, command := range []*cobra.Command{discoverCmd, generateCmd, deployCmd} {
+	for _, command := range []*cobra.Command{discoverCmd, generateCmd, deployCmd, validateCmd} {
 		command.LocalNonPersistentFlags().VisitAll(func(flag *pflag.Flag) {
 			if _, exists := s.Flags["--"+flag.Name]; exists {
 				return

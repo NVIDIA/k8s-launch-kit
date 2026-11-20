@@ -114,7 +114,7 @@ func TestManagementFakesOwnIndependentReadinessState(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	execution, err := prepareManagementExecution(generated, time.Minute)
+	execution, err := loadManagementExecution(generated, time.Minute)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -403,7 +403,7 @@ func TestRunManagementAcceptsOperatorConfigControllerFinalizerAfterCreate(t *tes
 	if err != nil {
 		t.Fatal(err)
 	}
-	execution, err := prepareManagementExecution(generated, time.Minute)
+	execution, err := loadManagementExecution(generated, time.Minute)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -461,7 +461,7 @@ func TestRunManagementRechecksSingletonBeforeConfigCreateAndVerifiesVersion(t *t
 		t.Fatalf("late singleton collision error=%v, config creates=%d", err, client.createConfig)
 	}
 
-	execution, err := prepareManagementExecution(generated, time.Minute)
+	execution, err := loadManagementExecution(generated, time.Minute)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -574,7 +574,7 @@ func TestOperatorCRDReadinessAcceptsAPIDefaultedRetainedChart(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	execution, err := prepareManagementExecution(generated, time.Minute)
+	execution, err := loadManagementExecution(generated, time.Minute)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -614,7 +614,7 @@ func TestOperatorCRDReadinessRejectsSchemaConversionAndIdentityDrift(t *testing.
 	if err != nil {
 		t.Fatal(err)
 	}
-	execution, err := prepareManagementExecution(generated, time.Minute)
+	execution, err := loadManagementExecution(generated, time.Minute)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -783,7 +783,7 @@ func TestOperatorConfigFinalizerDoesNotRelaxReadinessOwnershipOrIntent(t *testin
 	if err != nil {
 		t.Fatal(err)
 	}
-	execution, err := prepareManagementExecution(generated, time.Minute)
+	execution, err := loadManagementExecution(generated, time.Minute)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -878,7 +878,7 @@ func TestManagementReportsExistingReleaseConflictWithoutInstallUncertainty(t *te
 	if err != nil {
 		t.Fatal(err)
 	}
-	execution, err := prepareManagementExecution(generated, time.Minute)
+	execution, err := loadManagementExecution(generated, time.Minute)
 	if err != nil {
 		t.Fatal(err)
 	}

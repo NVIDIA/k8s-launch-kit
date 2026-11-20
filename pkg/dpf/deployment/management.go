@@ -97,51 +97,26 @@ type managementVerificationInputs struct {
 	crds                []operatorCRDExpectation
 }
 
-func prepareManagementExecution(retained *bundle.Bundle, timeout time.Duration) (*managementExecution, error) {
-	plan, err := generation.LoadPlan(retained)
-	if err != nil {
-		return nil, fmt.Errorf("validate retained DPF plan before management access: %w", err)
-	}
-	prerequisites, err := managementPreflightPlanFromValidated(ManagementPreflightRequest{Bundle: retained}, plan)
+func prepareManagementExecution(plan *generation.Plan, timeout time.Duration) (*managementExecution, error) {
+	desired, err := prepareManagementDesiredFromPlan(plan.Bundle(), plan)
 	if err != nil {
 		return nil, err
 	}
-	inputs, archive := plan.Operator()
-	operator, err := prepareOperator(OperatorRequest{Archive: archive, Inputs: inputs, Timeout: timeout})
+	prerequisites, err := managementPreflightPlanFromValidated(ManagementPreflightRequest{Bundle: desired.retained}, desired.plan)
+	if err != nil {
+		return nil, err
+	}
+	operator, err := prepareOperatorExecution(desired.operator, timeout)
 	if err != nil {
 		return nil, fmt.Errorf("prepare retained operator installation: %w", err)
 	}
-	manager, crds, err := operatorReadinessObjects(operator)
-	if err != nil {
-		return nil, err
-	}
-	schemas, err := generation.NewObjectSchemas(operator.renderedManifest)
-	if err != nil {
-		return nil, fmt.Errorf("prepare retained DPF resource verifier: compile retained operator CRD schemas: %w", err)
-	}
-	index := retained.Index()
-	rules, err := controllercontract.Select(index.Release, index.Profile, index.Renderer, schemas)
-	if err != nil {
-		return nil, fmt.Errorf("select retained controller contract before management access: %w", err)
-	}
-	metadata, err := controllerMetadataForPlan(rules, plan)
-	if err != nil {
-		return nil, fmt.Errorf("prepare retained controller metadata: %w", err)
-	}
-	reconciler, err := newReconciler(rules, plan.Digest(), metadata)
-	if err != nil {
-		return nil, fmt.Errorf("prepare retained DPF resource verifier: %w", err)
-	}
-	namespaces, namespace, configObject, err := managementBootstrapObjects(retained, inputs)
-	if err != nil {
-		return nil, err
-	}
 	return &managementExecution{operator: operator, preflight: prerequisites,
 		managementVerificationInputs: managementVerificationInputs{
-			retained: retained, plan: plan, operatorReleaseName: operator.releaseName,
-			operatorVersion: "v" + inputs.ReleaseVersion, rules: rules, reconciler: reconciler,
-			namespaces: namespaces, operatorNamespace: namespace, kamajiNamespace: prerequisites.overrides.Kamaji,
-			configObject: configObject, manager: manager, crds: crds}}, nil
+			retained: desired.retained, plan: desired.plan, operatorReleaseName: desired.operator.releaseName,
+			operatorVersion: desired.operatorVersion, rules: desired.rules,
+			reconciler: &Reconciler{desiredVerifier: desired.verifier},
+			namespaces: desired.namespaces, operatorNamespace: desired.operatorNamespace, kamajiNamespace: prerequisites.overrides.Kamaji,
+			configObject: desired.configObject, manager: desired.manager, crds: desired.crds}}, nil
 }
 
 func runPreparedManagement(ctx context.Context, client managementRunnerClient, execution *managementExecution,
@@ -557,6 +532,13 @@ func managementBootstrapObjects(retained *bundle.Bundle, inputs bootstrap.Operat
 }
 
 func operatorReadinessObjects(plan *operatorPlan) (*unstructured.Unstructured, []operatorCRDExpectation, error) {
+	if plan == nil {
+		return nil, nil, fmt.Errorf("retained DPF operator manifest is required")
+	}
+	return operatorDesiredReadinessObjects(plan.operatorDesired)
+}
+
+func operatorDesiredReadinessObjects(plan *operatorDesired) (*unstructured.Unstructured, []operatorCRDExpectation, error) {
 	if plan == nil || len(plan.renderedManifest) == 0 {
 		return nil, nil, fmt.Errorf("retained DPF operator manifest is required")
 	}

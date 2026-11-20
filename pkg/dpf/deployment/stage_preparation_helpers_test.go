@@ -11,6 +11,7 @@ import (
 
 	"github.com/nvidia/k8s-launch-kit/pkg/dpf/bundle"
 	"github.com/nvidia/k8s-launch-kit/pkg/dpf/config"
+	"github.com/nvidia/k8s-launch-kit/pkg/dpf/generation"
 	"github.com/nvidia/k8s-launch-kit/pkg/dpf/probe"
 )
 
@@ -33,7 +34,7 @@ func runManagement(ctx context.Context, client managementRunnerClient, retained 
 	if err := ctx.Err(); err != nil {
 		return managementBootstrapReceipt{}, err
 	}
-	execution, err := prepareManagementExecution(retained, time.Until(deadline(ctx)))
+	execution, err := loadManagementExecution(retained, time.Until(deadline(ctx)))
 	if err != nil {
 		return managementBootstrapReceipt{}, err
 	}
@@ -72,7 +73,7 @@ func prepareControlPlaneRun(ctx context.Context, client controlPlaneTestClient, 
 	if probes.Journal == nil {
 		return nil, fmt.Errorf("control-plane execution requires a durable probe resource journal")
 	}
-	execution, err := prepareManagementExecution(retained, time.Until(deadline(ctx)))
+	execution, err := loadManagementExecution(retained, time.Until(deadline(ctx)))
 	if err != nil {
 		return nil, err
 	}
@@ -154,4 +155,14 @@ type workloadTestClient interface {
 	softwareStageManagementClient
 	workloadStageClient
 	workloadPermissionChecker
+}
+
+// loadManagementExecution exercises the untrusted-bundle constructor for stage
+// tests. Run callers instead supply a Plan explicitly and get fresh execution.
+func loadManagementExecution(retained *bundle.Bundle, timeout time.Duration) (*managementExecution, error) {
+	plan, err := generation.LoadPlan(retained)
+	if err != nil {
+		return nil, fmt.Errorf("validate retained DPF plan before management access: %w", err)
+	}
+	return prepareManagementExecution(plan, timeout)
 }

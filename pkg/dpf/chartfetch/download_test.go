@@ -1,7 +1,7 @@
 // Copyright 2026 NVIDIA CORPORATION & AFFILIATES
 // SPDX-License-Identifier: Apache-2.0
 
-package app
+package chartfetch
 
 import (
 	"context"
@@ -36,11 +36,11 @@ func TestChartDownloadAcceptsHTTPSObjectSignatureRedirect(t *testing.T) {
 		fmt.Fprint(w, "chart bytes")
 	}))
 	defer server.Close()
-	data, err := downloadChart(context.Background(), server.URL+"/chart.tgz", server.Client().Transport)
+	data, err := (Downloader{Transport: server.Client().Transport}).Fetch(context.Background(), server.URL+"/chart.tgz")
 	if err != nil || string(data) != "chart bytes" || finalCalls.Load() != 1 {
 		t.Fatalf("signed redirect failed: %s, %v", data, err)
 	}
-	if _, err := downloadChart(context.Background(), server.URL+"/object?Signature=private-signature", server.Client().Transport); err == nil {
+	if _, err := (Downloader{Transport: server.Client().Transport}).Fetch(context.Background(), server.URL+"/object?Signature=private-signature"); err == nil {
 		t.Fatal("signed input coordinate accepted")
 	}
 }
@@ -70,7 +70,7 @@ func TestChartDownloadDoesNotReferSignedURLOnNextRedirect(t *testing.T) {
 	}))
 	defer server.Close()
 
-	data, err := downloadChart(context.Background(), server.URL+"/chart.tgz", server.Client().Transport)
+	data, err := (Downloader{Transport: server.Client().Transport}).Fetch(context.Background(), server.URL+"/chart.tgz")
 	if err != nil || string(data) != "chart bytes" || finalCalls.Load() != 1 {
 		t.Fatalf("signed multi-hop redirect failed: %s, %v", data, err)
 	}
@@ -81,7 +81,7 @@ func TestChartDownloadRejectsUnsafeRedirectWithoutExposingURL(t *testing.T) {
 		t.Run(target[:5], func(t *testing.T) {
 			server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { http.Redirect(w, r, target, http.StatusFound) }))
 			defer server.Close()
-			_, err := downloadChart(context.Background(), server.URL, server.Client().Transport)
+			_, err := (Downloader{Transport: server.Client().Transport}).Fetch(context.Background(), server.URL)
 			if err == nil || !strings.Contains(err.Error(), "redirect") || strings.Contains(err.Error(), "private-signature") {
 				t.Fatalf("unsafe redirect error not redacted: %v", err)
 			}
@@ -105,7 +105,7 @@ func TestChartDownloadRedirectLoopAndTransportErrorAreRedacted(t *testing.T) {
 					return server.Client().Transport.RoundTrip(r)
 				})
 			}
-			_, err := downloadChart(context.Background(), server.URL, transport)
+			_, err := (Downloader{Transport: transport}).Fetch(context.Background(), server.URL)
 			if err == nil || strings.Contains(err.Error(), "private-signature") {
 				t.Fatalf("redirect failure exposed query: %v", err)
 			}
@@ -129,7 +129,7 @@ func TestChartDownloadCancellationAndHTTPError(t *testing.T) {
 			defer server.Close()
 			ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
 			defer cancel()
-			_, err := downloadChart(ctx, server.URL, server.Client().Transport)
+			_, err := (Downloader{Transport: server.Client().Transport}).Fetch(ctx, server.URL)
 			if mode == "cancel" && !errors.Is(err, context.DeadlineExceeded) {
 				t.Fatalf("context not preserved: %v", err)
 			}
@@ -161,7 +161,7 @@ func TestChartDownloadPreservesCancellationWhenTransportReturnsNormally(t *testi
 				}
 				return &http.Response{StatusCode: status, Header: make(http.Header), Body: body}, nil
 			})
-			data, err := downloadChart(ctx, "https://charts.example.test/chart.tgz", transport)
+			data, err := (Downloader{Transport: transport}).Fetch(ctx, "https://charts.example.test/chart.tgz")
 			if !errors.Is(err, context.Canceled) || data != nil {
 				t.Fatalf("cancelled %s returned data=%q error=%v", phase, data, err)
 			}
@@ -186,13 +186,13 @@ func TestChartBodyFailuresKeepSafeSpecificDiscoveryReason(t *testing.T) {
 			transport := chartTestTransport(func(*http.Request) (*http.Response, error) {
 				return &http.Response{StatusCode: http.StatusOK, Header: make(http.Header), Body: io.NopCloser(chartTestReader(func([]byte) (int, error) { return 0, test.readError }))}, nil
 			})
-			data, err := downloadChart(context.Background(), "https://charts.example.test/chart.tgz", transport)
+			data, err := (Downloader{Transport: transport}).Fetch(context.Background(), "https://charts.example.test/chart.tgz")
 			if err == nil || data != nil {
 				t.Fatalf("body failure returned data=%q error=%v", data, err)
 			}
-			code, message := callerChartDownloadFailure("OPERATOR", "DPF operator", err)
-			if code != "CALLER_RBAC_OPERATOR_CHART_"+test.reason || strings.Contains(message, "private-signature") {
-				t.Fatalf("unsafe or nonspecific body failure: %s %s", code, message)
+			var failure *Error
+			if !errors.As(err, &failure) || failure.Code() != test.reason || strings.Contains(err.Error(), "private-signature") {
+				t.Fatalf("unsafe or nonspecific body failure: %v", err)
 			}
 		})
 	}

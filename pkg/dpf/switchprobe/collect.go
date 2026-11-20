@@ -78,6 +78,17 @@ type observationFailure struct {
 // switch. Command failures remain source-specific issues; successful sources
 // are still parsed and returned. A canceled context stops all later commands.
 func (c Collector) Collect(ctx context.Context, target config.SwitchTarget, timeout time.Duration) (snapshot fabric.Snapshot) {
+	return c.collect(ctx, target, timeout, true)
+}
+
+// ObserveConfiguration reads configured and operational forwarding, BGP and
+// LLDP state. Unlike the discovery qualification diagnostic, it never changes
+// SDK logging. It does not establish direct ASIC RIF/VRF programming.
+func (c Collector) ObserveConfiguration(ctx context.Context, target config.SwitchTarget, timeout time.Duration) fabric.Snapshot {
+	return c.collect(ctx, target, timeout, false)
+}
+
+func (c Collector) collect(ctx context.Context, target config.SwitchTarget, timeout time.Duration, inspectASIC bool) (snapshot fabric.Snapshot) {
 	started := time.Now()
 	if ctx == nil {
 		return connectionIssue("SSH_CONFIGURATION_INVALID", "A discovery context is required.")
@@ -120,8 +131,12 @@ func (c Collector) Collect(ctx context.Context, target config.SwitchTarget, time
 	}
 	output.Info("[PASS] Switch %s: authenticated SSH session established", label)
 
-	output.Info("[RUNNING] Switch %s: qualified ASIC source identities", label)
-	asic, asicFailure := beginASIC(ctx, session, target.Access)
+	var asic *asicCollection
+	var asicFailure *fabric.Issue
+	if inspectASIC {
+		output.Info("[RUNNING] Switch %s: qualified ASIC source identities", label)
+		asic, asicFailure = beginASIC(ctx, session, target.Access)
+	}
 	inputs := fabric.NVUEInputs{RevisionCollectionRequested: true, NextHopCollectionRequested: true, SelectedAppliedInterfaces: map[string][]byte{}, SelectedOperationalInterfaces: map[string][]byte{}}
 	for _, port := range target.Ports {
 		inputs.SelectedAppliedInterfaces[port.Name] = nil

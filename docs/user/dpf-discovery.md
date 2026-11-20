@@ -25,7 +25,7 @@ Discovery defaults to `inventory` mode, including with HBN-BGP. Supply a
 kubeconfig to add management topology observations. Explicitly select
 `discovery.probes.mode: management` to test per-node network paths. Management probes currently support Linux/amd64 nodes. DPF HBN-BGP
 artifact generation and standalone [deployment](dpf-deployment.md) are available.
-DPF standalone validation and the composite DPF pipeline are not available.
+Use [standalone DPF validation](dpf-validation.md) to check an existing generated deployment. The composite DPF pipeline remains unavailable.
 
 Inventory establishes physical identities, host associations and BMC access. It
 does not certify hardware support for every deployment. A selected use case

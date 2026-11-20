@@ -34,7 +34,7 @@ func TestCollectHostHBNCablingUsesOnlyExactSelectedAssociation(t *testing.T) {
 		}
 		return hostLLDPCaptureResult(), nil
 	})
-	collectHostHBNCabling(context.Background(), request, &inv, capturer)
+	CollectHostHBNCabling(context.Background(), request, &inv, capturer)
 	if calls != 1 {
 		t.Fatalf("got %d calls, want one capture", calls)
 	}
@@ -65,7 +65,7 @@ func TestCollectHostHBNCablingDoesNotFallbackToWrongTargetOrStaleFacts(t *testin
 			stale := hostLLDPCaptureResult()
 			inv.Hosts[0].Runtime.Network.HostLLDP = &stale
 			calls := 0
-			collectHostHBNCabling(context.Background(), request, &inv, hostLLDPCapturerFunc(func(context.Context, config.Target, inventory.HostLLDPCaptureRequest, time.Duration) (inventory.HostLLDPCapture, error) {
+			CollectHostHBNCabling(context.Background(), request, &inv, hostLLDPCapturerFunc(func(context.Context, config.Target, inventory.HostLLDPCaptureRequest, time.Duration) (inventory.HostLLDPCapture, error) {
 				calls++
 				return hostLLDPCaptureResult(), nil
 			}))
@@ -81,7 +81,7 @@ func TestCollectHostHBNCablingSkipsAlreadyCorroboratedDPUPath(t *testing.T) {
 	inv.DPUs[0].NetworkFunctionMACs = []string{"02:00:00:00:00:01"}
 	inv.HBN.Switches[0].Snapshot.Operational.LLDP = []fabric.LLDPPeerHint{{LocalInterface: "swp19s0", PortID: stringPointer("02:00:00:00:00:01"), PortName: stringPointer("p0")}, {LocalInterface: "swp19s1", PortID: stringPointer("02:00:00:00:00:01"), PortName: stringPointer("p1")}}
 	calls := 0
-	collectHostHBNCabling(context.Background(), request, &inv, hostLLDPCapturerFunc(func(context.Context, config.Target, inventory.HostLLDPCaptureRequest, time.Duration) (inventory.HostLLDPCapture, error) {
+	CollectHostHBNCabling(context.Background(), request, &inv, hostLLDPCapturerFunc(func(context.Context, config.Target, inventory.HostLLDPCaptureRequest, time.Duration) (inventory.HostLLDPCapture, error) {
 		calls++
 		return hostLLDPCaptureResult(), nil
 	}))
@@ -98,7 +98,7 @@ func TestCollectHostHBNCablingDoesNotCaptureOverKnownDPUIdentityMismatch(t *test
 		{LocalInterface: "swp19s1", PortID: stringPointer("02:00:00:00:00:01"), PortDescription: stringPointer("p1")},
 	}
 	calls := 0
-	collectHostHBNCabling(context.Background(), request, &inv, hostLLDPCapturerFunc(func(context.Context, config.Target, inventory.HostLLDPCaptureRequest, time.Duration) (inventory.HostLLDPCapture, error) {
+	CollectHostHBNCabling(context.Background(), request, &inv, hostLLDPCapturerFunc(func(context.Context, config.Target, inventory.HostLLDPCaptureRequest, time.Duration) (inventory.HostLLDPCapture, error) {
 		calls++
 		return hostLLDPCaptureResult(), nil
 	}))
