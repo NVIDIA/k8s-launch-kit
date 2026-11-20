@@ -295,6 +295,12 @@ deadline identities SHALL remain available to callers.
 
 An effect extension MUST specify cleanup after partial setup, cancellation and rerun, including dependency ordering, finalizers, retained resources and failure evidence. Cleanup SHALL honor the documented operation scope and retention policy without promising transactions or success during API outage.
 
+#### Scenario: Reconcile Network Operator teardown
+
+- **WHEN** Host clean removes a Network Operator deployment with default settings
+- **THEN** it waits for dependent controller state and successful observed MOFED shutdown before completing teardown, preserves Helm on a failed check, and applies the same checks on re-sweeps.
+- **AND** an explicit `--skip-wait` selects batch CR deletion and its existing finalizer waits.
+
 #### Scenario: Dependent finalizers
 
 - **WHEN** clean removes resources with cross-resource finalizer dependencies

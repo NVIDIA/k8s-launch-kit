@@ -51,7 +51,7 @@ binary for the checkout being tested.
 | `l8k discover` | Discover cluster hardware and produce cluster-config.yaml |
 | `l8k generate` | Generate Kubernetes YAML manifests from config + profile (use `--for <preset>` to skip cluster discovery for known SKUs) |
 | `l8k deploy` | Apply generated manifests and install or upgrade the Network Operator Helm release |
-| `l8k clean` | Delete Network Operator custom resources and uninstall its Helm release unless config or a flag retains it |
+| `l8k clean` | Wait for reconciled teardown and uninstall the Network Operator Helm release unless config or a flag retains it |
 | `l8k validate` | Verify the Helm release, manifests, component versions, and connectivity |
 | `l8k preset list` | List bundled topology presets (directory + machineType + gpuType) |
 | `l8k preset update` | Download latest topology presets from GitHub |

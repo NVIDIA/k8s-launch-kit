@@ -150,7 +150,7 @@ Cleanup returns a command-specific summary:
 
 `cleanup.keepHelmChart` reports the effective retention policy. It is `true`
 when either `networkOperator.skipHelmChart` in the resolved config or the
-explicit `--keep-helm-chart` flag retains the release.
+explicit `--keep-helm-chart` flag retains the release. Cleanup waits for reconciliation by default. Use `--clean-timeout` to bound the CR and driver teardown stages. `--skip-wait` selects legacy batch deletion.
 
 `l8k clean --output json` auto-confirms an irreversible cluster mutation and
 has no dry-run mode. Automation must pin the intended kubeconfig and should

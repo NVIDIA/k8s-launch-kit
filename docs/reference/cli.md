@@ -102,7 +102,7 @@ available throughout the command tree.
 | `--yes` | yes | — | — | — | — | — |
 | `--quiet` | yes | yes | — | — | yes (DPF only) | — |
 | Validation flags below | — | — | — | — | yes | — |
-| `--keep-helm-chart` | — | — | — | — | — | yes |
+| `--skip-wait`, `--clean-timeout`, `--keep-helm-chart` | — | — | — | — | — | yes |
 
 Root discovery still mutates bootstrap resources and node labels when
 `--dry-run` is supplied; that flag previews only deployment. Generate without
@@ -184,7 +184,8 @@ root pipeline. The remaining profile flags also apply to discovery.
 
 `l8k clean` discovers every namespaced custom-resource instance in the resolved
 Network Operator namespace and the known cluster-scoped Network Operator CRs.
-It sends deletion requests to the complete set before monitoring any CR for
+By default, it waits for operator-specific reconciliation before removing supporting resources.
+With `--skip-wait`, it sends deletion requests to the complete set before monitoring any CR for
 finalizer completion, then re-sweeps both scopes before uninstalling the
 `network-operator` Helm release. If the resolved config sets
 `networkOperator.skipHelmChart: true`, the release is externally owned and is
@@ -202,6 +203,8 @@ in-cluster objects do not select a destructive cleanup target.
 
 | Flag | Description |
 | --- | --- |
+| `--skip-wait` | Skip the SR-IOV, NIC, network attachment and MOFED reconciliation checks and use legacy batch deletion. See [cleanup](../user/cleanup.md#wait-for-reconciled-teardown). |
+| `--clean-timeout` | Bound the custom-resource and driver teardown stages, e.g. `45m`. Default `0` waits until cancelled. |
 | `--keep-helm-chart` | Delete custom resources but leave the Network Operator Helm release and chart-managed resources installed regardless of config. |
 | `--kubeconfig` | Cluster to clean. Falls back to `$KUBECONFIG` and then `~/.kube/config`. |
 | `--user-config` | Optional config used only to read `networkOperator.namespace` and `networkOperator.skipHelmChart`; unrelated stale settings do not block cleanup. |

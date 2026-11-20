@@ -214,7 +214,7 @@ func TestCleanKeepsHelmChart(t *testing.T) {
 	result, err := cleanWithUninstaller(
 		context.Background(),
 		newCleanTestClient(t),
-		CleanOptions{Namespace: "operator-system", KeepHelmChart: true},
+		CleanOptions{Namespace: "operator-system", KeepHelmChart: true, SkipWait: true},
 		func(context.Context, *rest.Config, string, time.Duration) (bool, error) {
 			uninstallCalled = true
 			return true, nil
@@ -235,6 +235,7 @@ func TestCleanUninstallsHelmAfterCustomResources(t *testing.T) {
 		context.Background(),
 		kubeClient,
 		CleanOptions{
+			SkipWait:     true,
 			Namespace:    "operator-system",
 			RestConfig:   restConfig,
 			PollInterval: time.Millisecond,

@@ -249,6 +249,8 @@ Use "l8k [command] --help" for more information about a command.
 
 Follow the [first deployment](docs/user/quick-start.md), [OpenShift](docs/user/openshift.md), or [Spectrum-X](docs/user/spectrum-x.md) walkthrough. For [preset-only generation](docs/user/presets.md), [mixed hardware](docs/user/heterogeneous-clusters.md), [automation](docs/integrator/automation.md), and [removal](docs/user/cleanup.md), use their task guides.
 
+`l8k clean` waits for reconciled teardown before uninstalling the Network Operator. Use `--skip-wait` for legacy batch deletion. See the [cleanup guide](docs/user/cleanup.md#wait-for-reconciled-teardown).
+
 ## Configuration file
 
 <span id="ofed-dependent-module-handling"></span>

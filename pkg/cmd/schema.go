@@ -93,7 +93,7 @@ var schemaCmd = &cobra.Command{
 				},
 				"clean": {
 					Description: "Delete Network Operator custom resources and uninstall its Helm release unless config or --keep-helm-chart retains it",
-					Example:     "l8k clean --kubeconfig ~/.kube/config [--keep-helm-chart]",
+					Example:     "l8k clean --kubeconfig ~/.kube/config [--skip-wait] [--keep-helm-chart]",
 				},
 				"validate": {
 					Description: "Verify target deployment state and connectivity. Host also supports connectivity-only example directories. DPF requires explicit inventory and retained deployment-files; connectivity=false selects resource-only scope and JSON emits one terminal result.",
@@ -214,6 +214,14 @@ var schemaCmd = &cobra.Command{
 					Type:        "bool",
 					Default:     "false",
 					Description: "Deploy the generated files to the Kubernetes cluster",
+				},
+				"--skip-wait": {
+					Type: "bool", Default: "false",
+					Description: "Skip controller-specific waits and use legacy batch deletion during l8k clean",
+				},
+				"--clean-timeout": {
+					Type: "duration", Default: "0s",
+					Description: "Bound custom resource teardown during l8k clean",
 				},
 				"--keep-helm-chart": {
 					Type:        "bool",

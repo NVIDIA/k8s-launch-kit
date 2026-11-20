@@ -44,11 +44,13 @@ var clusterScopedCleanKinds = []schema.GroupVersionKind{
 
 // CleanOptions controls Network Operator teardown.
 type CleanOptions struct {
-	Namespace     string
-	KeepHelmChart bool
-	RestConfig    *rest.Config
-	PollInterval  time.Duration
-	HelmTimeout   time.Duration
+	SkipWait        bool // Use batch deletion without checking controller-specific teardown.
+	Namespace       string
+	KeepHelmChart   bool
+	RestConfig      *rest.Config
+	PollInterval    time.Duration
+	HelmTimeout     time.Duration
+	ResourceTimeout time.Duration // Optional deadline for CR teardown before Helm.
 }
 
 // CleanResult summarizes mutations performed by Clean.
@@ -59,6 +61,7 @@ type CleanResult struct {
 }
 
 type cleanObjectRef struct {
+	UID       types.UID
 	GVK       schema.GroupVersionKind
 	Namespace string
 	Name      string
@@ -100,12 +103,21 @@ func cleanWithUninstaller(
 	uiOutput := ui.FromContext(ctx)
 	uiOutput.Section("Delete Network Operator custom resources")
 
-	deleted, err := deleteNetworkOperatorCustomResources(
-		ctx, kubeClient, opts.Namespace, opts.PollInterval, uiOutput)
+	resourceCtx := ctx
+	if opts.ResourceTimeout > 0 {
+		var cancel context.CancelFunc
+		resourceCtx, cancel = context.WithTimeout(ctx, opts.ResourceTimeout)
+		defer cancel()
+	}
+	var err error
+	if opts.SkipWait {
+		result.CustomResourcesDeleted, err = deleteNetworkOperatorCustomResources(resourceCtx, kubeClient, opts.Namespace, opts.PollInterval, uiOutput)
+	} else {
+		result.CustomResourcesDeleted, err = safeCleanResources(resourceCtx, kubeClient, opts.Namespace, opts.PollInterval, uiOutput, newSriovDaemonLogReader(opts.RestConfig))
+	}
 	if err != nil {
 		return result, err
 	}
-	result.CustomResourcesDeleted = deleted
 
 	if opts.KeepHelmChart {
 		uiOutput.Success("Kept Helm release %s in namespace %s",
@@ -139,48 +151,32 @@ func deleteNetworkOperatorCustomResources(
 	pollInterval time.Duration,
 	uiOutput ui.Output,
 ) (int, error) {
-	// Resolve the full initial deletion set before mutating anything. A list
-	// permission failure therefore cannot silently produce a partial cleanup.
-	namespaced, err := listNamespacedCustomResources(ctx, kubeClient, namespace)
-	if err != nil {
-		return 0, err
-	}
-	clusterScoped, err := listClusterScopedCleanResources(ctx, kubeClient)
-	if err != nil {
-		return 0, err
-	}
-
-	// Signal deletion for both scopes before waiting on any one resource. A
-	// finalizer on one CR may depend on another CR entering deletion, so
-	// interleaving scope-by-scope deletion and waiting can deadlock cleanup.
-	refs := append(namespaced, clusterScoped...)
-	deleted, err := deleteAllAndWait(ctx, kubeClient, refs, pollInterval, uiOutput)
-	if err != nil {
-		return deleted, err
-	}
-
-	// Controllers can remove or briefly recreate service CRs while the root
-	// policies disappear. Sweep both scopes until they are empty, preserving the
-	// same delete-all-then-wait ordering for every pass.
+	deleted := 0
 	for {
-		remainingNamespaced, err := listNamespacedCustomResources(ctx, kubeClient, namespace)
-		if err != nil {
+		refs, err := listCleanResources(ctx, kubeClient, namespace)
+		if err != nil || len(refs) == 0 {
 			return deleted, err
 		}
-		remainingClusterScoped, err := listClusterScopedCleanResources(ctx, kubeClient)
-		if err != nil {
-			return deleted, err
-		}
-		remaining := append(remainingNamespaced, remainingClusterScoped...)
-		if len(remaining) == 0 {
-			return deleted, nil
-		}
-		count, err := deleteAllAndWait(ctx, kubeClient, remaining, pollInterval, uiOutput)
+		count, err := deleteAllAndWait(ctx, kubeClient, refs, pollInterval, uiOutput, metav1.DeletePropagationBackground)
 		deleted += count
 		if err != nil {
 			return deleted, err
 		}
 	}
+}
+
+// Read both scopes before each pass. A list failure must never turn a partial
+// inventory into permission to start deleting resources.
+func listCleanResources(ctx context.Context, c client.Client, namespace string) ([]cleanObjectRef, error) {
+	namespaced, err := listNamespacedCustomResources(ctx, c, namespace)
+	if err != nil {
+		return nil, err
+	}
+	cluster, err := listClusterScopedCleanResources(ctx, c)
+	if err != nil {
+		return nil, err
+	}
+	return append(namespaced, cluster...), nil
 }
 
 func listNamespacedCustomResources(
@@ -227,6 +223,7 @@ func listNamespacedCustomResources(
 				GVK:       gvk,
 				Namespace: namespace,
 				Name:      list.Items[j].GetName(),
+				UID:       list.Items[j].GetUID(),
 			})
 		}
 	}
@@ -252,7 +249,7 @@ func listClusterScopedCleanResources(
 			return list.Items[i].GetName() < list.Items[j].GetName()
 		})
 		for i := range list.Items {
-			refs = append(refs, cleanObjectRef{GVK: gvk, Name: list.Items[i].GetName()})
+			refs = append(refs, cleanObjectRef{GVK: gvk, Name: list.Items[i].GetName(), UID: list.Items[i].GetUID()})
 		}
 	}
 	return refs, nil
@@ -275,7 +272,7 @@ func servedStorageVersion(crd *apiextv1.CustomResourceDefinition) string {
 	return ""
 }
 
-// deleteAllAndWait sends a background deletion request to every ref before it
+// deleteAllAndWait sends a deletion request to every ref before it
 // starts polling. Keep these phases separate: finalizers can depend on another
 // custom resource entering deletion.
 func deleteAllAndWait(
@@ -284,15 +281,25 @@ func deleteAllAndWait(
 	refs []cleanObjectRef,
 	pollInterval time.Duration,
 	uiOutput ui.Output,
+	propagation metav1.DeletionPropagation,
 ) (int, error) {
 	if len(refs) == 0 {
 		return 0, nil
 	}
-	propagation := metav1.DeletePropagationBackground
 	deleted := 0
 	for _, ref := range refs {
 		obj := objectForCleanRef(ref)
-		if err := kubeClient.Delete(ctx, obj, client.PropagationPolicy(propagation)); err != nil {
+		policy := propagation
+		if isCleanRootPolicy(ref.GVK) {
+			// The policy controllers reconcile until the object disappears.
+			// Foreground deletion makes them recreate their terminating children.
+			policy = metav1.DeletePropagationBackground
+		}
+		opts := []client.DeleteOption{client.PropagationPolicy(policy)}
+		if ref.UID != "" {
+			opts = append(opts, client.Preconditions{UID: &ref.UID})
+		}
+		if err := kubeClient.Delete(ctx, obj, opts...); err != nil {
 			if client.IgnoreNotFound(err) == nil || meta.IsNoMatchError(err) {
 				continue
 			}
@@ -302,6 +309,7 @@ func deleteAllAndWait(
 		uiOutput.Info("Deleting %s", cleanRefString(ref))
 	}
 
+	var pending string
 	err := wait.PollUntilContextCancel(ctx, pollInterval, true, func(ctx context.Context) (bool, error) {
 		for _, ref := range refs {
 			obj := objectForCleanRef(ref)
@@ -311,6 +319,12 @@ func deleteAllAndWait(
 			}, obj)
 			switch {
 			case err == nil:
+				if ref.UID != "" && obj.GetUID() != ref.UID {
+					// The listed incarnation is gone. Reclassify the new
+					// object on the next inventory pass.
+					continue
+				}
+				pending = cleanRefString(ref)
 				return false, nil
 			case apierrors.IsNotFound(err), meta.IsNoMatchError(err):
 				continue
@@ -321,7 +335,7 @@ func deleteAllAndWait(
 		return true, nil
 	})
 	if err != nil {
-		return deleted, fmt.Errorf("wait for custom resource deletion: %w", err)
+		return deleted, fmt.Errorf("wait for custom resource deletion (%s): %w", pending, err)
 	}
 	return deleted, nil
 }
