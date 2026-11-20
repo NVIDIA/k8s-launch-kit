@@ -71,7 +71,7 @@ Each stage is independently invocable:
 - `l8k generate` renders a profile-specific manifest bundle under `deployment/network-operator/`.
 - `l8k deploy` installs or upgrades the Network Operator Helm chart, applies CRs in dependency order, and waits for reconciliation.
 - `l8k validate` runs deployment checks and produces a report. Review its completed checks and connectivity coverage before acceptance; [exit success alone is insufficient](user/validation.md#acceptance-outcomes).
-- `l8k clean` removes Network Operator custom resources and uninstalls its Helm release unless config marks the chart externally owned.
+- `l8k clean` waits for Network Operator teardown to reconcile and uninstalls its Helm release unless config marks the chart externally owned.
 
 Review discovered inventory, site networking settings, and generated artifacts
 before deploying. [Quick Start](user/quick-start.md) shows that checkpoint in

@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"time"
 
 	"github.com/spf13/cobra"
 	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
@@ -24,7 +25,11 @@ import (
 	"github.com/nvidia/k8s-launch-kit/pkg/ui"
 )
 
-var keepHelmChart bool
+var (
+	keepHelmChart bool
+	skipCleanWait bool
+	cleanTimeout  time.Duration
+)
 
 type cleanSettings struct {
 	Flavor              string
@@ -49,10 +54,15 @@ deleted. The known cluster-scoped Network Operator policy and network custom
 resources are also removed. Custom installation namespaces must be supplied by
 flag or config; untrusted in-cluster objects never select the cleanup target.
 
+Cleanup waits for operator reconciliation before removing supporting resources.
+Use --skip-wait for legacy batch deletion with CR finalizer waits only.
 The namespace and CustomResourceDefinitions are preserved. Pass
 --keep-helm-chart to retain the Helm release regardless of config.`,
 	Example: `  # Remove Network Operator CRs and uninstall the Helm release
   l8k clean --kubeconfig ~/.kube/config
+
+  # Wait for reconciled teardown before removing controllers
+  l8k clean --clean-timeout 45m --kubeconfig ~/.kube/config
 
   # Resolve a custom operator namespace explicitly
   l8k clean --kubeconfig ~/.kube/config \
@@ -69,6 +79,9 @@ The namespace and CustomResourceDefinitions are preserved. Pass
   l8k clean --kubeconfig ~/.kube/config --output json`,
 	Args: cobra.NoArgs,
 	Run: func(cmd *cobra.Command, args []string) {
+		if cleanTimeout < 0 {
+			exitWithError(apperrors.NewValidationError("invalid --clean-timeout", nil, "Pass zero or a positive duration"), outputFormat)
+		}
 		resolved, err := resolveKubeconfig(kubeconfig)
 		if err != nil {
 			exitWithError(apperrors.NewValidationError(
@@ -121,6 +134,9 @@ The namespace and CustomResourceDefinitions are preserved. Pass
 
 		uiOutput.Section("Network Operator cleanup")
 		uiOutput.Info("Target namespace: %s (%s)", settings.Namespace, settings.NamespaceSource)
+		if skipCleanWait {
+			uiOutput.Info("Using legacy batch deletion (--skip-wait)")
+		}
 		if settings.KeepHelmChart {
 			uiOutput.Info("Helm release: keep %s installed (%s)",
 				"network-operator", settings.HelmRetentionSource)
@@ -147,9 +163,11 @@ The namespace and CustomResourceDefinitions are preserved. Pass
 		}
 
 		result, err := networkoperatorplugin.Clean(ctx, k8sClient, networkoperatorplugin.CleanOptions{
-			Namespace:     settings.Namespace,
-			KeepHelmChart: settings.KeepHelmChart,
-			RestConfig:    restConfig,
+			Namespace:       settings.Namespace,
+			KeepHelmChart:   settings.KeepHelmChart,
+			RestConfig:      restConfig,
+			SkipWait:        skipCleanWait,
+			ResourceTimeout: cleanTimeout,
 		})
 		if err != nil {
 			var structured *apperrors.StructuredError
@@ -159,7 +177,7 @@ The namespace and CustomResourceDefinitions are preserved. Pass
 			exitWithError(apperrors.NewDeploymentError(
 				"Network Operator cleanup failed",
 				err,
-				"Resolve any stuck finalizers or RBAC errors, then re-run `l8k clean`",
+				"Inspect the reported resource and operator status before retrying cleanup with the same options",
 			), outputFormat)
 		}
 
@@ -286,11 +304,15 @@ func init() {
 	cleanCmd.Flags().StringVar(&flavor, "flavor", "", "Cluster flavor: k8s or ocp (OpenShift cleanup is unsupported)")
 	cleanCmd.Flags().StringVar(&userConfig, "user-config", "", "Cluster config file used to resolve networkOperator.namespace and networkOperator.skipHelmChart")
 	cleanCmd.Flags().StringVar(&networkOperatorNamespace, "network-operator-namespace", "", "Override the Network Operator namespace from cluster-config.yaml")
+	cleanCmd.Flags().BoolVar(&skipCleanWait, "skip-wait", false, "Use legacy batch deletion and skip controller-specific reconciliation and driver shutdown checks")
+	cleanCmd.Flags().DurationVar(&cleanTimeout, "clean-timeout", 0, "Maximum time to wait for custom resource teardown (e.g. 45m). Zero waits until cancelled")
 	cleanCmd.Flags().BoolVar(&keepHelmChart, "keep-helm-chart", false, "Delete Network Operator custom resources but keep the network-operator Helm release installed regardless of config")
 
 	setFlagGroup(cleanCmd, "kubeconfig", GroupCommon)
 	setFlagGroup(cleanCmd, "flavor", GroupCommon)
 	setFlagGroup(cleanCmd, "user-config", GroupCommon)
 	setFlagGroup(cleanCmd, "network-operator-namespace", GroupCommon)
+	setFlagGroup(cleanCmd, "skip-wait", GroupClean)
+	setFlagGroup(cleanCmd, "clean-timeout", GroupClean)
 	setFlagGroup(cleanCmd, "keep-helm-chart", GroupClean)
 }

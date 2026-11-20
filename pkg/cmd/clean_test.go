@@ -76,9 +76,13 @@ func TestCleanCommandFlags(t *testing.T) {
 		"user-config",
 		"network-operator-namespace",
 		"keep-helm-chart",
+		"skip-wait",
+		"clean-timeout",
 	} {
 		assert.NotNil(t, cleanCmd.Flags().Lookup(name), "missing --%s", name)
 	}
+	assert.Equal(t, "false", cleanCmd.Flags().Lookup("skip-wait").DefValue)
+	assert.Equal(t, "0s", cleanCmd.Flags().Lookup("clean-timeout").DefValue)
 	assert.Equal(t, "false", cleanCmd.Flags().Lookup("keep-helm-chart").DefValue)
 }
 

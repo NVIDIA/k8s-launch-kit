@@ -74,7 +74,7 @@ see the capture recipe in `docs/integrator/automation.md`.
 
 ## Deletion Semantics
 
-The command:
+With `--skip-wait` the command:
 
 - Deletes every namespaced custom-resource instance in the resolved operator
   namespace.
@@ -90,6 +90,15 @@ The command:
   namespaced custom resources elsewhere. Helm metadata and chart-managed
   resources are removed with the release.
 - Treats already-missing resources and Helm releases as successful no-ops.
+
+Reconciled teardown is the default. Optionally set `--clean-timeout 45m`.
+Confirm the deployed profile from live templates when it matters for runtime
+qualification. The command discovers live custom resources. Profile selection
+is a generation option. Safe clean waits for controller-specific state before
+removing supporting resources. A failed shutdown can leave a
+`l8k-mofed-cleanup-checkpoint` ConfigMap. Follow the
+[teardown and recovery procedure](../../docs/user/cleanup.md#wait-for-reconciled-teardown)
+and preserve evidence before retrying.
 
 Do not manually strip finalizers as part of the normal workflow. If cleanup
 waits indefinitely, inspect the affected CR, operator pods, and events; request

@@ -19,8 +19,8 @@ package kubeclient
 import (
 	apiextv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
 	"k8s.io/apimachinery/pkg/runtime"
-	"k8s.io/client-go/rest"
 	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
+	"k8s.io/client-go/rest"
 	"k8s.io/client-go/tools/clientcmd"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
@@ -47,7 +47,7 @@ func New(kubeconfigPath string) (client.Client, *rest.Config, error) {
 	_ = netop.AddToScheme(scheme)
 	_ = nicop.AddToScheme(scheme)
 
-	c, err := client.New(restCfg, client.Options{Scheme: scheme})
+	c, err := client.NewWithWatch(restCfg, client.Options{Scheme: scheme})
 	if err != nil {
 		return nil, nil, err
 	}
