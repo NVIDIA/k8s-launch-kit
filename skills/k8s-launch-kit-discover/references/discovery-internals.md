@@ -36,6 +36,14 @@ The upstream nic-configuration-operator Helm chart uses cluster-scoped names
 `k8s-launch-kit-nic-config-daemon` for all three so it can coexist with a Network
 Operator install without collision.
 
+### ConfigMap cache permissions
+
+The daemon registers a label-filtered, cluster-wide ConfigMap informer for its
+Spectrum-X controller even on nodes without NICs. The bootstrap ClusterRole
+therefore grants `get/list/watch` on ConfigMaps, with no write verbs. Kubernetes
+RBAC cannot restrict these reads to the cache's label filter. The empty firmware
+ConfigMap alone does not satisfy informer synchronization without these verbs.
+
 ### Why CRDs persist
 
 Cleanup deletes the namespace and the cluster RBAC but **not** the CRDs. If the
@@ -92,6 +100,25 @@ A failed or unrecognized trust query is not evidence of restriction and is not c
 If the scan fails after verifying a usable NIC, the node remains eligible and a
 warning marks exclusion reporting as incomplete. Read-only publisher eligibility
 probes retain their early-exit behavior and do not collect this full inventory.
+
+Probe failures before a usable NIC is verified identify the excluded node/pod
+and warn that eligibility is unverified and inventory may be incomplete. During
+bootstrap's `NicDevice` wait, pod status is refreshed for missing publishers;
+container failure reasons are reported once per unchanged state while recovery
+remains possible. Read-only waiters do not acquire this bootstrap observer.
+Keep the namespace and inspect current and `--previous` logs for the command
+error; pod status alone cannot establish host restriction.
+
+Bootstrap sets `SKIP_DEVICE_ON_DISCOVERY_ERROR=true` in its temporary DaemonSet
+so supported daemon versions publish readable NICs despite a peer's failing
+firmware/PSID or BlueField operation-mode query. Existing operator-managed
+daemons are unchanged; older images without this option keep their original
+behavior. The option can omit ConnectX NICs too, and its in-process skipped-device
+list is not published in CR status. It may preserve an omitted device's existing
+CR in another namespace. The node-level wait can therefore succeed on incomplete
+or stale topology: inspect retained daemon logs and compare saved per-node PCI
+inventory with expected hardware. If a node publishes no NICs, it can still time
+out. Failed trust queries remain unknown rather than confirmed restriction.
 
 ### Leftover pre-clean
 

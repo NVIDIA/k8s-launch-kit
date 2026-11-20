@@ -27,8 +27,20 @@ Before waiting for `NicDevice` resources, Launch Kit checks BlueField trust
 mode with `mlxprivhost`. A restricted BlueField is excluded from the wait set.
 If the same node has another non-restricted NVIDIA NIC, that node remains in
 the wait set and its published devices are discovered normally. A failed or
-unrecognized trust query is treated as non-restricted, matching NIC
-Configuration Operator behavior.
+unrecognized trust query leaves the device's restriction status unknown and
+keeps it eligible, matching NIC Configuration Operator behavior. The temporary
+bootstrap daemon sets `SKIP_DEVICE_ON_DISCOVERY_ERROR=true` so supported daemon
+versions skip a NIC whose firmware/PSID or BlueField operation-mode query fails
+and continue publishing readable peers. This does not classify a failed trust
+query as confirmed restriction or change existing operator-managed daemons.
+
+Discovery can therefore succeed with partial inventory. The option can omit
+failed ConnectX NICs too; its skipped-device list is not exposed through
+`NicDevice` status, and existing CRs for skipped devices may be preserved.
+Retain the namespace with `--keep-namespace`, inspect daemon logs, and compare
+the saved per-node PCI inventory with the expected hardware before deployment.
+A node with no published devices can still time out; older daemon images that
+lack this option retain their original failure behavior.
 
 ## Run discovery
 
@@ -73,6 +85,20 @@ If a worker is missing, check its readiness, image pull, discovery pod,
 8. Deletes the temporary namespace and cluster-scoped bootstrap RBAC. The CRDs remain installed.
 
 The bootstrap namespace is fixed. `--network-operator-namespace` is accepted for compatibility but ignored by discovery.
+
+The temporary daemon needs cluster-wide ConfigMap `get`, `list`, and `watch`
+permissions for its informer cache, including on nodes without NICs. Its cache
+filters ConfigMaps by label; Kubernetes RBAC grants these read permissions
+across namespaces. Bootstrap grants no ConfigMap write permissions.
+
+Pod readiness is a startup snapshot, not proof of device publication. During
+the `NicDevice` wait, discovery reports failing bootstrap containers on missing
+publishers and keeps waiting for recovery. Repeated unchanged failures are
+reported once. Progress counts only expected publishers; timeout errors name
+the last missing nodes. Eligibility probe failures identify the unverified
+node/pod; they can reduce the wait set and leave inventory incomplete. Retain the
+namespace with `--keep-namespace` and inspect current and previous daemon logs
+as described in [Troubleshooting](troubleshooting.md#discovery-failures).
 
 Discovery reports each confirmed host-restricted BlueField PCI function with its
 node and PCI address in normal CLI output, before deleting the bootstrap namespace.
