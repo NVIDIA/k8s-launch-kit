@@ -40,6 +40,12 @@ A discovery extension MUST identify eligible sources and distinguish a missing o
 - **THEN** normal CLI output identifies their node and PCI addresses and reports a PCI-function count before namespace teardown; those devices remain excluded from saved inventory.
 - **AND** a later PCI scan failure retains an already-verified publisher and warns that exclusion reporting is incomplete; read-only eligibility probes retain their existing failure policy.
 
+#### Scenario: Bootstrap publisher fails after pod readiness
+
+- **WHEN** a bootstrap publisher has not published a `NicDevice` and its container enters a failure state after the initial readiness snapshot
+- **THEN** discovery refreshes bootstrap pod status and reports the affected node/pod and failure reason without treating a transient restart as permanent failure; unchanged failures are not repeated each poll.
+- **AND** failed eligibility probes identify unverified excluded nodes and warn of incomplete inventory; probe failure is not evidence of absent NICs or host restriction. Read-only waiters do not acquire bootstrap status inspection.
+
 #### Scenario: Read-only publisher eligibility is unknown by default
 
 - **WHEN** a Ready existing-daemon node has no `NicDevice` and discovery cannot inspect its NIC eligibility

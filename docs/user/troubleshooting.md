@@ -91,6 +91,7 @@ kubectl get events -n nvidia-k8s-launch-kit \
   --sort-by=.metadata.creationTimestamp
 kubectl describe pod -n nvidia-k8s-launch-kit <pod-name>
 kubectl logs -n nvidia-k8s-launch-kit <pod-name>
+kubectl logs -n nvidia-k8s-launch-kit <pod-name> --previous
 ```
 
 Common causes include an unavailable daemon image, a missing image pull secret,
@@ -99,6 +100,21 @@ sysfs, or a cluster where every detected BlueField is in zero-trust
 (`restricted`) mode. Restricted BlueFields are deliberately excluded because
 NIC Configuration Operator does not publish `NicDevice` resources for them.
 NFD labels are not required for discovery scheduling.
+
+An initially Ready daemon can subsequently crash before publishing devices.
+Discovery reports container failure reasons for pending publishers while
+continuing to wait; a restart alone is not a permanent failure. If an eligibility
+probe cannot execute, its node/pod warning explains why that node was excluded
+from the wait set. Check these warnings when the expected node count is smaller
+than the hardware inventory. Pod-status inspection failures leave health unknown.
+
+A failed `mlxprivhost` query does not establish host restriction. If it is
+followed by a failing BlueField operation-mode query, collect both command
+outputs and the daemon's MFT and device firmware versions. Bootstrap does not
+enable automatic skipping of discovery errors, which could also omit failed
+ConnectX NICs without a completeness signal. ConfigMap `list/watch` denials
+indicate bootstrap RBAC incompatible with the daemon's cluster-wide cache;
+use a Launch Kit version with those read permissions.
 
 ## Namespace Mismatch
 
