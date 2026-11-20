@@ -37,10 +37,12 @@ type validationManagementReader interface {
 	getHBNRuntimeApplication(context.Context, string, string) (*unstructured.Unstructured, error)
 	observeRegistrySnapshot(context.Context, string) (registrySnapshot, error)
 	observeValidationTenantStorage(context.Context, string) managementprobe.TenantStorageResult
+	observeKamajiCompatibility(context.Context, string, string) managementprobe.KamajiCompatibilityResult
 	inspectValidationOperator(context.Context, *operatorDesired) error
 }
 
 type validationObserver struct {
+	runtime          validationRuntimeTransports
 	physical         validationPhysicalReaders
 	physicalScope    validationPhysicalScope
 	desired          *managementDesired
@@ -58,6 +60,31 @@ type validationObserver struct {
 // NewValidationObserver compiles immutable expected coverage offline. Connections
 // are opened only by observation; a validated plan is reused without regeneration.
 func NewValidationObserver(retained *bundle.Bundle, plan *generation.Plan, request config.Request, unavailable []config.AccessIssue, mode validation.Mode) (validation.Plan, validation.Observer, error) {
+	compiled, o, err := compileValidationObserver(retained, plan, request, unavailable, mode)
+	if err != nil {
+		return validation.Plan{}, nil, err
+	}
+	// Freeze explicit credential/trust files once without network access.
+	access, accessErr := managementaccess.Open(o.request, nil)
+	o.newManagement = func(ctx context.Context) (validationManagementReader, error) {
+		if accessErr != nil {
+			return nil, accessErr
+		}
+		client, err := apiClientForAccess(access, o.desired.plan.Intent().Management, o.desired.plan.Intent().KubernetesVersion, nil, nil, nil)
+		if err != nil {
+			return nil, err
+		}
+		if err := client.VerifyIdentity(ctx); err != nil {
+			return nil, err
+		}
+		return client, nil
+	}
+	return compiled, o, nil
+}
+
+// compileValidationObserver owns the same immutable coverage for standalone and
+// deployment. The composition root supplies a frozen, identity-bound API reader.
+func compileValidationObserver(retained *bundle.Bundle, plan *generation.Plan, request config.Request, unavailable []config.AccessIssue, mode validation.Mode) (validation.Plan, *validationObserver, error) {
 	desired, err := prepareManagementDesiredFromPlan(retained, plan)
 	if err != nil {
 		return validation.Plan{}, nil, err
@@ -94,22 +121,7 @@ func NewValidationObserver(retained *bundle.Bundle, plan *generation.Plan, reque
 	if err != nil {
 		return validation.Plan{}, nil, err
 	}
-	// Freeze explicit credential/trust files once without network access. A
-	// local access failure remains an observation obligation, not lost coverage.
-	access, accessErr := managementaccess.Open(request, nil)
-	o.newManagement = func(ctx context.Context) (validationManagementReader, error) {
-		if accessErr != nil {
-			return nil, accessErr
-		}
-		client, err := apiClientForAccess(access, plan.Intent().Management, plan.Intent().KubernetesVersion, nil, nil, nil)
-		if err != nil {
-			return nil, err
-		}
-		if err := client.VerifyIdentity(ctx); err != nil {
-			return nil, err
-		}
-		return client, nil
-	}
+
 	return compiled, o, nil
 }
 

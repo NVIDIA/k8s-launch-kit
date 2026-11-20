@@ -7,48 +7,20 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"io"
 	"net/http"
 	"strings"
 	"testing"
 	"time"
-
-	authorizationv1 "k8s.io/api/authorization/v1"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	kubescheme "k8s.io/client-go/kubernetes/scheme"
 )
 
-func TestHBNRuntimeNativeApplicationReaderAndPermissions(t *testing.T) {
-	var reviews []authorizationv1.ResourceAttributes
+func TestHBNRuntimeNativeApplicationReader(t *testing.T) {
 	fixture := newAPIFixture(t, func(w http.ResponseWriter, r *http.Request) {
-		switch r.URL.Path {
-		case "/prefix/apis/authorization.k8s.io/v1/selfsubjectaccessreviews":
-			if r.Method != "POST" {
-				t.Error("SSAR requires create")
-			}
-			body, err := io.ReadAll(io.LimitReader(r.Body, 1<<16))
-			if err != nil {
-				t.Error(err)
-				return
-			}
-			object, _, err := kubescheme.Codecs.UniversalDeserializer().Decode(body, nil, nil)
-			request, ok := object.(*authorizationv1.SelfSubjectAccessReview)
-			if err != nil || !ok || request.Spec.ResourceAttributes == nil || request.Spec.NonResourceAttributes != nil {
-				t.Errorf("unexpected permission shape: %v", err)
-				http.Error(w, "invalid", 500)
-				return
-			}
-			reviews = append(reviews, *request.Spec.ResourceAttributes)
-			_ = json.NewEncoder(w).Encode(&authorizationv1.SelfSubjectAccessReview{TypeMeta: metav1.TypeMeta{APIVersion: "authorization.k8s.io/v1", Kind: "SelfSubjectAccessReview"}, Status: authorizationv1.SubjectAccessReviewStatus{Allowed: true}})
-		case "/prefix/apis/argoproj.io/v1alpha1/namespaces/operator-system/applications/cluster-service":
-			if r.Method != "GET" {
-				t.Error("Application mutation prohibited")
-			}
-			fmt.Fprint(w, `{"apiVersion":"argoproj.io/v1alpha1","kind":"Application","metadata":{"namespace":"operator-system","name":"cluster-service","uid":"app-uid","resourceVersion":"2"}}`)
-		default:
-			t.Errorf("unexpected runtime management access %s %s", r.Method, r.URL.Path)
+		if r.URL.Path != "/prefix/apis/argoproj.io/v1alpha1/namespaces/operator-system/applications/cluster-service" || r.Method != "GET" {
+			t.Errorf("unexpected runtime Application access %s %s", r.Method, r.URL.Path)
 			http.NotFound(w, r)
+			return
 		}
+		fmt.Fprint(w, `{"apiVersion":"argoproj.io/v1alpha1","kind":"Application","metadata":{"namespace":"operator-system","name":"cluster-service","uid":"app-uid","resourceVersion":"2"}}`)
 	})
 	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
 	defer cancel()
@@ -56,27 +28,9 @@ func TestHBNRuntimeNativeApplicationReaderAndPermissions(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !runtimePermissionsPassed(client.checkHBNRuntimeAccess(ctx, "selected-workload", "operator-system", "cluster-service")) {
-		t.Fatal("scoped authorization failed")
-	}
-	if len(reviews) != 3 {
-		t.Fatalf("reviews=%+v", reviews)
-	}
-	for _, attributes := range reviews {
-		if attributes.Resource == "applications" {
-			if attributes.Verb != "get" || attributes.Namespace != "operator-system" || attributes.Name != "cluster-service" || attributes.Group != "argoproj.io" {
-				t.Fatal("Application permission broadened")
-			}
-		} else if attributes.Group != "svc.dpu.nvidia.com" || attributes.Verb != "list" || attributes.Namespace != "selected-workload" || attributes.Name != "" || attributes.Resource != "dpuservices" && attributes.Resource != "dpuserviceinterfaces" {
-			t.Fatalf("unexpected runtime permission %+v", attributes)
-		}
-	}
 	object, err := client.getHBNRuntimeApplication(ctx, "operator-system", "cluster-service")
-	if err != nil || object.GetUID() != "app-uid" {
-		t.Fatalf("runtime Application reader=%v err=%v", object, err)
-	}
-	if fixture.writes.Load() != 3 {
-		t.Fatal("runtime management read issued writes beyond the three scoped SSARs")
+	if err != nil || object.GetUID() != "app-uid" || fixture.writes.Load() != 0 {
+		t.Fatalf("Application reader=%v err=%v writes=%d", object, err, fixture.writes.Load())
 	}
 }
 

@@ -7,16 +7,17 @@ import (
 	"bytes"
 	"context"
 	"fmt"
-	"github.com/nvidia/k8s-launch-kit/pkg/dpf/chartfetch"
 	"os"
 	"path/filepath"
 	"strings"
 	"time"
 
 	"github.com/nvidia/k8s-launch-kit/pkg/dpf/bundle"
+	"github.com/nvidia/k8s-launch-kit/pkg/dpf/chartfetch"
 	"github.com/nvidia/k8s-launch-kit/pkg/dpf/config"
 	"github.com/nvidia/k8s-launch-kit/pkg/dpf/deployment"
 	"github.com/nvidia/k8s-launch-kit/pkg/dpf/generation"
+	"github.com/nvidia/k8s-launch-kit/pkg/dpf/validation"
 	"github.com/nvidia/k8s-launch-kit/pkg/ui"
 )
 
@@ -26,6 +27,7 @@ type DeploymentRequest struct {
 	UserConfig      string
 	DeploymentFiles string
 	Resume          *deployment.OperationRef
+	Progress        validation.Progress
 }
 
 // Deploy prepares the native execution service. A nil result means preparation
@@ -73,13 +75,27 @@ func Deploy(ctx context.Context, r DeploymentRequest) (*deployment.RunResult, er
 	if err != nil {
 		return nil, err
 	}
+	destination, err := validation.PrepareReportDestination(r.DeploymentFiles, "", nil)
+	if err != nil {
+		return nil, fmt.Errorf("prepare deployment acceptance report: %w", err)
+	}
+	published := false
+	defer func() {
+		if !published {
+			_ = destination.Close()
+		}
+	}()
 	runDir, err := os.MkdirTemp(filepath.Dir(root), "l8k-dpf-deploy-")
 	if err != nil {
 		return nil, fmt.Errorf("create DPF deployment report directory: %w", err)
 	}
 	progress.Info("[RUNNING] Deployment records: %s", runDir)
 	result, runErr := deployment.Run(ctx, deployment.RunRequest{
-		Plan: plan, Access: access, Resume: r.Resume,
+		Plan: plan, Access: access, Resume: r.Resume, AcceptanceProgress: r.Progress,
+		PublishAcceptance: func(result validation.Result) (validation.ReportDisposition, error) {
+			published = true
+			return validation.PublishReport(destination, result, validation.ReportMetadata{GeneratedAt: time.Now(), Release: plan.Intent().Release, UseCase: retained.Index().Profile})
+		},
 		ReportPath: filepath.Join(runDir, "deployment.jsonl"), ProbeJournalPath: filepath.Join(runDir, "probe-resources.json"),
 		VerifyPrerequisites: DeploymentPrerequisites(retained, runDir, r.Resume != nil), VerifyChartSource: verifyDeploymentChart,
 		Rebooter:     rebooter,

@@ -26,6 +26,7 @@ import (
 	"github.com/nvidia/k8s-launch-kit/pkg/dpf/inventory"
 	"github.com/nvidia/k8s-launch-kit/pkg/dpf/probe"
 	"github.com/nvidia/k8s-launch-kit/pkg/dpf/sshprobe"
+	"github.com/nvidia/k8s-launch-kit/pkg/dpf/validation"
 	"github.com/nvidia/k8s-launch-kit/pkg/ui"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/util/flowcontrol"
@@ -44,7 +45,7 @@ const RunStateFailed = "failed"
 // RunStateProvisioned means DPF provisioning completed but HBN traffic remains unverified.
 const RunStateProvisioned = "provisioned"
 
-// RunStateValidated means the complete selected HBN runtime matrix passed.
+// RunStateValidated means full canonical validation and durable output passed.
 const RunStateValidated = "validated"
 
 // PrerequisiteVerification is a fresh, point-in-time observation made by the
@@ -147,6 +148,11 @@ func (f RebooterFunc) RebootExternal(ctx context.Context, request ActivationRequ
 // access. Run never loads ambient kubeconfig or resolves credentials itself.
 type RunRequest struct {
 	Resume *OperationRef
+	// PublishAcceptance publishes only the supplied safe result, closing its
+	// reserved destination before returning. It must not execute observations.
+	PublishAcceptance func(validation.Result) (validation.ReportDisposition, error)
+	// AcceptanceProgress reports canonical validation events during final acceptance.
+	AcceptanceProgress validation.Progress
 
 	Plan                *generation.Plan
 	Access              config.Request
@@ -163,7 +169,8 @@ type RunRequest struct {
 // RunResult reports only safe identifiers and typed checks. Detailed stage
 // events are retained in the append-only report at ReportPath.
 type RunResult struct {
-	Operation *OperationRef `json:"operation,omitempty"`
+	Operation  *OperationRef      `json:"operation,omitempty"`
+	Validation *validation.Result `json:"validation,omitempty"`
 
 	BundleDigest       string                      `json:"bundleDigest"`
 	State              string                      `json:"state"`
@@ -196,9 +203,10 @@ type ActivationObjectID struct {
 
 // Run composes fresh execution from a LoadPlan-validated snapshot, checks fresh prerequisites,
 // and executes the fixed management, tenant, enrollment, software, workload,
-// DPUDeployment, external-activation, selected host-network and native HBN runtime stages against
+// DPUDeployment, external-activation, selected host-network and full acceptance stages against
 // one identity-bound client and the explicit selected host access.
-// A complete cross-host matrix establishes point-in-time HBN workload traffic;
+// Full acceptance evaluates resource, physical and runtime checks, including the
+// complete directed cross-host matrix, against the retained selected scope;
 // a one-host run remains provisioned with cross-host traffic unmeasured.
 func Run(ctx context.Context, request RunRequest) (RunResult, error) {
 	return runWithTransports(ctx, request, runTransports{resolveImage: resolveHBNRuntimeImage})
@@ -208,6 +216,9 @@ func Run(ctx context.Context, request RunRequest) (RunResult, error) {
 // lease observations and fixed lifecycle remain the same for every caller.
 type runTransports struct {
 	requestLimiter       flowcontrol.RateLimiter
+	validationPhysical   validationPhysicalReaders
+	verifyHostNetwork    validationHostNetworkReader
+	fetchSystemChart     func(context.Context, string) ([]byte, error)
 	resolveImage         hbnImageResolver
 	enrollmentCollector  enrollmentBMCCollector
 	tenantDial           tenantDialContext
@@ -283,11 +294,30 @@ func runWithTransports(ctx context.Context, request RunRequest, transports runTr
 	}
 	progress := ui.FromContext(ctx).StartProgress("Preparing HBN DPF deployment")
 	defer func() {
+		// An interrupted lifecycle still publishes honest incomplete acceptance using
+		// the reserved local destination; remote cancellation cannot suppress it.
+		if result.Validation == nil && request.PublishAcceptance != nil {
+			category := validation.FatalObservation
+			if errors.Is(runErr, context.Canceled) || ctx.Err() == context.Canceled {
+				category = validation.FatalCanceled
+			} else if errors.Is(runErr, context.DeadlineExceeded) || ctx.Err() == context.DeadlineExceeded {
+				category = validation.FatalTimeout
+			}
+			incomplete := validation.PreparationFailure(validation.ModeFull, category, runErr)
+			incomplete.Checks[0].Subject = "Deployment lifecycle"
+			incomplete.Checks[0].Outcome.Summary = "Full acceptance was not started because an earlier deployment stage did not complete."
+			incomplete.Checks[0].Outcome.Action = "Inspect the deployment checks and operation reference before retrying or resuming."
+			result.Validation = &incomplete
+			runErr = errors.Join(runErr, publishDeploymentAcceptance(result.Validation, journal, request.PublishAcceptance))
+		}
+		// Local publication still completes after remote cancellation, but a canceled
+		// invocation cannot announce a successfully completed deployment.
+		runErr = errors.Join(runErr, ctx.Err())
 		runErr = finishRunReport(&result, runErr, probeLog.close, journal, plan.Intent().Namespace)
 		if runErr != nil {
 			progress.Fail("HBN DPF deployment stopped; inspect the execution report")
 		} else if result.TrafficValidated {
-			progress.Success("HBN runtime validated: BGP, installed routes and every directed host traffic pair passed")
+			progress.Success("Full DPF validation passed: resources, physical sources and every directed HBN runtime pair")
 		} else {
 			progress.Success("DPF resources are provisioned; cross-host traffic remains unmeasured")
 		}
@@ -430,6 +460,22 @@ func runWithTransports(ctx context.Context, request RunRequest, transports runTr
 	if err != nil {
 		return result, fmt.Errorf("bind management client to retained identity: %w", err)
 	}
+	// Compile once from retained bytes and freeze observation access before effects.
+	compiled, acceptanceObserver, err := compileValidationObserver(plan.Bundle(), plan, access, nil, validation.ModeFull)
+	if err != nil {
+		return result, fmt.Errorf("prepare full deployment acceptance: %w", err)
+	}
+	acceptanceObserver.newManagement = func(observeCtx context.Context) (validationManagementReader, error) {
+		if err := client.VerifyIdentity(observeCtx); err != nil {
+			return nil, err
+		}
+		return client, nil
+	}
+	acceptanceObserver.physical = transports.validationPhysical
+	acceptanceObserver.runtime = validationRuntimeTransports{tenantDial: transports.tenantDial, requestLimiter: transports.requestLimiter, resolveImage: resolveImage, readCommand: transports.readRuntimeCommand, probeTraffic: transports.probeTraffic, verifyHostNetwork: transports.verifyHostNetwork}
+	if transports.fetchSystemChart != nil {
+		acceptanceObserver.fetchSystemChart = transports.fetchSystemChart
+	}
 	probes := probe.Runner{Assets: catalog.ProbeAssets(), Journal: probeLog.record}
 	if err := client.checkOperationPermissions(ctx, execution.verificationInputs()); err != nil {
 		return result, err
@@ -496,30 +542,30 @@ func runWithTransports(ctx context.Context, request RunRequest, transports runTr
 		return result, err
 	}
 	result.LastCompletedStage = hostWorkloadNetworkStage
-	progress.Update("Validating HBN BGP, installed routes and all directed host traffic pairs")
-	if transports.readRuntimeCommand == nil {
-		transports.readRuntimeCommand = controlPlane.tenant.Client.readRuntimeCommand
-	}
-	// Capture only the lease consumer's narrow ports and copied receipt data.
-	var leaseManagement managementLeaseReader = client
-	var leaseTenant tenantAllocationReader = controlPlane.tenant.Client
-	leaseInputs := newWorkloadLeaseInputs(workload)
+	progress.Update("Validating full DPF resources, physical sources and HBN runtime")
 	runtimeInputs := newControlPlaneVerificationInputs(prepared, controlPlane, workload)
-	leasePlan, leaseReconciler := runtimeInputs.execution.plan, runtimeInputs.execution.reconciler
-	runtimeResult, err := runHBNRuntimeStage(ctx, client, runtimeInputs, controlPlane.tenant.Client, activation, result.HostNetworking, journal, requestTimeout, hbnRuntimeTransports{
-		readLeases: func(observeCtx context.Context) (hostWorkloadLeaseSnapshot, error) {
-			return observeHostWorkloadLeaseSnapshot(observeCtx, leaseManagement, leaseTenant, leasePlan, leaseReconciler, leaseInputs, requestTimeout)
-		},
-		readCommand: transports.readRuntimeCommand, probeTraffic: transports.probeTraffic, resolveImage: resolveImage,
-	})
-	result.HBNRuntime = &runtimeResult
-	if err != nil {
-		return result, err
+	leaseInputs := newWorkloadLeaseInputs(workload)
+	accepted, acceptanceErr := runDeploymentAcceptance(ctx, compiled, acceptanceObserver, client, runtimeInputs, controlPlane.tenant.Client, activation, result.HostNetworking, journal, requestTimeout, interval,
+		func(observeCtx context.Context, managementReads resourceReader, tenantReads currentHostLeaseTenantReader) (hostWorkloadLeaseSnapshot, error) {
+			leaseCtx, cancel := context.WithTimeout(observeCtx, requestTimeout)
+			defer cancel()
+			inputs, err := prepareHostLeaseObservation(leaseCtx, client, controlPlane.tenant.Client, runtimeInputs.execution.plan, runtimeInputs.execution.reconciler, leaseInputs, requestTimeout)
+			if err != nil {
+				return hostWorkloadLeaseSnapshot{}, err
+			}
+			return collectCurrentHostWorkloadLeaseSnapshot(leaseCtx, managementReads, tenantReads, inputs)
+		}, request.PublishAcceptance, request.AcceptanceProgress)
+	result.Validation = &accepted
+	result.TrafficValidated = accepted.Verdict == validation.VerdictPassed && accepted.ExitCode() == 0 && acceptanceErr == nil
+	runtimeProjection := projectHBNRuntime(accepted, plan, result.HostNetworking)
+	result.HBNRuntime = &runtimeProjection
+	if acceptanceErr != nil {
+		return result, acceptanceErr
 	}
-	result.TrafficValidated = runtimeResult.TrafficValidated
 	if result.TrafficValidated {
 		result.LastCompletedStage = hbnRuntimeStage
 	}
+
 	return result, nil
 }
 
@@ -550,6 +596,9 @@ func activationSummary(receipt activationStageReceipt) *ActivationSummary {
 func validateRunRequest(request RunRequest) error {
 	if request.Plan == nil || request.Plan.Digest() == "" || request.Plan.Bundle() == nil || request.Plan.ObjectSchemas() == nil {
 		return fmt.Errorf("deployment run requires a validated plan")
+	}
+	if request.PublishAcceptance == nil {
+		return fmt.Errorf("deployment requires a reserved acceptance report publisher")
 	}
 	if request.VerifyPrerequisites == nil || request.VerifyChartSource == nil || request.Rebooter == nil {
 		return fmt.Errorf("deployment run requires prerequisite, chart-source and external-reboot callbacks")
@@ -903,6 +952,13 @@ func validateSelectedInventory(plan *generation.Plan, current *inventory.Invento
 // pass before the caller sees RunResult.
 func finishRunReport(result *RunResult, runErr error, closeProbe func() error, journal *executionJournal, namespace string) error {
 	var reportErr error
+	if runErr == nil {
+		if result.Validation == nil || result.Validation.Mode != validation.ModeFull || result.Validation.Verdict != validation.VerdictPassed || result.Validation.ExitCode() != 0 || result.Validation.Report.Status != validation.ReportPublished {
+			if result.Validation == nil || !onlySingleHostCoverageIncomplete(*result.Validation) {
+				runErr = fmt.Errorf("deployment has no complete accepted full validation result")
+			}
+		}
+	}
 	if err := closeProbe(); err != nil {
 		reportErr = errors.Join(reportErr, fmt.Errorf("close probe resource journal: %w", err))
 		runErr = errors.Join(runErr, reportErr)
@@ -914,7 +970,7 @@ func finishRunReport(result *RunResult, runErr error, closeProbe func() error, j
 		if result.TrafficValidated {
 			result.State = RunStateValidated
 			code = "HBN_RUNTIME_COHORT_VALIDATED"
-			message = "All selected HBN BGP sessions, remote FIB routes and directed host ordinary/DF traffic probes passed with final cohort fences."
+			message = "Full DPF resource, physical and HBN runtime validation passed with final deployment receipt/cohort fences and published output."
 		}
 	}
 	result.Checks = append(result.Checks, inventory.Check{
@@ -930,6 +986,10 @@ func finishRunReport(result *RunResult, runErr error, closeProbe func() error, j
 		runErr = errors.Join(runErr, reportErr)
 	}
 	if runErr != nil {
+		if reportErr != nil && result.Validation != nil {
+			result.Validation.OutputFailed = true
+			result.Validation.Cause = errors.Join(result.Validation.Cause, reportErr)
+		}
 		result.State = RunStateFailed
 		result.TrafficValidated = false
 		if result.HBNRuntime != nil {

@@ -38,6 +38,24 @@ See the
 Launch Kit checks these components and their access; this deployment command
 does not install them.
 
+For the HBN-BGP beta profile, the release catalog also selects a specific Kamaji
+compatibility exception that fixes generation of the tenant's kube-proxy Pod
+CIDR. This is an official upstream edge build qualified for this Launch Kit
+profile, separate from NVIDIA's published DPF component BOM. It is not a general
+Kamaji upgrade recommendation or NVIDIA GA certification. The management
+controller currently requires Linux/amd64.
+
+Discovery checks the actual running controller against that release-owned
+requirement, including its rollout, process settings and image identity. A Ready
+controller with the affected image, an unknown image or an incomplete rollout
+blocks deployment. The discovered output records the required image at
+`inventory.software.kamajiCompatibility.image` and its qualification scope in
+`supportNote`. These are tool-provided release facts, not input fields to copy
+into your inventory or overrides. The prerequisite owner must install that image
+explicitly; Launch Kit does not upgrade a shared Kamaji release automatically.
+Plan a clean tenant installation for this exception. Do not change a controller
+that manages other tenants as part of this procedure.
+
 ## Prepare the site and review the bundle
 
 Keep the discovered site file, generated directory and its metadata together.
@@ -154,16 +172,25 @@ adoption path.
 | Install and activate DPUs | DPF controllers install the OS and DPU agent. Before a requested host reboot, the CLI checks the request, safe shutdown state and current device, host and deployment prerequisites. After the host and DPU reconnect, it checks current prerequisites again before acknowledging the request. | The host and selected DPU return with the expected boot observations within the configured deployment timeout, and DPF reports them ready. |
 | Recheck after activation | The CLI collects current host, BMC, switch, management, storage and access facts again. | All current host PF, backend and cabling checks pass for the same operation and devices before workload changes or traffic; pending-reset allowances no longer apply. |
 | Configure host workload networking | The CLI reads each actual DPU IPAM allocation through the tenant/management APIs and configures the matching host PF over host access. | The allocated address, selected interface, MTU and workload route are applied and verified while preserving management connectivity and the default route. |
-| Check HBN routing and traffic | The CLI reads the intended HBN containers and routing state through the tenant API, then probes selected hosts over host access. | Required BGP peers, remote workload routes and every directed ordinary and do-not-fragment (DF) traffic check pass. A one-host result cannot establish cross-host traffic. |
+| Run full deployment validation | The CLI checks management and tenant APIs, selected BMCs/hosts/switches, the HBN containers and host traffic using the standalone validation workflow. | Required definitions, ownership, controller status, installed software, tenant networking, physical facts, BGP, routes and ordinary/DF traffic all pass. A one-host result cannot establish cross-host traffic. |
+| Save acceptance reports | The CLI writes a self-contained HTML report and deployment records beside the generated bundle. | Report publication and the final deployment record must succeed before the command reports success. |
 
 The table shows operation dependencies and Launch Kit checkpoints; DPF
 controllers reconcile resources asynchronously, so HBN startup can begin after
 DPU agents join while deployment is still progressing. Controller transitions
-can briefly make the selected-device view incomplete; the CLI waits within the
-deployment deadline for a complete current view before requesting another host
-reset. Launch Kit waits for the
+can briefly make the selected-device view incomplete or make the operator
+configuration Pending as services start on a newly joined DPU. Before claiming
+another host reset, the CLI waits within the deployment deadline for the same
+operator configuration to become Ready. If readiness changes during reset
+preparation, it repeats preparation with fresh device and safety observations;
+it does not reuse an earlier shutdown check. Changed identities, configuration,
+versions, terminal failures and unverifiable reads still stop the operation.
+After a reset is claimed, a failed submission check stops without automatically
+repeating the reboot. Launch Kit waits for the
 selected service and interface resources and performs final HBN acceptance only
-after host workload networking. Do not treat a declared service, ready artifact
+after host workload networking. When the DPUs join, it also waits for the
+operator's system services to settle and rechecks the complete deployment
+prerequisites before accepting activation. Do not treat a declared service, ready artifact
 cache or DPU provisioning result as proof of BGP or traffic.
 
 Each routing and traffic measurement rechecks the complete selected runtime
@@ -172,6 +199,27 @@ Administrator access are reverified at the start and final acceptance of the
 runtime phase. A failed final physical or runtime check prevents `validated`,
 even when earlier measurement rows passed. Provisioning, resets and host-network
 changes retain their immediate full physical safety checks.
+
+Deployment finishes by running the same full validation checks as standalone
+`l8k validate`. Review its reported HTML path for the individual results. A
+kube-proxy configuration failure can appear alongside passing kube-proxy Pod
+health checks: the processes are running, but the tenant networking
+configuration is incorrect. Passing traffic checks alone cannot make that
+result successful. Failed or unverified required checks stop acceptance and
+retain the deployment's completed effects for inspection.
+
+During final validation, deployment shows each check as `RUNNING` and then its
+result on stderr, grouped by management, tenant, DPU and runtime scope. JSON
+stdout remains one final result; `--quiet` suppresses the progress display.
+
+Host workload network configuration can take longer than an individual SSH
+read. Connections and prerequisite reads use the request timeout; configuration
+and verification of a saved transaction use the remaining `--deploy-timeout`.
+They do not start a new deployment deadline. If the connection is lost or the
+deadline expires before confirmation, Launch Kit reports an unknown result and
+its safe diagnostic reason. The host may have completed the change. Preserve
+the operation reference and inspect current state before explicitly resuming;
+resume verifies the saved transaction without applying it again.
 
 ## Validate current state again
 
@@ -185,9 +233,12 @@ or repair an incomplete deployment operation.
 
 On a fabric ownership stop, inspect the recorded allocation, cabling or route-path reason. Preserve existing routes and resources; correct access or resolve conflicting ownership with the infrastructure owner before rerunning.
 
-`validated` means the selected multi-host BGP, installed-route and directed
-traffic checks passed at the time of observation. A one-host run can be
-`provisioned`, but cross-host routing and traffic remain unmeasured. Neither
+`validated` means all required checks in the full validation workflow passed
+at the time of observation, including tenant networking and the selected
+multi-host BGP, installed-route and directed traffic checks. The HTML report
+must also be saved successfully. A one-host run can be `provisioned` only when
+all other required checks pass and cross-host coverage is the sole missing
+result. Neither
 state is a general hardware qualification, performance result or proof that
 every failover path was exercised.
 

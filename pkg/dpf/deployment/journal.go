@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/nvidia/k8s-launch-kit/pkg/dpf/validation"
 	"io"
 	"os"
 	"path/filepath"
@@ -17,6 +18,7 @@ import (
 // executionEvent contains only lifecycle identifiers and bounded, safe check
 // results. Never put resource bodies, credentials, or raw API errors here.
 type executionEvent struct {
+	Validation   *validation.Result         `json:"validation,omitempty"`
 	Sequence     uint64                     `json:"sequence"`
 	Time         time.Time                  `json:"time"`
 	BundleDigest string                     `json:"bundleDigest"`

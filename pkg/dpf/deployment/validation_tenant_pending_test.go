@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/nvidia/k8s-launch-kit/pkg/dpf/deployment/internal/controllercontract"
+	"github.com/nvidia/k8s-launch-kit/pkg/dpf/generation"
 	"github.com/nvidia/k8s-launch-kit/pkg/dpf/managementprobe"
 	"github.com/nvidia/k8s-launch-kit/pkg/dpf/validation"
 	appsv1 "k8s.io/api/apps/v1"
@@ -288,26 +289,42 @@ func TestValidationTenantSourceBlockersStopRunner(t *testing.T) {
 func tenantPendingNetworkingFixture(t *testing.T, f *currentReadHTTPFixture) (*corev1.Service, map[string]int) {
 	t.Helper()
 	intent := f.adapter.native.desired.plan.Intent()
+	endpoint, _, err := f.adapter.tenant.bootstrapCredentialSource(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	nodes, err := f.adapter.native.validationSelectedTenantNodes(context.Background(), f.management, f.adapter.tenant)
+	if err != nil {
+		t.Fatal(err)
+	}
+	host, objects := tenantNetworkingObjects(t, intent, endpoint, nodes)
+	reads := map[string]int{}
+	base := f.adapter.tenant.api.CoreV1().RESTClient().Get().URL()
+	f.adapter.tenant.api, err = kubernetes.NewForConfig(&rest.Config{Host: base.Scheme + "://" + base.Host, Timeout: time.Second, RateLimiter: flowcontrol.NewFakeAlwaysRateLimiter(), WrapTransport: func(next http.RoundTripper) http.RoundTripper {
+		return tenantPendingTransport{next: next, objects: objects, reads: reads}
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return host, reads
+}
+
+// tenantNetworkingObjects builds only the selected DNS/addon API facts. Readers
+// and scenarios own their transports and current object mutations.
+func tenantNetworkingObjects(t *testing.T, intent generation.ResolvedIntent, endpoint string, nodes map[string]corev1.Node) (*corev1.Service, map[string]any) {
+	t.Helper()
 	host := &corev1.Service{TypeMeta: metav1.TypeMeta{APIVersion: "v1", Kind: "Service"}, ObjectMeta: metav1.ObjectMeta{Name: "host-dns", Namespace: intent.Namespace, UID: "host-dns", ResourceVersion: "1"}, Spec: corev1.ServiceSpec{Ports: []corev1.ServicePort{{Name: "dns", Port: 53, Protocol: corev1.ProtocolUDP, TargetPort: intstr.FromString("dns"), NodePort: 31001}, {Name: "dns-tcp", Port: 53, Protocol: corev1.ProtocolTCP, TargetPort: intstr.FromString("dns-tcp"), NodePort: 31002}}}}
 	service := &corev1.Service{TypeMeta: metav1.TypeMeta{APIVersion: "v1", Kind: "Service"}, ObjectMeta: metav1.ObjectMeta{Name: "kube-dns", Namespace: "kube-system", UID: "dns", ResourceVersion: "1", Labels: map[string]string{"k8s-app": "kube-dns", "kubernetes.io/name": "CoreDNS"}}, Spec: corev1.ServiceSpec{Type: corev1.ServiceTypeClusterIP, ClusterIP: "10.96.0.10", Ports: []corev1.ServicePort{{Name: "dns", Port: 53, Protocol: corev1.ProtocolUDP, TargetPort: intstr.FromInt32(53)}, {Name: "dns-tcp", Port: 53, Protocol: corev1.ProtocolTCP, TargetPort: intstr.FromInt32(53)}}}}
 	slice := discoveryv1.EndpointSlice{ObjectMeta: metav1.ObjectMeta{Name: "kube-dns", Namespace: "kube-system", UID: "dns-endpoints", ResourceVersion: "1", Labels: map[string]string{discoveryv1.LabelServiceName: "kube-dns", discoveryv1.LabelManagedBy: "kamaji-cluster-manager"}}, AddressType: discoveryv1.AddressTypeIPv4, Ports: []discoveryv1.EndpointPort{{Name: ptr.To("dns"), Port: ptr.To(int32(31001)), Protocol: ptr.To(corev1.ProtocolUDP)}, {Name: ptr.To("dns-tcp"), Port: ptr.To(int32(31002)), Protocol: ptr.To(corev1.ProtocolTCP)}}, Endpoints: []discoveryv1.Endpoint{{Addresses: []string{intent.Bootstrap.Tenant.VIP}, Conditions: discoveryv1.EndpointConditions{Ready: ptr.To(true)}}}}
 	binding := &rbacv1.ClusterRoleBinding{TypeMeta: metav1.TypeMeta{APIVersion: rbacv1.SchemeGroupVersion.String(), Kind: "ClusterRoleBinding"}, ObjectMeta: metav1.ObjectMeta{Name: "kubeadm:node-proxier", UID: "proxy-anchor", ResourceVersion: "1"}, RoleRef: rbacv1.RoleRef{APIGroup: rbacv1.GroupName, Kind: "ClusterRole", Name: "system:node-proxier"}, Subjects: []rbacv1.Subject{{Kind: "ServiceAccount", Name: "kube-proxy", Namespace: "kube-system"}}}
 	owner := []metav1.OwnerReference{{APIVersion: rbacv1.SchemeGroupVersion.String(), Kind: "ClusterRoleBinding", Name: binding.Name, UID: binding.UID, Controller: ptr.To(true)}}
 	account := &corev1.ServiceAccount{TypeMeta: metav1.TypeMeta{APIVersion: "v1", Kind: "ServiceAccount"}, ObjectMeta: metav1.ObjectMeta{Name: "kube-proxy", Namespace: "kube-system", UID: "proxy-account", ResourceVersion: "1", OwnerReferences: owner}}
-	endpoint, _, err := f.adapter.tenant.bootstrapCredentialSource(context.Background())
-	if err != nil {
-		t.Fatal(err)
-	}
 	config := &corev1.ConfigMap{TypeMeta: metav1.TypeMeta{APIVersion: "v1", Kind: "ConfigMap"}, ObjectMeta: metav1.ObjectMeta{Name: "kube-proxy", Namespace: "kube-system", UID: "proxy-config", ResourceVersion: "1"}, Data: map[string]string{"config.conf": fmt.Sprintf("apiVersion: kubeproxy.config.k8s.io/v1alpha1\nkind: KubeProxyConfiguration\nbindAddress: 0.0.0.0\nclusterCIDR: %s\nclientConnection:\n  kubeconfig: /var/lib/kube-proxy/kubeconfig.conf\nmode: \"\"\n", intent.Bootstrap.PodCIDR), "kubeconfig.conf": fmt.Sprintf("apiVersion: v1\nkind: Config\nclusters:\n- name: default\n  cluster:\n    server: %s\n    certificate-authority: /var/run/secrets/kubernetes.io/serviceaccount/ca.crt\ncontexts:\n- name: default\n  context: {cluster: default, user: default, namespace: default}\ncurrent-context: default\nusers:\n- name: default\n  user:\n    tokenFile: /var/run/secrets/kubernetes.io/serviceaccount/token\n", endpoint)}}
 	var set appsv1.DaemonSet
 	if err := runtime.DefaultUnstructuredConverter.FromUnstructured(validationExpectedKubeProxy(intent.Bootstrap.TenantKubernetesVersion).Object, &set); err != nil {
 		t.Fatal(err)
 	}
 	set.UID, set.ResourceVersion, set.Generation, set.OwnerReferences = "proxy-set", "1", 1, owner
-	nodes, err := f.adapter.native.validationSelectedTenantNodes(context.Background(), f.management, f.adapter.tenant)
-	if err != nil {
-		t.Fatal(err)
-	}
 	n := int32(len(nodes))
 	set.Status = appsv1.DaemonSetStatus{ObservedGeneration: 1, DesiredNumberScheduled: n, CurrentNumberScheduled: n, UpdatedNumberScheduled: n, NumberReady: n, NumberAvailable: n}
 	pods := []corev1.Pod{}
@@ -332,15 +349,7 @@ func tenantPendingNetworkingFixture(t *testing.T, f *currentReadHTTPFixture) (*c
 		"/apis/apps/v1/namespaces/kube-system/daemonsets":                             &appsv1.DaemonSetList{TypeMeta: metav1.TypeMeta{APIVersion: "apps/v1", Kind: "DaemonSetList"}, ListMeta: metav1.ListMeta{ResourceVersion: "1"}, Items: []appsv1.DaemonSet{set}},
 		"/api/v1/namespaces/kube-system/pods":                                         &corev1.PodList{TypeMeta: metav1.TypeMeta{APIVersion: "v1", Kind: "PodList"}, ListMeta: metav1.ListMeta{ResourceVersion: "1"}, Items: pods},
 	}
-	reads := map[string]int{}
-	base := f.adapter.tenant.api.CoreV1().RESTClient().Get().URL()
-	f.adapter.tenant.api, err = kubernetes.NewForConfig(&rest.Config{Host: base.Scheme + "://" + base.Host, Timeout: time.Second, RateLimiter: flowcontrol.NewFakeAlwaysRateLimiter(), WrapTransport: func(next http.RoundTripper) http.RoundTripper {
-		return tenantPendingTransport{next: next, objects: objects, reads: reads}
-	}})
-	if err != nil {
-		t.Fatal(err)
-	}
-	return host, reads
+	return host, objects
 }
 
 func TestValidationTenantNativeOpenPreservesSourceClassification(t *testing.T) {

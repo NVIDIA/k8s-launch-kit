@@ -44,12 +44,15 @@ func TestActivationPendingCohortDefersRemainingHostWithoutReplayingCompletedPeer
 		name        string
 		completed   int
 		afterSafety bool
+		bootstrap   bool
 		mutation    string
 	}{
 		{name: "first peer completes during initial scope", completed: 0},
 		{name: "second peer completes during initial scope", completed: 1},
 		{name: "first peer completes after safety", completed: 0, afterSafety: true},
 		{name: "second peer completes after safety", completed: 1, afterSafety: true},
+		{name: "bootstrap waits after first peer ACK", completed: 0, bootstrap: true},
+		{name: "bootstrap loses readiness after physical proof", completed: 1, afterSafety: true, bootstrap: true},
 		{name: "replacement is fatal", mutation: "UID"},
 		{name: "denied list is fatal", mutation: "denied"},
 		{name: "denied list after safety is fatal", mutation: "denied", afterSafety: true},
@@ -151,7 +154,7 @@ func TestActivationPendingCohortDefersRemainingHostWithoutReplayingCompletedPeer
 			patchesBefore := len(c.patches)
 			crossed := false
 			c.beforeList = func(client *activationIntegrationFake, kind string) {
-				if kind != "DPUNodeMaintenance" || crossed || tc.afterSafety && client.resetSafetyCalls == safetyBefore {
+				if tc.bootstrap || kind != "DPUNodeMaintenance" || crossed || tc.afterSafety && client.resetSafetyCalls == safetyBefore {
 					return
 				}
 				crossed = true
@@ -172,6 +175,34 @@ func TestActivationPendingCohortDefersRemainingHostWithoutReplayingCompletedPeer
 					if tc.mutation == "cancel" {
 						cancel()
 					}
+				}
+			}
+			var expiredProof time.Time
+			if tc.bootstrap {
+				if tc.afterSafety {
+					// Exercise the production expiry comparison without a two-minute
+					// test sleep. Waiting must discard even a still-valid old proof.
+					expiredProof = time.Now().Add(250 * time.Millisecond)
+					c.resetSafetyExpiry = expiredProof
+				}
+				pendingReads := 0
+				life.onGet = func(client *activationIntegrationFake, wanted *unstructured.Unstructured) {
+					if wanted.GetKind() != "DPFOperatorConfig" || tc.afterSafety && client.resetSafetyCalls == safetyBefore {
+						return
+					}
+					crossed = true
+					pendingReads++
+					config := client.base.resources[tenantStageKey(wanted)]
+					if pendingReads <= 2 {
+						setBootstrapTestReadiness(t, config, "False", "Error")
+						return
+					}
+					if tc.afterSafety && time.Now().Before(expiredProof) {
+						<-time.After(time.Until(expiredProof) + time.Millisecond)
+					}
+					setBootstrapTestReadiness(t, config, "True", "Success")
+					client.resetSafetyExpiry = time.Time{}
+					completeActivationWithoutReset(client, peer.nodeName)
 				}
 			}
 			if tc.mutation == "UID" {
@@ -214,7 +245,14 @@ func TestActivationPendingCohortDefersRemainingHostWithoutReplayingCompletedPeer
 				t.Fatalf("incomplete observation should defer without effect: %v", err)
 			}
 			report := f.journal.file.(*managementMemoryFile).String()
-			if !strings.Contains(report, `"state":"waiting"`) || !strings.Contains(report, "ACTIVATION_REBOOT_SCOPE_PENDING") || !strings.Contains(output.String(), "ACTIVATION_REBOOT_SCOPE_PENDING") {
+			pendingCode := "ACTIVATION_REBOOT_SCOPE_PENDING"
+			if tc.bootstrap {
+				pendingCode = "ACTIVATION_BOOTSTRAP_NOT_READY"
+				if strings.Contains(report, `"state":"failed","reasonCode":"ACTIVATION_BOOTSTRAP_CHANGED"`) {
+					t.Fatal("recovered bootstrap left a terminal failure record")
+				}
+			}
+			if !strings.Contains(report, `"state":"waiting"`) || !strings.Contains(report, pendingCode) || !strings.Contains(output.String(), pendingCode) {
 				t.Fatal("pending reason missing from durable journal/progress")
 			}
 			expectedResets := 1
@@ -248,6 +286,9 @@ func TestActivationPendingCohortDefersRemainingHostWithoutReplayingCompletedPeer
 			result, err := runActivationStage(f.ctx, c, f.prepared, f.controlPlane, f.workload, f.inventory, f.request, f.journal, time.Millisecond, time.Second, reboot)
 			if err != nil || len(result.DPUs) != 2 || base.submissions != 2 || c.guardCalls != 2 || !slices.Equal(requests, []string{peer.host.InputRef, target.host.InputRef}) {
 				t.Fatalf("remaining host did not finish once: requests=%v claims=%d submissions=%d err=%v", requests, c.guardCalls, base.submissions, err)
+			}
+			if tc.bootstrap && tc.afterSafety && (time.Now().Before(expiredProof) || c.resetSafetyCalls < safetyBefore+2) {
+				t.Fatal("bootstrap wait reused the expired pre-claim physical proof")
 			}
 		})
 	}

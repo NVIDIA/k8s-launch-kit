@@ -7,7 +7,6 @@ import (
 	"context"
 	"fmt"
 	"maps"
-	"net/netip"
 	"reflect"
 
 	"github.com/nvidia/k8s-launch-kit/pkg/dpf/deployment/internal/controllercontract"
@@ -51,12 +50,12 @@ type tenantBootstrapReader interface {
 // The stage composition owns all tenant observations. Consumers receive the
 // smaller ports above and never a Kubernetes client factory.
 type tenantStageReader interface {
+	acceptanceTenantReadSource
 	tenantAllocationReader
 	hbnRuntimeTenantReader
 	tenantBootstrapReader
 	systemIdentity() string
 	operationSources(context.Context) (map[string]types.UID, error)
-	readRuntimeCommand(context.Context, string, string, hbnRuntimeCommand, netip.Prefix) ([]byte, error)
 }
 
 func (c *tenantClient) matchesTenantBinding(source tenantSourceReader, expected controllercontract.TenantReadinessExpected, uid types.UID) bool {
@@ -105,16 +104,5 @@ func (c *tenantClient) bootstrapCredentialSource(ctx context.Context) (string, [
 	}
 	return endpoint, data, nil
 }
-func (c *tenantClient) readRuntimeCommand(ctx context.Context, namespace, pod string, command hbnRuntimeCommand, prefix netip.Prefix) ([]byte, error) {
-	if c == nil || c.hbnExec == nil {
-		return nil, fmt.Errorf("tenant runtime command transport is unavailable")
-	}
-	return c.hbnExec.read(ctx, namespace, pod, command, prefix)
-}
 
 var _ tenantStageReader = (*tenantClient)(nil)
-
-type runtimeVerificationTenantReader interface {
-	tenantVerificationReader
-	hbnRuntimeTenantReader
-}

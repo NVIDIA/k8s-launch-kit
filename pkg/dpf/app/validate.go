@@ -7,7 +7,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"io"
 	"path/filepath"
 	"time"
 
@@ -60,20 +59,8 @@ func validate(ctx context.Context, request ValidationRequest, newObserver valida
 			result.Report = validation.ReportDisposition{Status: validation.ReportUnavailable}
 			return
 		}
-		defer destination.Close()
-		disposition, err := destination.Publish(func(w io.Writer) error {
-			return validation.RenderHTML(w, result, metadata)
-		})
-		result.Report = disposition
-		if err != nil {
-			result.Cause = errors.Join(result.Cause, err)
-			result.Checks = append(result.Checks, validation.CheckResult{
-				CheckSpec: validation.CheckSpec{ID: "report/publication", Area: validation.AreaPreparation, Subject: "HTML report publication"},
-				Outcome: validation.Outcome{ID: "report/publication", State: validation.Unverified, Reason: validation.ReasonUnavailable,
-					Summary: "The HTML report could not be published; validation results remain available in the command output.",
-					Action:  "Choose a stable writable report location outside the deployment bundle and its input files."},
-			})
-		}
+		disposition, err := validation.PublishReport(destination, result, metadata)
+		validation.ApplyReportPublication(&result, disposition, err)
 	}()
 
 	// The private default and disabled destinations need no credential reads.

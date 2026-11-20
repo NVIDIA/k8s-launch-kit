@@ -163,7 +163,11 @@ func runHostWorkloadNetworkStage(ctx context.Context, client activationBoundaryR
 			if errors.As(err, &failure) && safeWorkloadReasonCode(failure.ReasonCode) {
 				code = failure.ReasonCode
 			}
-			return fail(code, "The host transaction did not complete; retain its receipt and inspect actual state before retrying.", err)
+			message := "The host transaction did not complete; retain its receipt and inspect actual state before retrying."
+			if diagnostic := sshprobe.HostNetworkAcknowledgementDiagnostic(err); diagnostic != "" {
+				message = "The host transaction acknowledgement was not verified; retain its receipt and inspect actual state before retrying." + diagnostic
+			}
+			return fail(code, message, err)
 		}
 		if receipt.Blocking || receipt.State != "complete" && receipt.State != "verified-external" || !receipt.RuntimeVerified || !receipt.FileVerified {
 			return fail("HOST_NETWORK_RECEIPT_INCOMPLETE", "The host did not return a definitive verified runtime and persistent-file result.", nil)

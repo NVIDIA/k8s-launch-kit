@@ -251,7 +251,7 @@ func (o *validationObserver) observeValidationRuntimeResourcesWithImage(ctx cont
 						if host.selected.hostTarget.SSH == nil {
 							return validationFailure(validation.Unverified, validation.ReasonUnavailable, "Explicit selected-host SSH access is unavailable.")
 						}
-						observed, err := sshprobe.VerifyHostWorkloadNetwork(ctx, host.selected.hostTarget, host.request, o.request.RequestTimeout)
+						observed, err := o.observeHostNetwork(ctx, host.selected.hostTarget, host.request, o.request.RequestTimeout)
 						if err != nil {
 							return validationHostNetworkError(err)
 						}

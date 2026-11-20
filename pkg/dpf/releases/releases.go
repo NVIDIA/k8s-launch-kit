@@ -146,9 +146,22 @@ type Capabilities struct {
 	BF4ProvisioningAPI       bool `json:"bf4ProvisioningAPI,omitempty" yaml:"bf4ProvisioningAPI,omitempty"`
 }
 
+// KamajiCompatibility is a finite HBN prerequisite exception to the published
+// NVIDIA BOM. It records reviewed upstream bytes, not vendor GA support or an
+// instruction to upgrade the externally managed controller.
+type KamajiCompatibility struct {
+	Image            string `json:"image" yaml:"image"`
+	PlatformManifest string `json:"platformManifest" yaml:"platformManifest"`
+	ConfigDigest     string `json:"configDigest" yaml:"configDigest"`
+	Platform         string `json:"platform" yaml:"platform"`
+	SupportNote      string `json:"supportNote" yaml:"supportNote"`
+	SourceRef        string `json:"sourceRef" yaml:"sourceRef"`
+}
+
 type Release struct {
-	Version             string        `json:"version" yaml:"version"`
-	SupportedKubernetes *VersionRange `json:"supportedKubernetes,omitempty" yaml:"supportedKubernetes,omitempty"`
+	KamajiCompatibility *KamajiCompatibility `json:"kamajiCompatibility,omitempty" yaml:"kamajiCompatibility,omitempty"`
+	Version             string               `json:"version" yaml:"version"`
+	SupportedKubernetes *VersionRange        `json:"supportedKubernetes,omitempty" yaml:"supportedKubernetes,omitempty"`
 	// TenantServiceCIDR is the fixed service range assigned by this release's
 	// Kamaji controller, not a user-selectable network allocation.
 	TenantServiceCIDR string `json:"tenantServiceCIDR,omitempty" yaml:"tenantServiceCIDR,omitempty"`
@@ -346,6 +359,12 @@ func validate(key string, r Release) error {
 	} else if r.HBNWorkload != nil || r.Capabilities.NativeOperatorProjection || r.Capabilities.BF4ProvisioningAPI {
 		return fmt.Errorf("HBN workload coordinates and native HBN capabilities require HBN-BGP support")
 	}
+	if r.KamajiCompatibility != nil {
+		k := r.KamajiCompatibility
+		if !seenUseCases[UseCaseHBNBGP] || !validKamajiCompatibility(*k) || !sources[k.SourceRef] {
+			return fmt.Errorf("invalid HBN Kamaji compatibility exception")
+		}
+	}
 	if r.SystemNetworking != nil {
 		if err := validateSystemNetworking(r, sources); err != nil {
 			return err
@@ -507,4 +526,9 @@ func validArtifact(a Artifact, sources map[string]bool) bool {
 func validTenantServiceCIDR(value string) bool {
 	prefix, err := netip.ParsePrefix(value)
 	return err == nil && prefix.Addr().Is4() && prefix.Addr().IsGlobalUnicast() && prefix == prefix.Masked()
+}
+
+func validKamajiCompatibility(k KamajiCompatibility) bool {
+	parts := strings.Split(k.Image, "@")
+	return len(parts) == 2 && strings.HasPrefix(parts[0], "docker.io/clastix/kamaji:") && hbnTagPattern.MatchString(strings.TrimPrefix(parts[0], "docker.io/clastix/kamaji:")) && summaryDigest(parts[1]) && summaryDigest(k.PlatformManifest) && summaryDigest(k.ConfigDigest) && k.Platform == "linux/amd64" && k.SupportNote != ""
 }

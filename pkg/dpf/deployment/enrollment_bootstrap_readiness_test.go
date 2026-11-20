@@ -95,14 +95,14 @@ func TestEnrollmentBootstrapWaitPreservesHardBoundaries(t *testing.T) {
 		name, want string
 		waited     bool
 	}{
-		{name: "config replaced before wait", want: "BOOTSTRAP_CONFIG_IDENTITY_CHANGED", waited: false},
-		{name: "config read denied before wait", want: "BOOTSTRAP_CONFIG_READ_FAILED", waited: false},
-		{name: "config replaced during wait", want: "DPF_CONFIG_INTENT_CHANGED", waited: true},
-		{name: "config deleted during wait", want: "DPF_CONFIG_INTENT_CHANGED", waited: true},
-		{name: "config spec changed", want: "DPF_CONFIG_INTENT_CHANGED", waited: true},
+		{name: "config replaced at first pending recheck", want: "BOOTSTRAP_CONFIG_CHANGED", waited: true},
+		{name: "config read denied at first pending recheck", want: "BOOTSTRAP_CONFIG_READ_FAILED", waited: true},
+		{name: "config replaced during wait", want: "BOOTSTRAP_CONFIG_CHANGED", waited: true},
+		{name: "config deleted during wait", want: "BOOTSTRAP_CONFIG_CHANGED", waited: true},
+		{name: "config spec changed", want: "BOOTSTRAP_CONFIG_CHANGED", waited: true},
 		{name: "config ownership changed", want: "retained intent", waited: false},
 		{name: "wrong version while pending", want: "retained operator version", waited: false},
-		{name: "terminal condition", want: "RESOURCE_TERMINAL_FAILURE", waited: true},
+		{name: "terminal condition", want: "RESOURCE_TERMINAL_FAILURE", waited: false},
 		{name: "manager replaced while pending", want: "manager Deployment", waited: true},
 		{name: "namespace replaced while pending", want: "namespace", waited: true},
 		{name: "canceled while pending", want: "DPF_CONFIG_READINESS_CANCELED", waited: true},
@@ -128,7 +128,7 @@ func TestEnrollmentBootstrapWaitPreservesHardBoundaries(t *testing.T) {
 						setBootstrapTestReadiness(t, current, "True", "Success")
 					}
 					switch tc.name {
-					case "config replaced before wait":
+					case "config replaced at first pending recheck":
 						if configReads == 2 {
 							current.SetUID("replacement-config")
 						}
@@ -163,12 +163,14 @@ func TestEnrollmentBootstrapWaitPreservesHardBoundaries(t *testing.T) {
 						}
 					}
 				}
-				if configReads >= 4 && (tc.name == "manager replaced while pending" && wanted.GetKind() == "Deployment" || tc.name == "namespace replaced while pending" && wanted.GetKind() == "Namespace") {
+				// The strict wait now checks namespace receipts on each pending
+				// observation, rather than only after config-only polling ends.
+				if configReads >= 4 && tc.name == "manager replaced while pending" && wanted.GetKind() == "Deployment" || configReads >= 2 && tc.name == "namespace replaced while pending" && wanted.GetKind() == "Namespace" {
 					current.SetUID("replacement-bootstrap-resource")
 				}
 			}
 			client.readError = func(wanted *unstructured.Unstructured) error {
-				if tc.name == "config read denied before wait" && wanted.GetKind() == "DPFOperatorConfig" && configReads == 2 {
+				if tc.name == "config read denied at first pending recheck" && wanted.GetKind() == "DPFOperatorConfig" && configReads == 2 {
 					return apierrors.NewForbidden(schema.GroupResource{Group: "operator.dpu.nvidia.com", Resource: "dpfoperatorconfigs"}, wanted.GetName(), errors.New("bootstrap-private-canary"))
 				}
 				return nil
@@ -190,6 +192,9 @@ func TestEnrollmentBootstrapWaitPreservesHardBoundaries(t *testing.T) {
 			}
 			if strings.Contains(report, "DPF_CONFIG_READINESS_STARTED") != tc.waited {
 				t.Fatalf("readiness wait branch differs from expected classification: %s", report)
+			}
+			if tc.name == "namespace replaced while pending" && configReads != 2 {
+				t.Fatal("namespace replacement was not rejected before config readiness")
 			}
 		})
 	}

@@ -134,10 +134,19 @@ var _ = Describe("native deployment prerequisite provider", func() {
 		request.Input, err = WithRetainedUseCase(input, retained)
 		Expect(err).NotTo(HaveOccurred())
 		Expect(request.Input.Source).To(Equal(data))
+		permissionCalls := 0
+		permissions := HBNPermissionObserver{newClient: func(context.Context, config.Request, generation.ManagementIdentity, string) (callerPermissionClient, error) {
+			permissionCalls++
+			return permissionClientStub{check: func(_ context.Context, request deployment.ManagementPreflightRequest) deployment.PreflightResult {
+				Expect(request.Bundle).To(BeIdenticalTo(retained))
+				return deployment.PreflightResult{Ready: true, Checks: []deployment.PreflightCheck{{ID: "caller.fixture", State: "passed", Message: "Current selected authorization was verified."}}}
+			}}, nil
+		}}
 		collectors := func(current *discovery.Dependencies) {
 			current.SSH, current.BMC, current.Artifacts = physical, physical, deps.Artifacts
-			// Enrollment/permissions and host-network probes have separate transport suites.
-			current.HBNPermissions, current.HBNEnrollment, current.HostLLDP, current.HostNetworking = nil, nil, nil, nil
+			current.HBNPermissions = permissions.ObserveRetained(retained, plan)
+			// Enrollment and host-network probes have separate transport suites.
+			current.HBNEnrollment, current.HostLLDP, current.HostNetworking = nil, nil, nil
 		}
 		for _, phase := range []deployment.PrerequisitePhase{deployment.BeforeActivation, deployment.AfterActivation} {
 			for _, resume := range []bool{false, true} {
@@ -155,6 +164,9 @@ var _ = Describe("native deployment prerequisite provider", func() {
 					Expect(err).To(MatchError(ContainSubstring("prerequisites are blocked")))
 				}
 				Expect(observed.Inventory).NotTo(BeNil())
+				Expect(observed.Checks).To(ContainElement(SatisfyAll(
+					HaveField("ID", "dpf.hbn.management.caller-rbac.caller.fixture"), HaveField("State", "passed"))),
+					"retained authorization must receive complete current scope before discovery publication")
 				Expect(observed.Inventory.Collection.RunID).NotTo(Equal(before.Inventory.Collection.RunID), "plan verification must retain freshly collected inventory")
 				Expect(observed.Checks).NotTo(BeEmpty())
 				found := false
@@ -185,6 +197,7 @@ var _ = Describe("native deployment prerequisite provider", func() {
 				}
 			}
 		}
+		Expect(permissionCalls).To(Equal(4))
 		unchanged, err := os.ReadFile(input.Path)
 		Expect(err).NotTo(HaveOccurred())
 		Expect(unchanged).To(Equal(data))
@@ -211,6 +224,9 @@ var _ = Describe("native deployment prerequisite provider", func() {
 					Expect(err).To(MatchError(ContainSubstring("prerequisites are blocked")), "fresh initial-state checks still apply")
 				}
 				Expect(observed.Inventory).NotTo(BeNil())
+				Expect(observed.Checks).To(ContainElement(SatisfyAll(
+					HaveField("ID", "dpf.hbn.management.caller-rbac.caller.fixture"), HaveField("State", "passed"))),
+					"retained authorization must receive complete current scope before discovery publication")
 				Expect(observed.Inventory.Collection.RunID).NotTo(Equal(before.Inventory.Collection.RunID))
 				for _, check := range observed.Checks {
 					Expect(check.ID).NotTo(Equal("dpf.hbn.catalog"))

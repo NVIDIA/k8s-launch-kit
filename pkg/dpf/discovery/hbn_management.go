@@ -11,6 +11,7 @@ import (
 
 	"github.com/nvidia/k8s-launch-kit/pkg/dpf/inventory"
 	"github.com/nvidia/k8s-launch-kit/pkg/dpf/managementprobe"
+	"github.com/nvidia/k8s-launch-kit/pkg/dpf/releases"
 	"k8s.io/apimachinery/pkg/util/version"
 )
 
@@ -37,10 +38,11 @@ var hbnManagementCRDs = []managementCRDContract{
 // It is pure: it reads the snapshot and inventory without changing either.
 func managementHBNChecks(snapshot *managementprobe.Snapshot, inv *inventory.Inventory, namespace string) ([]inventory.Check, *inventory.HBNManagement) {
 	projection := projectHBNManagement(snapshot, inv, namespace)
-	checks := make([]inventory.Check, 0, 10)
+	checks := make([]inventory.Check, 0, 11)
 	add := func(c managementCheck) {
 		checks = append(checks, inventory.Check{ID: "dpf.hbn.management." + c.id, Subject: c.subject, Vantage: "executor", RequiredPhase: "deploy", State: c.state, ReasonCode: c.reason, Message: c.message, EvidenceRefs: []string{}})
 	}
+	add(kamajiCompatibilityCheck(snapshot, inv, namespace))
 	if snapshot == nil {
 		for _, c := range []managementCheck{
 			{"source-completeness", namespace, "unknown", "MANAGEMENT_OBSERVATION_UNAVAILABLE", "Management-cluster discovery did not return a snapshot."},
@@ -569,4 +571,27 @@ func firstNonEmpty(values ...string) string {
 		}
 	}
 	return ""
+}
+
+func kamajiCompatibilityCheck(snapshot *managementprobe.Snapshot, inv *inventory.Inventory, namespace string) managementCheck {
+	check := managementCheck{"kamaji-compatibility", namespace, "unknown", "KAMAJI_COMPATIBILITY_UNOBSERVED", "The current immutable Kamaji manager prerequisite was not observed."}
+	if inv == nil || inv.Software == nil || inv.Software.Version == "" {
+		check.reason, check.message = "KAMAJI_COMPATIBILITY_CONTRACT_MISSING", "An explicit selected HBN release is required for the Kamaji prerequisite."
+		return check
+	}
+	release, err := releases.Resolve(inv.Software.Version)
+	if err != nil || release.KamajiCompatibility == nil || !release.SupportsUseCase(releases.UseCaseHBNBGP) {
+		check.reason = "KAMAJI_COMPATIBILITY_CONTRACT_MISSING"
+		return check
+	}
+	if snapshot == nil || snapshot.Namespace != namespace || snapshot.KamajiCompatibility == nil {
+		return check
+	}
+	result := snapshot.KamajiCompatibility
+	if result.Namespace != namespace || result.Release != release.Version || result.ReasonCode == "" || result.Message == "" || (result.State != "passed" && result.State != "failed" && result.State != "unknown") || result.State == "passed" && result.ReasonCode != "KAMAJI_COMPATIBILITY_VERIFIED" {
+		check.reason, check.message = "KAMAJI_COMPATIBILITY_RESULT_INVALID", "Kamaji producer observation does not match the selected namespace/release or has an invalid conclusion."
+		return check
+	}
+	check.state, check.reason, check.message = result.State, result.ReasonCode, result.Message
+	return check
 }

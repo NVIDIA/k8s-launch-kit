@@ -256,11 +256,14 @@ func (s *hostNetworkSession) configureAction(ctx context.Context, request HostNe
 		Fence: observation.raw.Fence, RuntimeDigest: observation.raw.RuntimeDigest, LogicalID: plan.LogicalID, Fragment: base64.StdEncoding.EncodeToString(plan.DesiredFragment), OldMTU: observation.MTU, AddressExists: addressExists, RouteExists: routeExists, ProbeAddress: probe.String(), WaitOnlineOptional: plan.WaitOnlineOptional}
 	data, err := s.run(ctx, action, payload)
 	if err != nil {
-		return unknownHostNetworkReceipt(id, payload.Key, "HOST_NETWORK_ACKNOWLEDGEMENT_UNKNOWN"), networkError("HOST_NETWORK_ACKNOWLEDGEMENT_UNKNOWN", true)
+		return unknownHostNetworkReceipt(id, payload.Key, "HOST_NETWORK_ACKNOWLEDGEMENT_UNKNOWN"), hostNetworkAcknowledgementFailure(ctx, err)
 	}
 	var receipt HostNetworkReceipt
-	if err := decodeNetworkJSON(data, &receipt); err != nil || receipt.RequestID != id {
-		return unknownHostNetworkReceipt(id, payload.Key, "HOST_NETWORK_ACKNOWLEDGEMENT_UNKNOWN"), networkError("HOST_NETWORK_ACKNOWLEDGEMENT_UNKNOWN", true)
+	if err := decodeNetworkJSON(data, &receipt); err != nil {
+		return unknownHostNetworkReceipt(id, payload.Key, "HOST_NETWORK_ACKNOWLEDGEMENT_UNKNOWN"), &HostNetworkError{ReasonCode: "HOST_NETWORK_ACKNOWLEDGEMENT_UNKNOWN", Blocking: true, ackCause: "RESPONSE_INVALID", cause: err}
+	}
+	if receipt.RequestID != id {
+		return unknownHostNetworkReceipt(id, payload.Key, "HOST_NETWORK_ACKNOWLEDGEMENT_UNKNOWN"), &HostNetworkError{ReasonCode: "HOST_NETWORK_ACKNOWLEDGEMENT_UNKNOWN", Blocking: true, ackCause: "REQUEST_ID_MISMATCH"}
 	}
 	readFailure := strings.HasPrefix(receipt.ReasonCode, "HOST_NETWORK_READ_")
 	invalidReadReason := readFailure && (!validHostNetworkReadReason(receipt.ReasonCode) || receipt.State == "complete" || receipt.State == "verified-external")

@@ -232,92 +232,7 @@ func n3cRuntimeAdapterFixtureFromPreparation(t *testing.T, prepared validationFi
 	native := &validationObserver{desired: desired, request: f.request, mode: validation.ModeResources, physicalScope: validationPhysicalScope{expected: f.inventory}}
 	management := &correctionHBNManagement{validationReadFake: &validationReadFake{get: reader.Get, list: reader.List}, app: f.client.app}
 	tenant := testTenant(f.controlPlane.tenant.Client)
-	children := map[string]*unstructured.Unstructured{}
-	var chain *unstructured.Unstructured
-	for _, obj := range objects {
-		if obj.GetKind() == "DPUServiceChain" {
-			chain = obj
-		}
-	}
-	if chain == nil {
-		t.Fatal("fixture lacks current chain")
-	}
-	chainSpec, _, _ := unstructured.NestedMap(chain.Object, "spec", "template", "spec")
-	chainSet := workloadChildObject("svc.dpu.nvidia.com/v1alpha1", "ServiceChainSet", chain.GetName(), chain.GetNamespace(), map[string]any{"spec": chainSpec}, nil, nil)
-	n3cReadyWorkload(chainSet)
-	children["ServiceChainSet/"+chainSet.GetName()] = chainSet
-	switches, _, _ := unstructured.NestedSlice(chainSet.Object, "spec", "template", "spec", "switches")
-	controller := true
-	nodeName := f.snapshot.TenantNodes[0].GetName()
-	child := workloadChildObject("svc.dpu.nvidia.com/v1alpha1", "ServiceChain", "selected-chain", chainSet.GetNamespace(), map[string]any{"spec": map[string]any{"node": nodeName, "switches": switches}}, map[string]string{"svc.dpu.nvidia.com/servicechainset-name": chainSet.GetName(), "svc.dpu.nvidia.com/servicechainset-namespace": chainSet.GetNamespace()}, nil)
-	child.SetOwnerReferences([]metav1.OwnerReference{{APIVersion: chainSet.GetAPIVersion(), Kind: chainSet.GetKind(), Name: chainSet.GetName(), UID: chainSet.GetUID(), Controller: &controller}})
-	n3cReadyWorkload(child)
-	children["ServiceChain/"+child.GetName()] = child
-	shard := workloadChildObject("svc.dpu.nvidia.com/v1alpha1", "NodeServiceInterfaces", "selected-node-sfc", desired.operatorNamespace, map[string]any{"spec": map[string]any{"node": nodeName, "type": "sfc", "interfaces": []any{}}}, map[string]string{"svc.dpu.nvidia.com/node": nodeName, "svc.dpu.nvidia.com/nsi-type": "sfc"}, nil)
-	n3cReadyWorkload(shard)
-	entries, statuses := []any{}, []any{}
-	for _, parent := range objects {
-		if parent.GetKind() == "DPUServiceIPAM" {
-			pool, poolErr := f.client.workloadChild(f.ctx, tenant, parent)
-			if poolErr != nil {
-				t.Fatal(poolErr)
-			}
-			if parent.GetName() == f.snapshot.DPUServiceIPAM.GetName() {
-				pool = f.snapshot.CIDRPool.DeepCopy()
-			}
-			children["CIDRPool/"+pool.GetName()] = pool
-		}
-		if parent.GetKind() != "DPUServiceInterface" {
-			continue
-		}
-		set, setErr := f.client.workloadChild(f.ctx, tenant, parent)
-		if setErr != nil {
-			t.Fatal(setErr)
-		}
-		n3cReadyWorkload(set)
-		children["ServiceInterfaceSet/"+set.GetName()] = set
-		entry, _, _ := unstructured.NestedMap(set.Object, "spec", "template", "spec")
-		name := set.GetNamespace() + "_" + set.GetName()
-		entry["name"] = name
-		entryLabels, _, _ := unstructured.NestedStringMap(set.Object, "spec", "template", "metadata", "labels")
-		if entryLabels == nil {
-			entryLabels = map[string]string{}
-		}
-		entryLabels["svc.dpu.nvidia.com/serviceinterfaceset-name"] = set.GetName()
-		entryLabels["svc.dpu.nvidia.com/serviceinterfaceset-namespace"] = set.GetNamespace()
-		if entry["interfaceType"] == "service" {
-			value, _, _ := unstructured.NestedString(entry, "service", "serviceID")
-			entryLabels["svc.dpu.nvidia.com/service-id"] = value
-		}
-		rawLabels := map[string]any{}
-		for k, v := range entryLabels {
-			rawLabels[k] = v
-		}
-		entry["labels"] = rawLabels
-		annotations, found, _ := unstructured.NestedMap(set.Object, "spec", "template", "metadata", "annotations")
-		if found {
-			entry["annotations"] = annotations
-		}
-		entries = append(entries, entry)
-		statuses = append(statuses, map[string]any{"name": name, "conditions": []any{conditionMap("Ready", "True", "Success", 1)}})
-	}
-	_ = unstructured.SetNestedSlice(shard.Object, entries, "spec", "interfaces")
-	_ = unstructured.SetNestedSlice(shard.Object, statuses, "status", "interfaceStatuses")
-	children["NodeServiceInterfaces/"+shard.GetName()] = shard
-	for i := 1; i < len(f.snapshot.TenantNodes); i++ {
-		node := f.snapshot.TenantNodes[i].GetName()
-		chainChild := child.DeepCopy()
-		chainChild.SetName(fmt.Sprintf("selected-chain-%d", i))
-		chainChild.SetUID(types.UID(chainChild.GetName()))
-		_ = unstructured.SetNestedField(chainChild.Object, node, "spec", "node")
-		children["ServiceChain/"+chainChild.GetName()] = chainChild
-		nsi := shard.DeepCopy()
-		nsi.SetName(fmt.Sprintf("selected-node-sfc-%d", i))
-		nsi.SetUID(types.UID(nsi.GetName()))
-		nsi.SetLabels(map[string]string{"svc.dpu.nvidia.com/node": node, "svc.dpu.nvidia.com/nsi-type": "sfc"})
-		_ = unstructured.SetNestedField(nsi.Object, node, "spec", "node")
-		children["NodeServiceInterfaces/"+nsi.GetName()] = nsi
-	}
+	children := runtimeValidationChildren(t, f, desired, objects)
 	resources := map[string]string{"ServiceChainSet": "servicechainsets", "ServiceChain": "servicechains", "ServiceInterfaceSet": "serviceinterfacesets", "NodeServiceInterfaces": "nodeserviceinterfaces", "CIDRPool": "cidrpools"}
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
@@ -708,4 +623,98 @@ func TestValidationN3cNSIEntryMalformedStatusCannotHideBehindPending(t *testing.
 			}
 		})
 	}
+}
+
+// runtimeValidationChildren builds the current tenant descendants for an already
+// activated retained workload. It owns no observer, transport or lifecycle.
+func runtimeValidationChildren(t *testing.T, f *runtimeStageFixture, desired *managementDesired, objects map[string]*unstructured.Unstructured) map[string]*unstructured.Unstructured {
+	t.Helper()
+	tenant := testTenant(f.controlPlane.tenant.Client)
+	children := map[string]*unstructured.Unstructured{}
+	var chain *unstructured.Unstructured
+	for _, obj := range objects {
+		if obj.GetKind() == "DPUServiceChain" {
+			chain = obj
+		}
+	}
+	if chain == nil {
+		t.Fatal("fixture lacks current chain")
+	}
+	chainSpec, _, _ := unstructured.NestedMap(chain.Object, "spec", "template", "spec")
+	chainSet := workloadChildObject("svc.dpu.nvidia.com/v1alpha1", "ServiceChainSet", chain.GetName(), chain.GetNamespace(), map[string]any{"spec": chainSpec}, nil, nil)
+	n3cReadyWorkload(chainSet)
+	children["ServiceChainSet/"+chainSet.GetName()] = chainSet
+	switches, _, _ := unstructured.NestedSlice(chainSet.Object, "spec", "template", "spec", "switches")
+	controller := true
+	nodeName := f.snapshot.TenantNodes[0].GetName()
+	child := workloadChildObject("svc.dpu.nvidia.com/v1alpha1", "ServiceChain", "selected-chain", chainSet.GetNamespace(), map[string]any{"spec": map[string]any{"node": nodeName, "switches": switches}}, map[string]string{"svc.dpu.nvidia.com/servicechainset-name": chainSet.GetName(), "svc.dpu.nvidia.com/servicechainset-namespace": chainSet.GetNamespace()}, nil)
+	child.SetOwnerReferences([]metav1.OwnerReference{{APIVersion: chainSet.GetAPIVersion(), Kind: chainSet.GetKind(), Name: chainSet.GetName(), UID: chainSet.GetUID(), Controller: &controller}})
+	n3cReadyWorkload(child)
+	children["ServiceChain/"+child.GetName()] = child
+	shard := workloadChildObject("svc.dpu.nvidia.com/v1alpha1", "NodeServiceInterfaces", "selected-node-sfc", desired.operatorNamespace, map[string]any{"spec": map[string]any{"node": nodeName, "type": "sfc", "interfaces": []any{}}}, map[string]string{"svc.dpu.nvidia.com/node": nodeName, "svc.dpu.nvidia.com/nsi-type": "sfc"}, nil)
+	n3cReadyWorkload(shard)
+	entries, statuses := []any{}, []any{}
+	for _, parent := range objects {
+		if parent.GetKind() == "DPUServiceIPAM" {
+			pool, poolErr := f.client.workloadChild(f.ctx, tenant, parent)
+			if poolErr != nil {
+				t.Fatal(poolErr)
+			}
+			if parent.GetName() == f.snapshot.DPUServiceIPAM.GetName() {
+				pool = f.snapshot.CIDRPool.DeepCopy()
+			}
+			children["CIDRPool/"+pool.GetName()] = pool
+		}
+		if parent.GetKind() != "DPUServiceInterface" {
+			continue
+		}
+		set, setErr := f.client.workloadChild(f.ctx, tenant, parent)
+		if setErr != nil {
+			t.Fatal(setErr)
+		}
+		n3cReadyWorkload(set)
+		children["ServiceInterfaceSet/"+set.GetName()] = set
+		entry, _, _ := unstructured.NestedMap(set.Object, "spec", "template", "spec")
+		name := set.GetNamespace() + "_" + set.GetName()
+		entry["name"] = name
+		entryLabels, _, _ := unstructured.NestedStringMap(set.Object, "spec", "template", "metadata", "labels")
+		if entryLabels == nil {
+			entryLabels = map[string]string{}
+		}
+		entryLabels["svc.dpu.nvidia.com/serviceinterfaceset-name"] = set.GetName()
+		entryLabels["svc.dpu.nvidia.com/serviceinterfaceset-namespace"] = set.GetNamespace()
+		if entry["interfaceType"] == "service" {
+			value, _, _ := unstructured.NestedString(entry, "service", "serviceID")
+			entryLabels["svc.dpu.nvidia.com/service-id"] = value
+		}
+		rawLabels := map[string]any{}
+		for k, v := range entryLabels {
+			rawLabels[k] = v
+		}
+		entry["labels"] = rawLabels
+		annotations, found, _ := unstructured.NestedMap(set.Object, "spec", "template", "metadata", "annotations")
+		if found {
+			entry["annotations"] = annotations
+		}
+		entries = append(entries, entry)
+		statuses = append(statuses, map[string]any{"name": name, "conditions": []any{conditionMap("Ready", "True", "Success", 1)}})
+	}
+	_ = unstructured.SetNestedSlice(shard.Object, entries, "spec", "interfaces")
+	_ = unstructured.SetNestedSlice(shard.Object, statuses, "status", "interfaceStatuses")
+	children["NodeServiceInterfaces/"+shard.GetName()] = shard
+	for i := 1; i < len(f.snapshot.TenantNodes); i++ {
+		node := f.snapshot.TenantNodes[i].GetName()
+		chainChild := child.DeepCopy()
+		chainChild.SetName(fmt.Sprintf("selected-chain-%d", i))
+		chainChild.SetUID(types.UID(chainChild.GetName()))
+		_ = unstructured.SetNestedField(chainChild.Object, node, "spec", "node")
+		children["ServiceChain/"+chainChild.GetName()] = chainChild
+		nsi := shard.DeepCopy()
+		nsi.SetName(fmt.Sprintf("selected-node-sfc-%d", i))
+		nsi.SetUID(types.UID(nsi.GetName()))
+		nsi.SetLabels(map[string]string{"svc.dpu.nvidia.com/node": node, "svc.dpu.nvidia.com/nsi-type": "sfc"})
+		_ = unstructured.SetNestedField(nsi.Object, node, "spec", "node")
+		children["NodeServiceInterfaces/"+nsi.GetName()] = nsi
+	}
+	return children
 }

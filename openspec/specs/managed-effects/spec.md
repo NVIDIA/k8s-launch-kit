@@ -109,6 +109,26 @@ exclude competing firmware/provisioning writers, including external MFT.
 - **THEN** the result remains uncertain, the action is not automatically replayed, and separate fresh boot observations are required before acknowledgement.
 - **AND** the bounded submission check does not claim atomic remote scheduling or hardware execution time.
 
+### Requirement: DPF host-network transaction deadline and uncertainty
+
+Host workload network configuration and inspection of a saved transaction SHALL
+use the caller's existing bounded deployment context. They SHALL NOT start a new
+deployment deadline or apply a single-read timeout to the compound transaction.
+Connections and prerequisite reads SHALL retain their request timeout. Missing
+confirmation after dispatch SHALL remain unknown and blocking, with a finite
+diagnostic cause that does not expose commands, credentials or remote output.
+
+#### Scenario: Transaction exceeds an individual request timeout
+
+- **WHEN** individual prerequisite reads complete within their request limits and the compound transaction completes before the original deployment deadline
+- **THEN** the transaction may return its verified receipt without changing the caller's deadline or retrying the action.
+
+#### Scenario: Transaction confirmation is lost
+
+- **WHEN** cancellation, deadline expiry, transport failure or an invalid response prevents confirmation
+- **THEN** deployment retains the saved request and reports an unknown blocking result with a safe cause.
+- **AND** explicit resume inspects that exact transaction and current prerequisites without a configuration fallback; missing or partial state does not authorize replay.
+
 ### Requirement: DPF host-network shadow fidelity
 
 Host-network preflight SHALL provide the qualified Netplan generator with the

@@ -94,6 +94,10 @@ func collectHBN(ctx context.Context, r config.Request, report *inventory.Report,
 	additionalChecks = append(additionalChecks, bootstrapChecks...)
 	inv.HBN.Management.TenantClusters = tenantFacts
 	inv.HBN.Management.Issues = append(inv.HBN.Management.Issues, projectTenantIssues(provisioning, tenantFacts)...)
+	// Retained authorization binds current access and HBN intent before the
+	// final publication canonicalization. All scope inputs are now collected;
+	// never compare the retained scope with an unfinished or inherited digest.
+	inv.ScopeDigest = ScopeDigest(inv)
 	additionalChecks = append(additionalChecks, hbnPermissionChecks(ctx, r, inv, deps.HBNPermissions)...)
 	if r.HBNGeneration != nil {
 		for _, sw := range inv.HBN.Switches {

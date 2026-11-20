@@ -14,6 +14,7 @@ import (
 	"github.com/nvidia/k8s-launch-kit/pkg/dpf/app"
 	"github.com/nvidia/k8s-launch-kit/pkg/dpf/deployment"
 	"github.com/nvidia/k8s-launch-kit/pkg/dpf/hbn"
+	"github.com/nvidia/k8s-launch-kit/pkg/dpf/validation"
 	apperrors "github.com/nvidia/k8s-launch-kit/pkg/errors"
 	"github.com/nvidia/k8s-launch-kit/pkg/target"
 	"github.com/nvidia/k8s-launch-kit/pkg/ui"
@@ -80,7 +81,7 @@ func (d deployDriver) Bind(inv target.Invocation) (target.Operation, error) {
 		}
 		ctx = ui.WithOutput(ctx, progress)
 		result, err := app.Deploy(ctx, app.DeploymentRequest{
-			Inventory: r.Inventory, UserConfig: r.UserConfig, DeploymentFiles: r.DeploymentFiles, Resume: resume,
+			Inventory: r.Inventory, UserConfig: r.UserConfig, DeploymentFiles: r.DeploymentFiles, Resume: resume, Progress: validationProgress(progress),
 		})
 		if result == nil {
 			return preparationError(err)
@@ -131,6 +132,20 @@ func writeDeploymentResult(request DeployRequest, format string, result deployme
 	if result.Operation != nil {
 		if _, err := fmt.Fprintf(request.Stdout, "Operation: %s\n", result.Operation.String()); err != nil {
 			return err
+		}
+	}
+	if result.Validation != nil {
+		accepted := result.Validation
+		if _, err := fmt.Fprintf(request.Stdout, "Full validation: %s\nHTML report: %s %s\n", accepted.Verdict, accepted.Report.Status, accepted.Report.Path); err != nil {
+			return err
+		}
+		for _, row := range accepted.Checks {
+			if row.Outcome.State == validation.Passed || row.Outcome.State == validation.Skipped {
+				continue
+			}
+			if _, err := fmt.Fprintf(request.Stdout, "%s: %s: %s %s\n", row.Outcome.State, row.Subject, row.Outcome.Summary, row.Outcome.Action); err != nil {
+				return err
+			}
 		}
 	}
 	if failure != nil {

@@ -26,6 +26,7 @@ func TestCollectHBNUsesPermissionObserverWithCurrentInventory(t *testing.T) {
 	request := config.Request{DPFNamespace: "selected-dpf", HBN: &profile}
 	request.Input.Site.Inventory = previous
 	current := authorizationTestInventory("https://current.example.invalid", "current-uid")
+	current.ScopeDigest = "stale-scope-must-be-replaced"
 	currentManagementBefore := *current.Management
 	previousBefore := *previous
 	report := &inventory.Report{
@@ -46,6 +47,9 @@ func TestCollectHBNUsesPermissionObserverWithCurrentInventory(t *testing.T) {
 		}
 		if gotCurrent.HBN == nil || gotCurrent.HBN.Management == nil {
 			t.Fatal("permission observer ran before the HBN management projection was available")
+		}
+		if gotCurrent.ScopeDigest == "" || gotCurrent.ScopeDigest != ScopeDigest(gotCurrent) {
+			t.Fatal("permission observer received an unfinished or stale current scope")
 		}
 		return []inventory.Check{callerPermissionCheck("dpf.hbn.management.caller-rbac.role.create", "passed")}
 	}})
