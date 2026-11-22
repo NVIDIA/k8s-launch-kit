@@ -120,7 +120,11 @@ func Collect(ctx context.Context, r config.Request, runID string, deps Dependenc
 			}
 			if r.HBN != nil {
 				output.Info("[CHECK] Management cluster: inspect DPF installation and provisioning APIs")
-				snapshot := ObserveProvisioning(ctx, mg, r.DPFNamespace)
+				releaseVersion := ""
+				if r.Software != nil {
+					releaseVersion = r.Software.Version
+				}
+				snapshot := ObserveProvisioning(ctx, mg, r.DPFNamespace, releaseVersion)
 				provisioning = &snapshot
 				output.Info("[DONE] Management cluster: DPF installation and provisioning API inspection")
 			}

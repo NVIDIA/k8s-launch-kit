@@ -73,6 +73,12 @@ func (f *hostNetworkFakeRemote) RunWithInput(ctx context.Context, stage, command
 	return f.Run(ctx, stage, command)
 }
 
+func (f *hostNetworkFakeRemote) RunWithInputTimeout(ctx context.Context, stage, command string, input []byte, timeout time.Duration) (string, error) {
+	ctx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
+	return f.RunWithInput(ctx, stage, command, input)
+}
+
 func TestHostNetworkCoordinatorGatesEffects(t *testing.T) {
 	for _, tc := range []struct {
 		name string
@@ -402,7 +408,9 @@ func boolPointer(value bool) *bool { return &value }
 func TestHostNetworkInspectUsesSeparateReadOnlyAction(t *testing.T) {
 	remote := &hostNetworkFakeRemote{snapshot: hostNetworkTestSnapshot()}
 	session := &hostNetworkSession{remote: remote}
-	_, err := session.configureAction(context.Background(), hostNetworkTestRequest(), "inspect")
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	_, err := session.configureAction(ctx, hostNetworkTestRequest(), "inspect")
 	if err != nil {
 		t.Fatal(err)
 	}

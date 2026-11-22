@@ -14,6 +14,7 @@ import (
 	"crypto/x509/pkix"
 	"encoding/json"
 	"encoding/pem"
+	"errors"
 	"fmt"
 	"io"
 	"math/big"
@@ -34,9 +35,11 @@ import (
 	"github.com/mitchellh/copystructure"
 	"github.com/nvidia/k8s-launch-kit/pkg/dpf/config"
 	"github.com/nvidia/k8s-launch-kit/pkg/dpf/discovery"
+	"github.com/nvidia/k8s-launch-kit/pkg/dpf/fabric"
 	"github.com/nvidia/k8s-launch-kit/pkg/dpf/generation"
 	"github.com/nvidia/k8s-launch-kit/pkg/dpf/inventory"
 	"github.com/nvidia/k8s-launch-kit/pkg/dpf/sshprobe"
+	"github.com/nvidia/k8s-launch-kit/pkg/dpf/validation"
 	"github.com/nvidia/k8s-launch-kit/pkg/ui"
 	authorizationv1 "k8s.io/api/authorization/v1"
 	corev1 "k8s.io/api/core/v1"
@@ -62,12 +65,17 @@ func (l *nativeRuntimeLimiter) Wait(ctx context.Context) error {
 }
 
 type nativeRuntimeHarness struct {
+	acceptanceProgress      validation.Progress
 	limiterWaits            atomic.Int64
 	t                       *testing.T
 	mu                      sync.Mutex
 	api                     *apiFixture
 	tenant                  *httptest.Server
 	fixture                 *runtimeStageFixture
+	systemArchive           []byte
+	listSelectors           map[string]map[string]bool
+	hostNetworkTargets      map[string]config.Target
+	physicalSnapshot        fabric.Snapshot
 	operation               *corev1.ConfigMap
 	access                  config.Request
 	inventory               *inventory.Inventory
@@ -92,6 +100,9 @@ type nativeRuntimeHarness struct {
 	driftAfterTraffic       bool
 	badPhysicalAfterTraffic bool
 	failTraffic             bool
+	failRuntimeImage        bool
+	cancelAfterPublication  bool
+	missingResource         string
 	drifted                 bool
 }
 
@@ -140,7 +151,7 @@ func nativeResourcePath(object *unstructured.Unstructured, plural string) string
 }
 
 func (h *nativeRuntimeHarness) seedManagement(object *unstructured.Unstructured) {
-	plurals := map[string]string{"TenantControlPlane": "tenantcontrolplanes", "Namespace": "namespaces", "Secret": "secrets", "Deployment": "deployments", "DPFOperatorConfig": "dpfoperatorconfigs", "DPUCluster": "dpuclusters", "DPUDiscovery": "dpudiscoveries", "DPUDevice": "dpudevices", "DPUNode": "dpunodes", "DPU": "dpus", "DPUSet": "dpusets", "DPUDeployment": "dpudeployments", "DPUFlavor": "dpuflavors", "BlueFieldSoftware": "bluefieldsoftwares", "DPUServiceTemplate": "dpuservicetemplates", "DPUServiceConfiguration": "dpuserviceconfigurations", "DPUServiceIPAM": "dpuserviceipams", "DPUServiceInterface": "dpuserviceinterfaces", "DPUService": "dpuservices", "DPUServiceChain": "dpuservicechains", "CustomResourceDefinition": "customresourcedefinitions", "Service": "services", "ConfigMap": "configmaps", "DaemonSet": "daemonsets"}
+	plurals := map[string]string{"TenantControlPlane": "tenantcontrolplanes", "Namespace": "namespaces", "Secret": "secrets", "Deployment": "deployments", "DPFOperatorConfig": "dpfoperatorconfigs", "DPUCluster": "dpuclusters", "DPUDiscovery": "dpudiscoveries", "DPUDevice": "dpudevices", "DPUNode": "dpunodes", "DPU": "dpus", "DPUSet": "dpusets", "DPUDeployment": "dpudeployments", "DPUFlavor": "dpuflavors", "BlueFieldSoftware": "bluefieldsoftwares", "DPUServiceTemplate": "dpuservicetemplates", "DPUServiceConfiguration": "dpuserviceconfigurations", "DPUServiceIPAM": "dpuserviceipams", "DPUServiceInterface": "dpuserviceinterfaces", "DPUService": "dpuservices", "DPUServiceChain": "dpuservicechains", "CustomResourceDefinition": "customresourcedefinitions", "Service": "services", "ConfigMap": "configmaps", "DaemonSet": "daemonsets", "Pod": "pods", "ReplicaSet": "replicasets", "StatefulSet": "statefulsets", "Node": "nodes", "DPUServiceCredentialRequest": "dpuservicecredentialrequests", "DataStore": "datastores", "PersistentVolumeClaim": "persistentvolumeclaims", "PersistentVolume": "persistentvolumes", "StorageClass": "storageclasses"}
 	plural, ok := plurals[object.GetKind()]
 	if !ok {
 		h.t.Fatalf("unmapped seed kind %s", object.GetKind())
@@ -153,15 +164,24 @@ func (h *nativeRuntimeHarness) seedManagement(object *unstructured.Unstructured)
 		list := h.managementLists[listPath]
 		list.apiVersion = object.GetAPIVersion()
 		list.kind = object.GetKind()
-		list.items = append(list.items, *object.DeepCopy())
+		replaced := false
+		for i := range list.items {
+			if list.items[i].GetName() == object.GetName() && list.items[i].GetNamespace() == object.GetNamespace() {
+				list.items[i] = *object.DeepCopy()
+				replaced = true
+			}
+		}
+		if !replaced {
+			list.items = append(list.items, *object.DeepCopy())
+		}
 		h.managementLists[listPath] = list
 	}
 	switch object.GetKind() {
-	case "DPUSet", "DPU", "DPUService", "DPUServiceChain", "DPUServiceInterface":
+	case "DPUSet", "DPU", "DPUService", "DPUServiceChain", "DPUServiceInterface", "DPUServiceIPAM", "DPFOperatorConfig", "Pod", "ReplicaSet", "Deployment", "StatefulSet", "Secret":
 		appendList(scoped)
 	}
 	switch object.GetKind() {
-	case "DPUCluster", "DPUDiscovery", "DPUDevice", "DPUNode", "DPU", "DPUSet", "DPUDeployment":
+	case "DPUCluster", "DPUDiscovery", "DPUDevice", "DPUNode", "DPU", "DPUSet", "DPUDeployment", "Deployment", "DPFOperatorConfig":
 		appendList(strings.Replace(scoped, "/namespaces/"+object.GetNamespace(), "", 1))
 	}
 
@@ -211,6 +231,10 @@ func (h *nativeRuntimeHarness) serve(domain string, w http.ResponseWriter, r *ht
 		return
 	}
 	if domain == "tenant" {
+		if description := h.discovery["tenant "+path]; description != nil {
+			_ = json.NewEncoder(w).Encode(description)
+			return
+		}
 		switch path {
 		case "/version":
 			_ = json.NewEncoder(w).Encode(map[string]string{"gitVersion": "v1.35.6"})
@@ -242,7 +266,8 @@ func (h *nativeRuntimeHarness) serve(domain string, w http.ResponseWriter, r *ht
 	}
 	if list, ok := lists[path]; ok {
 		limit := r.URL.Query().Get("limit")
-		if limit != "64" && limit != "256" {
+		validBound := limit == "64" || limit == "256" || (domain == "management" && list.kind == "Secret" && limit == "") || (domain == "management" && list.kind == "Deployment" && limit == "2")
+		if !validBound {
 			h.t.Errorf("unexpected list bound %s %s limit=%q", domain, path, limit)
 		}
 		if r.URL.Query().Get("continue") != "" {
@@ -257,7 +282,14 @@ func (h *nativeRuntimeHarness) serve(domain string, w http.ResponseWriter, r *ht
 		if domain == "management" && (list.kind == "DPUServiceInterface" || list.kind == "DPUService" && selectorText != "") {
 			expectedSelector = labels.Set{activationParentLabel: h.fixture.prepared.execution.plan.Intent().Namespace + "_" + h.fixture.client.deployment.GetName(), hbnServiceReferenceLabel: hbnContainerName}.AsSelector().String()
 		}
-		if selectorText != expectedSelector || r.URL.Query().Get("fieldSelector") != "" {
+		allowed := selectorText == expectedSelector
+		if selectorText == "" {
+			allowed = true
+		} // Canonical validation lists the complete owned membership.
+		if h.listSelectors[domain+" "+path][selectorText] {
+			allowed = true
+		}
+		if !allowed || r.URL.Query().Get("fieldSelector") != "" {
 			h.t.Errorf("wrong native selector %s %s got=%q expected=%q", domain, path, selectorText, expectedSelector)
 		}
 		selector, err := labels.Parse(selectorText)
@@ -273,7 +305,9 @@ func (h *nativeRuntimeHarness) serve(domain string, w http.ResponseWriter, r *ht
 		_ = json.NewEncoder(w).Encode(result)
 		return
 	}
-	h.t.Errorf("unseeded native read %s %s %s", domain, r.Method, path)
+	if path != h.missingResource {
+		h.t.Errorf("unseeded native read %s %s %s", domain, r.Method, path)
+	}
 	w.WriteHeader(http.StatusNotFound)
 	_ = json.NewEncoder(w).Encode(&metav1.Status{TypeMeta: metav1.TypeMeta{APIVersion: "v1", Kind: "Status"}, Status: metav1.StatusFailure, Reason: metav1.StatusReasonNotFound, Code: 404})
 }
@@ -311,12 +345,19 @@ func nativeTenantTLS(t *testing.T, handler http.Handler) (*httptest.Server, []by
 }
 
 func newNativeRuntimeHarness(t *testing.T) *nativeRuntimeHarness {
+	return newNativeRuntimeHarnessForSerials(t, []string{"SERIAL-A", "SERIAL-B"})
+}
+
+func newNativeRuntimeHarnessForSerials(t *testing.T, serials []string) *nativeRuntimeHarness {
 	t.Helper()
-	h := &nativeRuntimeHarness{t: t, managementGets: map[string]any{}, managementLists: map[string]nativeRuntimeList{}, tenantGets: map[string]any{}, tenantLists: map[string]nativeRuntimeList{}, discovery: map[string]*metav1.APIResourceList{}, expectedPermissions: map[string]bool{}, permissions: map[string]int{}, calls: map[string]int{}}
-	h.api = newAPIFixture(t, func(w http.ResponseWriter, r *http.Request) { h.serve("management", w, r) }, metav1.APIResource{Name: "secrets", Kind: "Secret", Namespaced: true})
-	input := softwareStageGenerationInputs(t, []string{"SERIAL-A", "SERIAL-B"})
+	h := &nativeRuntimeHarness{t: t, managementGets: map[string]any{}, managementLists: map[string]nativeRuntimeList{}, tenantGets: map[string]any{}, tenantLists: map[string]nativeRuntimeList{}, discovery: map[string]*metav1.APIResourceList{}, expectedPermissions: map[string]bool{}, permissions: map[string]int{}, calls: map[string]int{}, listSelectors: map[string]map[string]bool{}}
+	h.api = newAPIFixture(t, func(w http.ResponseWriter, r *http.Request) { h.serve("management", w, r) }, metav1.APIResource{Name: "secrets", Kind: "Secret", Namespaced: true}, metav1.APIResource{Name: "pods", Kind: "Pod", Namespaced: true}, metav1.APIResource{Name: "services", Kind: "Service", Namespaced: true})
+	input := softwareStageGenerationInputs(t, serials)
 	input.Management = h.api.expected
 	input.Operator.KubernetesVersion = "v1.35.6"
+	physicalRequest, physicalInventory, physicalSnapshot, physicalSource := nativeAcceptancePhysicalInputs(t, input)
+	h.physicalSnapshot = physicalSnapshot
+	input.SourceConfig = physicalSource
 	retained, err := generateFixtureBundle(input)
 	if err != nil {
 		t.Fatal(err)
@@ -326,13 +367,27 @@ func newNativeRuntimeHarness(t *testing.T) *nativeRuntimeHarness {
 		t.Fatal(err)
 	}
 	base := newActivationIntegrationFixtureFromExecution(t, execution, false)
-	enrichHostNetworkFixtureIdentities(t, &base)
+	base.request = physicalRequest
+	base.inventory, err = cloneInventory(physicalInventory)
+	if err != nil {
+		t.Fatal(err)
+	}
+	base.hosts = base.inventory.Hosts
+	base.host = base.hosts[0]
+	for i := range base.prepared.selected {
+		for _, target := range physicalRequest.Targets {
+			if target.Role == "dpus" && target.Endpoint == base.prepared.selected[i].target.Endpoint {
+				base.prepared.selected[i].target = target
+			}
+		}
+	}
 	// One source DPUCluster satisfies both retained ownership and controller readiness.
 	expected, wantedCluster, err := tenantPlanInputs(execution.plan)
 	if err != nil {
 		t.Fatal(err)
 	}
 	sources := base.client.sources.sources
+	_ = unstructured.SetNestedMap(sources.observed.TenantControlPlane.Object, map[string]any{}, "spec", "addons", "kubeProxy")
 	sources.observed.DPUCluster = base.client.base.resources[tenantStageKey(wantedCluster)].DeepCopy()
 	bindTenantSources(t, expected, &sources)
 	// Tenant is dialed through the production TLS/auth construction using its saved VIP.
@@ -373,7 +428,14 @@ func newNativeRuntimeHarness(t *testing.T) *nativeRuntimeHarness {
 	snapshot.CIDRPool.SetGeneration(1)
 	f := runtimeStageFixtureFromActivated(t, base, activation, snapshot)
 	h.fixture = f
-	if len(op.state.Children) != 6 || len(op.state.Progress) != 2 || len(op.state.Resets) != 2 || len(op.state.Hosts) != 2 {
+	admitN3cHBNPods(f)
+	for i := range f.snapshot.TenantNodes {
+		labels := f.snapshot.TenantNodes[i].GetLabels()
+		labels["svc.dpu.nvidia.com/dpuservicechain-version"] = f.client.deployment.GetName() + "-current"
+		labels[corev1.LabelHostname] = f.activation.selected[i].dpuName
+		f.snapshot.TenantNodes[i].SetLabels(labels)
+	}
+	if len(op.state.Children) != 3*len(serials) || len(op.state.Progress) != len(serials) || len(op.state.Resets) != len(serials) || len(op.state.Hosts) != len(serials) {
 		t.Fatal("native fixture checkpoint lacks completed lifecycle")
 	}
 	for _, r := range op.state.Resets {
@@ -392,7 +454,7 @@ func newNativeRuntimeHarness(t *testing.T) *nativeRuntimeHarness {
 	for gv, resources := range base.client.operator.resources {
 		h.discovery["/apis/"+gv] = &metav1.APIResourceList{GroupVersion: gv, APIResources: resources}
 	}
-	h.discovery["/apis/apps/v1"] = &metav1.APIResourceList{GroupVersion: "apps/v1", APIResources: []metav1.APIResource{{Name: "deployments", Kind: "Deployment", Namespaced: true}, {Name: "daemonsets", Kind: "DaemonSet", Namespaced: true}}}
+	h.discovery["/apis/apps/v1"] = &metav1.APIResourceList{GroupVersion: "apps/v1", APIResources: []metav1.APIResource{{Name: "deployments", Kind: "Deployment", Namespaced: true}, {Name: "daemonsets", Kind: "DaemonSet", Namespaced: true}, {Name: "replicasets", Kind: "ReplicaSet", Namespaced: true}, {Name: "statefulsets", Kind: "StatefulSet", Namespaced: true}}}
 	for _, object := range base.client.operator.crds {
 		h.seedManagement(object)
 	}
@@ -468,7 +530,11 @@ func newNativeRuntimeHarness(t *testing.T) *nativeRuntimeHarness {
 			if child.GetName() == "hbn-workload" {
 				child = f.snapshot.CIDRPool.DeepCopy()
 			} else {
-				_ = unstructured.SetNestedSlice(child.Object, []any{map[string]any{"nodeName": "tenant-node-a", "prefix": "10.0.124.0/32"}, map[string]any{"nodeName": "tenant-node-b", "prefix": "10.0.124.1/32"}}, "status", "allocations")
+				rows := []any{}
+				for i, node := range f.snapshot.TenantNodes {
+					rows = append(rows, map[string]any{"nodeName": node.GetName(), "prefix": fmt.Sprintf("10.0.124.%d/32", i)})
+				}
+				_ = unstructured.SetNestedSlice(child.Object, rows, "status", "allocations")
 			}
 		}
 		h.tenantGets[nativeResourcePath(child, plural)] = child
@@ -494,6 +560,7 @@ func newNativeRuntimeHarness(t *testing.T) *nativeRuntimeHarness {
 		host := &h.inventory.Hosts[i]
 		ip := fmt.Sprintf("192.0.2.%d", 10+i)
 		host.Runtime.VirtualMachine = new(bool)
+		host.Runtime.BootID = fmt.Sprintf("12345678-1234-1234-1234-123456789ab%d", i)
 		host.Runtime.SSHServerAddress = ip
 		host.Runtime.Network.Links = append(host.Runtime.Network.Links, inventory.NetworkLink{Name: "mgmt0", PCIAddress: "0000:35:00.0", PhysicalPFRoots: []string{"0000:35:00.0"}})
 		host.Runtime.Interfaces = []inventory.Interface{{Name: "mgmt0", Index: 2, Addresses: []string{ip + "/24"}}}
@@ -523,6 +590,9 @@ func newNativeRuntimeHarness(t *testing.T) *nativeRuntimeHarness {
 	h.access.Context = h.api.request.Context
 	h.access.RequestTimeout = 2 * time.Minute
 	h.access.Input.Site.Inventory = h.inventory
+	for i := range h.inventory.DPUs {
+		h.inventory.DPUs[i].InputRef = fmt.Sprintf("/discovery/dpus/%d", i)
+	}
 	// Explicit finite permission contract. No persistent effect is authorized by fixture routing.
 	for _, verb := range []string{"get", "create", "update"} {
 		name := h.operation.Name
@@ -550,14 +620,11 @@ func newNativeRuntimeHarness(t *testing.T) *nativeRuntimeHarness {
 	for _, verb := range []string{"get", "create"} {
 		h.allow("management", verb, "", "v1", "configmaps", "", namespace, "")
 	}
-	h.allow("management", "list", "svc.dpu.nvidia.com", "v1alpha1", "dpuserviceinterfaces", "", namespace, "")
-	h.allow("management", "get", "argoproj.io", "v1alpha1", "applications", "", execution.operatorNamespace, f.client.app.GetName())
-	h.allow("tenant", "list", "apps", "v1", "daemonsets", "", namespace, "")
-	h.allow("tenant", "list", "", "v1", "pods", "", namespace, "")
 	for _, pod := range f.pods {
 		h.allow("tenant", "get", "", "v1", "pods", "", namespace, pod.Name)
 		h.allow("tenant", "create", "", "v1", "pods", "exec", namespace, pod.Name)
 	}
+	h.seedAcceptanceResources()
 	return h
 }
 
@@ -579,7 +646,26 @@ func (r nativeNoReboot) ObserveExternal(context.Context, ActivationRequest, stri
 func (h *nativeRuntimeHarness) run() (RunResult, []byte, string, error) {
 	h.t.Helper()
 	dir := h.t.TempDir()
-	request := RunRequest{Resume: &OperationRef{Namespace: h.operation.Namespace, Name: h.operation.Name, UID: h.operation.UID}, Plan: h.fixture.prepared.execution.plan, Access: h.access, ReportPath: filepath.Join(dir, "report.jsonl"), ProbeJournalPath: filepath.Join(dir, "probes.json"), PollInterval: time.Millisecond, RequestTimeout: 2 * time.Minute, MaxSoftwareBytes: 1 << 20, Rebooter: nativeNoReboot{h: h}}
+	var publicationCancel context.CancelFunc
+	request := RunRequest{AcceptanceProgress: h.acceptanceProgress, Resume: &OperationRef{Namespace: h.operation.Namespace, Name: h.operation.Name, UID: h.operation.UID}, Plan: h.fixture.prepared.execution.plan, Access: h.access, ReportPath: filepath.Join(dir, "report.jsonl"), ProbeJournalPath: filepath.Join(dir, "probes.json"), PollInterval: time.Millisecond, RequestTimeout: 2 * time.Minute, MaxSoftwareBytes: 1 << 20, Rebooter: nativeNoReboot{h: h}}
+	destination, err := validation.PrepareReportDestination(h.t.TempDir(), filepath.Join(dir, "acceptance.html"), nil)
+	if err != nil {
+		h.t.Fatal(err)
+	}
+	publicationCalled := false
+	h.t.Cleanup(func() {
+		if !publicationCalled {
+			_ = destination.Close()
+		}
+	})
+	request.PublishAcceptance = func(result validation.Result) (validation.ReportDisposition, error) {
+		publicationCalled = true
+		disposition, err := validation.PublishReport(destination, result, validation.ReportMetadata{})
+		if h.cancelAfterPublication && publicationCancel != nil {
+			publicationCancel()
+		}
+		return disposition, err
+	}
 	request.VerifyChartSource = func(context.Context, *generation.Plan) (PreflightCheck, error) {
 		h.mu.Lock()
 		defer h.mu.Unlock()
@@ -590,6 +676,7 @@ func (h *nativeRuntimeHarness) run() (RunResult, []byte, string, error) {
 		h.t.Logf("native prerequisite phase=%s apiCalls=%d", phase, h.api.calls.Load())
 		copied, err := copystructure.Copy(h.inventory)
 		if err != nil {
+			h.t.Logf("private fixture copy cause: %v", err)
 			return PrerequisiteVerification{}, err
 		}
 		inv := copied.(*inventory.Inventory)
@@ -605,8 +692,27 @@ func (h *nativeRuntimeHarness) run() (RunResult, []byte, string, error) {
 		checks = append(checks, inventory.Check{ID: "dpf.hbn.management.enrollments", Subject: "selected DPUs", Vantage: "executor", RequiredPhase: "deploy", State: "failed", ReasonCode: "DPU_ALREADY_ENROLLED", Message: "Current enrolled objects require owned resume proof."}, inventory.Check{ID: "dpf.hbn.management.tenant-network", Subject: "tenant " + plan.Intent().Bootstrap.Tenant.Name + " network selection", Vantage: "management-cluster", RequiredPhase: "deploy", State: "unknown", ReasonCode: "TENANT_EXISTING_NETWORK_UNVERIFIED", Message: "Current endpoint requires owned resume proof."})
 		return PrerequisiteVerification{Inventory: inv, Checks: checks}, nil
 	}
-	transports := runTransports{
-		requestLimiter: &nativeRuntimeLimiter{RateLimiter: flowcontrol.NewFakeAlwaysRateLimiter(), waits: &h.limiterWaits},
+	transports := h.transports()
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Minute)
+	publicationCancel = cancel
+	defer cancel()
+	var output bytes.Buffer
+	ctx = ui.WithOutput(ctx, ui.NewWithWriter(&output))
+	result, err := runWithTransports(ctx, request, transports)
+	report, readErr := os.ReadFile(request.ReportPath)
+	if readErr != nil {
+		h.t.Fatal(readErr)
+	}
+	return result, report, output.String(), err
+}
+
+// transports substitutes only external read ports; the actual observer owns qualification.
+func (h *nativeRuntimeHarness) transports() runTransports {
+	return runTransports{
+		validationPhysical: h.acceptancePhysicalReaders(),
+		verifyHostNetwork:  h.verifyAcceptanceHostNetwork,
+		fetchSystemChart:   func(_ context.Context, _ string) ([]byte, error) { return bytes.Clone(h.systemArchive), nil },
+		requestLimiter:     &nativeRuntimeLimiter{RateLimiter: flowcontrol.NewFakeAlwaysRateLimiter(), waits: &h.limiterWaits},
 		resolveImage: func(_ context.Context, reference string, timeout time.Duration, _ http.RoundTripper) (hbnPodImageIdentity, error) {
 			if reference != h.fixture.image.Reference || timeout <= 0 {
 				return hbnPodImageIdentity{}, fmt.Errorf("changed retained image identity")
@@ -614,6 +720,9 @@ func (h *nativeRuntimeHarness) run() (RunResult, []byte, string, error) {
 			h.mu.Lock()
 			defer h.mu.Unlock()
 			h.imageReads++
+			if h.failRuntimeImage && h.imageReads > 1 {
+				return hbnPodImageIdentity{}, fmt.Errorf("runtime image metadata unavailable")
+			}
 			return h.fixture.image, nil
 		},
 		tenantDial: func(ctx context.Context, network, address string) (net.Conn, error) {
@@ -739,16 +848,6 @@ func (h *nativeRuntimeHarness) run() (RunResult, []byte, string, error) {
 			return result, nil
 		},
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Minute)
-	defer cancel()
-	var output bytes.Buffer
-	ctx = ui.WithOutput(ctx, ui.NewWithWriter(&output))
-	result, err := runWithTransports(ctx, request, transports)
-	report, readErr := os.ReadFile(request.ReportPath)
-	if readErr != nil {
-		h.t.Fatal(readErr)
-	}
-	return result, report, output.String(), err
 }
 
 func (h *nativeRuntimeHarness) assertNoReplay() {
@@ -779,21 +878,44 @@ func (h *nativeRuntimeHarness) assertNoReplay() {
 	if h.mutations != 0 || h.configureCalls != 0 || h.reboots != 0 || h.observations != 0 || h.chartReads != 0 {
 		h.t.Fatalf("native replay mutations/configure/reboots/observe/chart=%d/%d/%d/%d/%d", h.mutations, h.configureCalls, h.reboots, h.observations, h.chartReads)
 	}
+	// Exact-image failure prevents HBN Pod-exec authorization; independent host
+	// traffic remains observable and the image-failure case asserts that matrix.
 	for key := range h.expectedPermissions {
+		if h.failRuntimeImage && strings.HasPrefix(key, "tenant|") {
+			continue
+		}
 		if h.permissions[key] == 0 {
 			h.t.Errorf("required native permission not observed %s", key)
 		}
 	}
+	// Canonical validation observes these read-only regions directly instead of
+	// the retired scheduler's pre-emptive SSAR round trips.
+	namespace := h.fixture.prepared.execution.plan.Intent().Namespace
+	for _, key := range []string{
+		"management GET /apis/svc.dpu.nvidia.com/v1alpha1/namespaces/" + namespace + "/dpuserviceinterfaces",
+		"management GET " + nativeResourcePath(h.fixture.client.app, "applications"),
+		"tenant GET /apis/apps/v1/namespaces/" + namespace + "/daemonsets",
+		"tenant GET /api/v1/namespaces/" + namespace + "/pods",
+	} {
+		if h.calls[key] == 0 {
+			h.t.Errorf("required native read not observed %s", key)
+		}
+	}
+
 }
 
 func (h *nativeRuntimeHarness) assertFencedMatrix(result *HBNRuntimeResult) {
+	h.assertMatrix(result, true)
+}
+
+func (h *nativeRuntimeHarness) assertMatrix(result *HBNRuntimeResult, fenced bool) {
 	h.t.Helper()
 	if result == nil || len(result.BGP) != 2 || len(result.Routes) != 2 || len(result.Traffic) != 2 {
 		h.t.Fatal("incomplete native matrix")
 	}
 	bgp := map[string]bool{}
 	for _, r := range result.BGP {
-		if r.State != "passed" || !r.Fenced || (r.DPUSerial == "SERIAL-A" && r.HostInputRef != "host-input-a") || (r.DPUSerial == "SERIAL-B" && r.HostInputRef != "host-input-b") || r.ObservedASN != r.LocalASN || bgp[r.DPUSerial] {
+		if r.State != "passed" || r.Fenced != fenced || (r.DPUSerial == "SERIAL-A" && r.HostInputRef != "/discovery/hosts/0") || (r.DPUSerial == "SERIAL-B" && r.HostInputRef != "/discovery/hosts/1") || r.ObservedASN != r.LocalASN || bgp[r.DPUSerial] {
 			h.t.Fatalf("invalid fenced BGP row %+v", r)
 		}
 		bgp[r.DPUSerial] = true
@@ -803,7 +925,7 @@ func (h *nativeRuntimeHarness) assertFencedMatrix(result *HBNRuntimeResult) {
 	}
 	routes := map[string]string{}
 	for _, r := range result.Routes {
-		if r.State != "passed" || !r.Fenced {
+		if r.State != "passed" || r.Fenced != fenced {
 			h.t.Fatalf("invalid fenced route row %+v", r)
 		}
 		routes[r.DPUSerial+"/"+r.RemoteDPUSerial] = r.Prefix
@@ -813,21 +935,32 @@ func (h *nativeRuntimeHarness) assertFencedMatrix(result *HBNRuntimeResult) {
 	}
 	traffic := map[string]string{}
 	for _, r := range result.Traffic {
-		if !r.Fenced || r.Measurement.State != sshprobe.TrafficProbePassed {
+		if r.Fenced != fenced || r.Measurement.State != sshprobe.TrafficProbePassed {
 			h.t.Fatalf("invalid fenced traffic row %+v", r)
 		}
 		traffic[r.SourceDPUSerial+"/"+r.DestinationDPUSerial] = r.SourceHost + "/" + r.DestinationHost
 	}
-	if !reflect.DeepEqual(traffic, map[string]string{"SERIAL-A/SERIAL-B": "host-input-a/host-input-b", "SERIAL-B/SERIAL-A": "host-input-b/host-input-a"}) {
+	if !reflect.DeepEqual(traffic, map[string]string{"SERIAL-A/SERIAL-B": "/discovery/hosts/0//discovery/hosts/1", "SERIAL-B/SERIAL-A": "/discovery/hosts/1//discovery/hosts/0"}) {
 		h.t.Fatalf("changed traffic cohort %v", traffic)
 	}
 }
 
 func TestRunNativeCompletedTwoHostRuntime(t *testing.T) {
 	h := newNativeRuntimeHarness(t)
+	running, completed := map[validation.CheckID]bool{}, map[validation.CheckID]validation.State{}
+	h.acceptanceProgress = func(event validation.ProgressEvent) {
+		if event.Phase == validation.Running {
+			running[event.Check.ID] = true
+		} else {
+			if !running[event.Check.ID] {
+				t.Errorf("completion without live start for %s", event.Check.ID)
+			}
+			completed[event.Check.ID] = event.Outcome.State
+		}
+	}
 	result, report, output, err := h.run()
 	if err != nil {
-		t.Fatalf("native Run: %v\n%s", err, report)
+		t.Fatalf("native Run: %v\n%s", err, nativeAcceptanceDiagnostics(result))
 	}
 	if !result.TrafficValidated || result.State != RunStateValidated || result.LastCompletedStage != hbnRuntimeStage || result.Operation == nil || result.Operation.UID != h.operation.UID || result.HBNRuntime == nil || len(result.HBNRuntime.BGP) != 2 || len(result.HBNRuntime.Routes) != 2 || len(result.HBNRuntime.Traffic) != 2 {
 		t.Fatalf("native result=%+v", result)
@@ -835,13 +968,37 @@ func TestRunNativeCompletedTwoHostRuntime(t *testing.T) {
 	if len(h.commandRows) != 4 || len(h.trafficRows) != 2 || len(h.inspections) != 6 || h.imageReads != 2 {
 		t.Fatalf("native rows commands=%v traffic=%v inspections=%v image=%d", h.commandRows, h.trafficRows, h.inspections, h.imageReads)
 	}
+
+	if result.Validation == nil || result.Validation.Verdict != validation.VerdictPassed || result.Validation.Mode != validation.ModeFull || result.Validation.ExitCode() != 0 || result.Validation.Report.Status != validation.ReportPublished {
+		t.Fatalf("missing full acceptance: %s", nativeAcceptanceDiagnostics(result))
+	}
+	plan := h.fixture.prepared.execution.plan
+	compiled, _, compileErr := NewValidationObserver(plan.Bundle(), plan, h.access, nil, validation.ModeFull)
+	if compileErr != nil {
+		t.Fatal(compileErr)
+	}
+	if !reflect.DeepEqual(compiled.RuntimeScope(), result.Validation.Scope) || len(compiled.Checks()) != len(result.Validation.Checks) {
+		t.Fatal("Run acceptance changed standalone full coverage")
+	}
+	for _, spec := range compiled.Checks() {
+		if !running[spec.ID] || completed[spec.ID] != validation.Passed {
+			t.Errorf("missing current acceptance progress for %s: %v", spec.ID, completed[spec.ID])
+		}
+		if row := nativeAcceptanceRow(t, result, spec.ID); !reflect.DeepEqual(spec, row.CheckSpec) {
+			t.Fatalf("Run changed canonical obligation %s", spec.ID)
+		}
+	}
+	html, readErr := os.ReadFile(result.Validation.Report.Path)
+	if readErr != nil || len(html) == 0 {
+		t.Fatalf("canonical report missing: %v", readErr)
+	}
 	h.assertFencedMatrix(result.HBNRuntime)
 	lines := bytes.Split(bytes.TrimSpace(report), []byte("\n"))
 	var final executionEvent
 	if len(lines) == 0 || json.Unmarshal(lines[len(lines)-1], &final) != nil || final.Stage != "run" || final.Operation != "complete" || final.State != "passed" || final.ReasonCode != "HBN_RUNTIME_COHORT_VALIDATED" {
 		t.Fatal("missing final durable validated Run completion")
 	}
-	if !bytes.Contains(report, []byte("HBN_RUNTIME_COHORT_VALIDATED")) || !strings.Contains(output, "[PASS] HBN runtime: 2 DPUs, 2 remote routes and all 2 directed host pairs validated") {
+	if !bytes.Contains(report, []byte("HBN_RUNTIME_COHORT_VALIDATED")) || !strings.Contains(output, "Full DPF validation passed: resources, physical sources and every directed HBN runtime pair") {
 		t.Fatalf("final durable/UI evidence missing: %s", report)
 	}
 	h.assertNoReplay()
@@ -854,20 +1011,28 @@ func TestRunNativeRuntimeFinalPhysicalExitFences(t *testing.T) {
 			h.driftAfterTraffic = scenario == "pod-after-exit"
 			h.badPhysicalAfterTraffic = scenario == "physical-identity"
 			result, report, _, err := h.run()
-			want := "HBN_RUNTIME_FINAL_FENCE_FAILED"
-			if scenario == "physical-identity" {
-				want = "HBN_RUNTIME_PHYSICAL_EXIT_FAILED"
-			}
 			if scenario == "physical-identity" && !bytes.Contains(report, []byte("ENROLLMENT_BMC_IDENTITY_CHANGED")) {
 				t.Errorf("missing real BMC identity diagnostic")
 			}
 			if bytes.Contains(report, []byte("HBN_RUNTIME_COHORT_VALIDATED")) {
 				t.Error("failed final fence retained cohort validation")
 			}
-			if err == nil || !strings.Contains(string(report), want) || result.TrafficValidated || result.HBNRuntime == nil || len(result.HBNRuntime.BGP) != 2 || len(result.HBNRuntime.Routes) != 2 || len(result.HBNRuntime.Traffic) != 2 || !h.drifted {
-				t.Fatalf("native final fence result=%+v err=%v report=%s", result, err, report)
+			if err == nil || result.Validation == nil || result.Validation.ExitCode() == 0 || result.TrafficValidated || result.HBNRuntime == nil || len(result.HBNRuntime.BGP) != 2 || len(result.HBNRuntime.Routes) != 2 || len(result.HBNRuntime.Traffic) != 2 || !h.drifted {
+				t.Fatalf("native final fence err=%v %s", err, nativeAcceptanceDiagnostics(result))
 			}
-			h.assertFencedMatrix(result.HBNRuntime)
+			h.assertMatrix(result.HBNRuntime, false)
+			retained := 0
+			for _, row := range result.Validation.Checks {
+				if strings.HasPrefix(string(row.ID), "runtime/") && row.PriorOutcome != nil {
+					if row.PriorOutcome.State != validation.Passed || row.Outcome.State != validation.Unverified {
+						t.Fatalf("invalidated measurement lost evidence: %+v", row)
+					}
+					retained++
+				}
+			}
+			if retained != 8 {
+				t.Fatalf("final fence retained %d runtime measurements, expected eight", retained)
+			}
 			h.assertNoReplay()
 		})
 	}
@@ -901,4 +1066,181 @@ func TestRunNativeRuntimeFailedMeasurementRetriesWholeMatrix(t *testing.T) {
 		t.Fatal("retry reused exclusive report path")
 	}
 	h.assertNoReplay()
+}
+
+func TestRunNativeFullAcceptanceRequiresSystemResourceEvidence(t *testing.T) {
+	for _, scenario := range []string{"missing-addon-configuration", "wrong-cluster-cidr"} {
+		t.Run(scenario, func(t *testing.T) {
+			h := newNativeRuntimeHarness(t)
+			path := "/api/v1/namespaces/kube-system/configmaps/kube-proxy"
+			if scenario == "missing-addon-configuration" {
+				delete(h.tenantGets, path)
+				h.missingResource = path
+			} else {
+				object := h.tenantGets[path].(*corev1.ConfigMap).DeepCopy()
+				object.Data["config.conf"] = strings.Replace(object.Data["config.conf"], h.fixture.prepared.execution.plan.Intent().Bootstrap.PodCIDR, "10.255.0.0/16", 1)
+				h.tenantGets[path] = object
+			}
+			result, report, _, err := h.run()
+			if err == nil || result.TrafficValidated || result.State == RunStateValidated || result.Validation == nil || result.Validation.ExitCode() == 0 || result.LastCompletedStage == hbnRuntimeStage {
+				t.Fatalf("system defect accepted: err=%v %s", err, nativeAcceptanceDiagnostics(result))
+			}
+			row := nativeAcceptanceRow(t, result, "tenant/kube-proxy/configuration")
+			if row.Outcome.State != validation.Failed {
+				t.Fatalf("configuration defect lost: %+v", row)
+			}
+			for _, id := range []validation.CheckID{"tenant/kube-proxy/daemonset", "tenant/kube-proxy/device/SERIAL-A", "tenant/kube-proxy/device/SERIAL-B"} {
+				if row := nativeAcceptanceRow(t, result, id); row.Outcome.State != validation.Passed {
+					t.Fatalf("independent addon health suppressed: %+v", row)
+				}
+			}
+			// Healthy HBN still executes once, proving it cannot mask the resource defect.
+			h.assertFencedMatrix(result.HBNRuntime)
+			if len(h.commandRows) != 4 || len(h.trafficRows) != 2 || bytes.Contains(report, []byte("HBN_RUNTIME_COHORT_VALIDATED")) {
+				t.Fatalf("wrong failed-acceptance runtime/completion evidence: commands=%v traffic=%v", h.commandRows, h.trafficRows)
+			}
+			h.assertNoReplay()
+		})
+	}
+}
+
+func TestRunNativeRuntimeRequiresFreshImageAuthority(t *testing.T) {
+	h := newNativeRuntimeHarness(t)
+	h.failRuntimeImage = true
+	result, report, _, err := h.run()
+	if err == nil || result.TrafficValidated || result.Validation == nil || result.Validation.ExitCode() == 0 || h.imageReads != 2 || len(h.commandRows) != 0 || len(h.trafficRows) != 2 || bytes.Contains(report, []byte("HBN_RUNTIME_COHORT_VALIDATED")) {
+		t.Fatalf("early metadata substituted for current image authority: reads=%d commands=%v traffic=%v err=%v %s", h.imageReads, h.commandRows, h.trafficRows, err, nativeAcceptanceDiagnostics(result))
+	}
+	for _, id := range []validation.CheckID{validation.BGPCheckID("SERIAL-A"), validation.BGPCheckID("SERIAL-B"), validation.RouteCheckID(validation.DirectedDevicePair{Source: "SERIAL-A", Destination: "SERIAL-B"}), validation.RouteCheckID(validation.DirectedDevicePair{Source: "SERIAL-B", Destination: "SERIAL-A"})} {
+		if row := nativeAcceptanceRow(t, result, id); row.Outcome.State != validation.Unverified {
+			t.Fatalf("unverified image qualified HBN execution: %+v", row)
+		}
+	}
+	h.assertNoReplay()
+}
+
+func nativeAcceptanceRow(t *testing.T, result RunResult, id validation.CheckID) validation.CheckResult {
+	t.Helper()
+	if result.Validation != nil {
+		for _, row := range result.Validation.Checks {
+			if row.ID == id {
+				return row
+			}
+		}
+	}
+	t.Fatalf("missing canonical check %s", id)
+	return validation.CheckResult{}
+}
+
+func TestRunNativeCancellationAfterAcceptancePublication(t *testing.T) {
+	h := newNativeRuntimeHarness(t)
+	h.cancelAfterPublication = true
+	result, report, _, err := h.run()
+	if !errors.Is(err, context.Canceled) || result.TrafficValidated || result.State != RunStateFailed || result.Validation == nil || result.Validation.Verdict != validation.VerdictPassed || result.Validation.Report.Status != validation.ReportPublished || bytes.Contains(report, []byte("HBN_RUNTIME_COHORT_VALIDATED")) {
+		t.Fatalf("cancellation during publication accepted command completion: err=%v %s", err, nativeAcceptanceDiagnostics(result))
+	}
+	html, readErr := os.ReadFile(result.Validation.Report.Path)
+	if readErr != nil || len(html) == 0 {
+		t.Fatalf("published report lost after cancellation: %v", readErr)
+	}
+	h.assertFencedMatrix(result.HBNRuntime)
+	h.assertNoReplay()
+}
+
+func TestRunNativeStandaloneFullAcceptanceUsesSameCurrentState(t *testing.T) {
+	h := newNativeRuntimeHarness(t)
+	deployed, _, _, err := h.run()
+	if err != nil {
+		t.Fatalf("deployment baseline: %v %s", err, nativeAcceptanceDiagnostics(deployed))
+	}
+	h.assertNoReplay()
+	beforeCommands, beforeTraffic := len(h.commandRows), len(h.trafficRows)
+	operationReads := h.calls["management GET /api/v1/namespaces/"+h.operation.Namespace+"/configmaps/"+h.operation.Name]
+	plan := h.fixture.prepared.execution.plan
+	ports := h.transports()
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Minute)
+	defer cancel()
+	compiled, observer, err := compileValidationObserver(plan.Bundle(), plan, h.access, nil, validation.ModeFull)
+	if err != nil {
+		t.Fatal(err)
+	}
+	client, err := newAPIClient(ctx, h.access, plan.Intent().Management, plan.Intent().KubernetesVersion, nil, ports.tenantDial, ports.requestLimiter)
+	if err != nil {
+		t.Fatal(err)
+	}
+	observer.newManagement = func(ctx context.Context) (validationManagementReader, error) {
+		if err := client.VerifyIdentity(ctx); err != nil {
+			return nil, err
+		}
+		return client, nil
+	}
+	observer.physical = ports.validationPhysical
+	observer.fetchSystemChart = ports.fetchSystemChart
+	observer.runtime = validationRuntimeTransports{tenantDial: ports.tenantDial, requestLimiter: ports.requestLimiter, resolveImage: ports.resolveImage, readCommand: ports.readRuntimeCommand, probeTraffic: ports.probeTraffic, verifyHostNetwork: ports.verifyHostNetwork}
+	runner, err := validation.NewRunner(compiled, observer, validation.Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	standalone := runner.Run(ctx)
+	destination, err := validation.PrepareReportDestination(t.TempDir(), filepath.Join(t.TempDir(), "standalone.html"), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	disposition, err := validation.PublishReport(destination, standalone, validation.ReportMetadata{})
+	validation.ApplyReportPublication(&standalone, disposition, err)
+	if standalone.Verdict != validation.VerdictPassed || standalone.ExitCode() != 0 {
+		t.Fatalf("standalone on same state: %s", nativeAcceptanceDiagnostics(RunResult{Validation: &standalone}))
+	}
+	if !reflect.DeepEqual(standalone.Scope, deployed.Validation.Scope) || len(standalone.Checks) != len(deployed.Validation.Checks) {
+		t.Fatal("standalone/deployment full coverage differs")
+	}
+	for _, row := range standalone.Checks {
+		if deployedRow := nativeAcceptanceRow(t, deployed, row.ID); !reflect.DeepEqual(deployedRow.CheckSpec, row.CheckSpec) || deployedRow.Outcome.State != row.Outcome.State {
+			t.Fatalf("standalone/deployment obligation differs: %s", row.ID)
+		}
+	}
+	if len(h.commandRows)-beforeCommands != 4 || len(h.trafficRows)-beforeTraffic != 2 {
+		t.Fatal("standalone did not measure its own complete fresh matrix")
+	}
+	if h.calls["management GET /api/v1/namespaces/"+h.operation.Namespace+"/configmaps/"+h.operation.Name] != operationReads {
+		t.Fatal("standalone consumed operation history as authority")
+	}
+	h.assertNoReplay()
+}
+
+func TestRunNativeSingleHostCoverageCannotHideResourceFailure(t *testing.T) {
+	for _, badConfiguration := range []bool{false, true} {
+		t.Run(fmt.Sprintf("bad-configuration=%t", badConfiguration), func(t *testing.T) {
+			h := newNativeRuntimeHarnessForSerials(t, []string{"SERIAL-A"})
+			if badConfiguration {
+				path := "/api/v1/namespaces/kube-system/configmaps/kube-proxy"
+				current := h.tenantGets[path].(*corev1.ConfigMap).DeepCopy()
+				current.Data["config.conf"] = strings.Replace(current.Data["config.conf"], h.fixture.prepared.execution.plan.Intent().Bootstrap.PodCIDR, "10.255.0.0/16", 1)
+				h.tenantGets[path] = current
+			}
+			result, report, _, err := h.run()
+			if result.TrafficValidated || result.State == RunStateValidated || result.Validation == nil || result.Validation.Report.Status != validation.ReportPublished || result.LastCompletedStage == hbnRuntimeStage || len(h.commandRows) != 1 || len(h.trafficRows) != 0 || bytes.Contains(report, []byte("HBN_RUNTIME_COHORT_VALIDATED")) {
+				t.Fatalf("invalid one-host acceptance: err=%v %s", err, nativeAcceptanceDiagnostics(result))
+			}
+			gap := nativeAcceptanceRow(t, result, "runtime/cross-host-coverage")
+			if gap.Outcome.State != validation.Unverified || gap.Outcome.Reason != validation.ReasonIncomplete {
+				t.Fatalf("one-host coverage gap lost: %+v", gap)
+			}
+			if badConfiguration {
+				if err == nil || result.State != RunStateFailed || result.Validation.Verdict != validation.VerdictFailed {
+					t.Fatalf("one-host coverage concealed unrelated failure: err=%v %s", err, nativeAcceptanceDiagnostics(result))
+				}
+			} else {
+				if err != nil || result.State != RunStateProvisioned || result.Validation.Verdict != validation.VerdictIncomplete {
+					t.Fatalf("one-host lifecycle compatibility lost: err=%v %s", err, nativeAcceptanceDiagnostics(result))
+				}
+				for _, row := range result.Validation.Checks {
+					if row.Required && row.ID != gap.ID && row.Outcome.State != validation.Passed {
+						t.Fatalf("unexpected runnable one-host failure: %+v", row)
+					}
+				}
+			}
+			h.assertNoReplay()
+		})
+	}
 }

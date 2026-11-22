@@ -31,6 +31,7 @@ import (
 	"github.com/nvidia/k8s-launch-kit/pkg/dpf/discovery"
 	"github.com/nvidia/k8s-launch-kit/pkg/dpf/generation"
 	"github.com/nvidia/k8s-launch-kit/pkg/dpf/inventory"
+	"github.com/nvidia/k8s-launch-kit/pkg/dpf/validation"
 	"golang.org/x/crypto/ssh"
 	"golang.org/x/crypto/ssh/knownhosts"
 )
@@ -99,7 +100,7 @@ func TestRunPersistsPrerequisiteFailureBeforeManagementEffects(t *testing.T) {
 	called := false
 	target := config.Target{Role: "dpus", Endpoint: "https://192.0.2.10:443", InputRef: "dpu-input"}
 	var request RunRequest
-	request = RunRequest{
+	request = RunRequest{PublishAcceptance: testAcceptancePublisher(t),
 		Plan:       plan,
 		Access:     config.Request{Targets: []config.Target{target}, Kubeconfig: api.request.Kubeconfig, Context: api.request.Context},
 		ReportPath: reportPath, ProbeJournalPath: probePath,
@@ -194,7 +195,7 @@ func TestRunPrerequisitesPreserveResolvedSwitchAccessAndIsolateInputs(t *testing
 			called := false
 			ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
 			defer cancel()
-			_, runErr := runWithTransports(ctx, RunRequest{
+			_, runErr := runWithTransports(ctx, RunRequest{PublishAcceptance: testAcceptancePublisher(t),
 				Plan: plan, Access: access,
 				ReportPath: filepath.Join(root, "run.jsonl"), ProbeJournalPath: filepath.Join(root, "probe.jsonl"),
 				VerifyPrerequisites: func(_ context.Context, observed config.Request, _ *generation.Plan, _ PrerequisitePhase) (PrerequisiteVerification, error) {
@@ -523,17 +524,26 @@ func (f *runtimeCloseFailFile) Close() error {
 }
 
 func TestRunRuntimeFinalDurabilityGate(t *testing.T) {
-	for _, scenario := range []string{"validated", "one-host-unmeasured", "stage-failed", "result-sync-failed", "report-close-failed", "probe-close-failed"} {
+	for _, scenario := range []string{"validated", "one-host-unmeasured", "stage-failed", "result-sync-failed", "report-close-failed", "probe-close-failed", "missing-acceptance", "one-host-hidden-failure"} {
 		t.Run(scenario, func(t *testing.T) {
 			runtime := &HBNRuntimeResult{State: "passed", TrafficValidated: true, BGP: []HBNBGPResult{{DPUSerial: "SERIAL-A", State: "passed", Fenced: true}}}
 			result := RunResult{State: RunStateFailed, LastCompletedStage: hbnRuntimeStage, TrafficValidated: true, HBNRuntime: runtime,
+				Validation:     &validation.Result{Mode: validation.ModeFull, Verdict: validation.VerdictPassed, Scope: validation.RuntimeScope{Hosts: []validation.HostID{"SERIAL-A", "SERIAL-B"}}, Report: validation.ReportDisposition{Status: validation.ReportPublished}},
 				HostNetworking: []HostWorkloadNetworkResult{{DPUSerial: "SERIAL-A", LeaseReverified: true}}, Activation: &ActivationSummary{DPUDeploymentUID: "retained-deployment"}}
 			memory := &managementMemoryFile{}
 			journal := &executionJournal{file: memory, digest: "retained-bundle"}
 			closeProbe := func() error { return nil }
 			var stageErr error
 			switch scenario {
-			case "one-host-unmeasured":
+			case "missing-acceptance":
+				result.Validation = nil
+			case "one-host-unmeasured", "one-host-hidden-failure":
+				result.Validation.Verdict = validation.VerdictIncomplete
+				result.Validation.Scope.Hosts = []validation.HostID{"SERIAL-A"}
+				result.Validation.Checks = []validation.CheckResult{{CheckSpec: validation.CheckSpec{ID: "runtime/cross-host-coverage", Required: true}, Outcome: validation.Outcome{State: validation.Unverified, Reason: validation.ReasonIncomplete}}}
+				if scenario == "one-host-hidden-failure" {
+					result.Validation.Checks = append(result.Validation.Checks, validation.CheckResult{CheckSpec: validation.CheckSpec{ID: "tenant/kube-proxy", Required: true}, Outcome: validation.Outcome{State: validation.Failed}})
+				}
 				result.TrafficValidated = false
 				runtime.TrafficValidated = false
 				runtime.State = "unmeasured"

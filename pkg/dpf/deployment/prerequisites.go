@@ -155,6 +155,7 @@ func (c *APIClient) checkManagementPreflight(ctx context.Context, plan preflight
 	for _, workload := range pinnedHBNWorkloads(plan.overrides, plan.requireNFDWorker) {
 		result.Checks = append(result.Checks, c.checkPreflightWorkload(ctx, workload))
 	}
+	result.Checks = append(result.Checks, c.checkKamajiCompatibility(ctx, plan.overrides.Kamaji, plan.intent.Release))
 	result.Checks = append(result.Checks, c.checkTenantStorage(ctx, plan.overrides.Kamaji))
 	result.Checks = append(result.Checks, c.checkCertManagerWebhookCA(ctx, plan.overrides.CertManager))
 	result.Checks = append(result.Checks, c.checkArgoApplicationScope(ctx, plan.operatorNamespace, plan.overrides.ArgoCD))

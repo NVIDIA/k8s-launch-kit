@@ -24,6 +24,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/types"
+	"k8s.io/client-go/util/flowcontrol"
 )
 
 func validationRuntimeChecks(plan *generation.Plan) ([]validation.CheckSpec, validation.RuntimeScope, error) {
@@ -102,6 +103,15 @@ type validationHostRequest struct {
 }
 
 type validationHostNetworkReader func(context.Context, config.Target, sshprobe.HostNetworkRequest, time.Duration) (sshprobe.HostNetworkValidation, error)
+
+// Both resource checks and runtime fences use the same bound read transport.
+func (o *validationObserver) observeHostNetwork(ctx context.Context, target config.Target, request sshprobe.HostNetworkRequest, timeout time.Duration) (sshprobe.HostNetworkValidation, error) {
+	read := o.runtime.verifyHostNetwork
+	if read == nil {
+		read = sshprobe.VerifyHostWorkloadNetwork
+	}
+	return read(ctx, target, request, timeout)
+}
 
 // openCurrentHostNetworkFence establishes current runtime and persistent state
 // from the freshly selected leases. It neither consumes nor emits effect history.
@@ -476,6 +486,17 @@ func (o *validationObserver) collectValidationCohort(ctx context.Context, manage
 	return validationCurrentCohort{graph: graphAfter, snapshot: after, leases: afterLeases, bindings: bindings, workloads: workloads}, nil
 }
 
+// validationRuntimeTransports contains only read/diagnostic I/O. Deployment
+// reuses its already-bound transports; standalone supplies the native defaults.
+type validationRuntimeTransports struct {
+	tenantDial        tenantDialContext
+	requestLimiter    flowcontrol.RateLimiter
+	resolveImage      hbnImageResolver
+	readCommand       hbnRuntimeRead
+	probeTraffic      hbnHostTrafficProbe
+	verifyHostNetwork validationHostNetworkReader
+}
+
 type validationRuntimeSession struct {
 	mu                sync.Mutex
 	scope             validation.RuntimeScope
@@ -512,7 +533,11 @@ func (o *validationObserver) OpenRuntime(ctx context.Context, _ validation.Progr
 	if err != nil {
 		return nil, validationRuntimeStageError(ctx, validation.StageRuntimeHostNetwork, err)
 	}
-	image, imageErr := resolveHBNRuntimeImage(ctx, hbnImageReference(o.desired.plan.Intent().Generation), o.request.RequestTimeout, nil)
+	resolveImage := o.runtime.resolveImage
+	if resolveImage == nil {
+		resolveImage = resolveHBNRuntimeImage
+	}
+	image, imageErr := resolveImage(ctx, hbnImageReference(o.desired.plan.Intent().Generation), o.request.RequestTimeout, nil)
 	if imageErr != nil {
 		image = hbnPodImageIdentity{}
 	}
@@ -527,11 +552,18 @@ func (o *validationObserver) OpenRuntime(ctx context.Context, _ validation.Progr
 	if err != nil {
 		return nil, validationRuntimeStageError(ctx, validation.StageRuntimeHostNetwork, err)
 	}
-	hostNetworkFence, err := openCurrentHostNetworkFence(ctx, hosts, o.request.RequestTimeout, sshprobe.VerifyHostWorkloadNetwork)
+	hostNetworkFence, err := openCurrentHostNetworkFence(ctx, hosts, o.request.RequestTimeout, o.observeHostNetwork)
 	if err != nil {
 		return nil, validationRuntimeStageError(ctx, validation.StageRuntimeHostNetwork, err)
 	}
-	session := &validationRuntimeSession{scope: o.runtimeScope, anchor: anchor, observe: observe, read: tenant.readValidationHBN, probe: sshprobe.ProbeHostWorkloadTraffic, hosts: map[validation.HostID]validationHostRequest{}, asns: map[validation.DeviceID]uint32{}, fabricASN: o.desired.plan.Intent().Networking.FabricASN, timeout: o.request.RequestTimeout, verifyPhysical: physicalFence, verifyHostNetwork: hostNetworkFence}
+	readCommand, probeTraffic := o.runtime.readCommand, o.runtime.probeTraffic
+	if readCommand == nil {
+		readCommand = tenant.readValidationHBN
+	}
+	if probeTraffic == nil {
+		probeTraffic = sshprobe.ProbeHostWorkloadTraffic
+	}
+	session := &validationRuntimeSession{scope: o.runtimeScope, anchor: anchor, observe: observe, read: readCommand, probe: probeTraffic, hosts: map[validation.HostID]validationHostRequest{}, asns: map[validation.DeviceID]uint32{}, fabricASN: o.desired.plan.Intent().Networking.FabricASN, timeout: o.request.RequestTimeout, verifyPhysical: physicalFence, verifyHostNetwork: hostNetworkFence}
 	for _, host := range hosts {
 		session.hosts[validation.HostID(host.lease.Serial)] = host
 	}

@@ -57,17 +57,18 @@ type ResourceSet[T any] struct {
 }
 
 type Snapshot struct {
-	TenantStorage   *TenantStorageResult        `json:"tenantStorage,omitempty" yaml:"tenantStorage,omitempty"`
-	Namespace       string                      `json:"namespace" yaml:"namespace"`
-	ObservedAt      time.Time                   `json:"observedAt" yaml:"observedAt"`
-	Deployments     ResourceSet[Deployment]     `json:"deployments" yaml:"deployments"`
-	OperatorConfigs ResourceSet[OperatorConfig] `json:"operatorConfigs" yaml:"operatorConfigs"`
-	DPUClusters     ResourceSet[DPUCluster]     `json:"dpuClusters" yaml:"dpuClusters"`
-	DPUDevices      ResourceSet[DPUDevice]      `json:"dpuDevices" yaml:"dpuDevices"`
-	DPUs            ResourceSet[DPU]            `json:"dpus" yaml:"dpus"`
-	StorageClasses  ResourceSet[StorageClass]   `json:"storageClasses" yaml:"storageClasses"`
-	CRDs            []CRD                       `json:"crds" yaml:"crds"`
-	Issues          []Issue                     `json:"issues,omitempty" yaml:"issues,omitempty"`
+	KamajiCompatibility *KamajiCompatibilityResult  `json:"kamajiCompatibility,omitempty" yaml:"kamajiCompatibility,omitempty"`
+	TenantStorage       *TenantStorageResult        `json:"tenantStorage,omitempty" yaml:"tenantStorage,omitempty"`
+	Namespace           string                      `json:"namespace" yaml:"namespace"`
+	ObservedAt          time.Time                   `json:"observedAt" yaml:"observedAt"`
+	Deployments         ResourceSet[Deployment]     `json:"deployments" yaml:"deployments"`
+	OperatorConfigs     ResourceSet[OperatorConfig] `json:"operatorConfigs" yaml:"operatorConfigs"`
+	DPUClusters         ResourceSet[DPUCluster]     `json:"dpuClusters" yaml:"dpuClusters"`
+	DPUDevices          ResourceSet[DPUDevice]      `json:"dpuDevices" yaml:"dpuDevices"`
+	DPUs                ResourceSet[DPU]            `json:"dpus" yaml:"dpus"`
+	StorageClasses      ResourceSet[StorageClass]   `json:"storageClasses" yaml:"storageClasses"`
+	CRDs                []CRD                       `json:"crds" yaml:"crds"`
+	Issues              []Issue                     `json:"issues,omitempty" yaml:"issues,omitempty"`
 }
 
 type Condition struct {
@@ -434,11 +435,21 @@ func servedVersion(versions []CRDVersion) string {
 }
 
 func listUnstructured(ctx context.Context, resource dynamic.ResourceInterface, source string, issues *[]Issue) ([]unstructured.Unstructured, CollectionState) {
-	result := make([]unstructured.Unstructured, 0)
+	return boundedPages(ctx, source, issues, func(ctx context.Context, options metav1.ListOptions) ([]unstructured.Unstructured, string, error) {
+		page, err := resource.List(ctx, options)
+		if err != nil {
+			return nil, "", err
+		}
+		return page.Items, page.GetContinue(), nil
+	})
+}
+
+func boundedPages[T any](ctx context.Context, source string, issues *[]Issue, list func(context.Context, metav1.ListOptions) ([]T, string, error)) ([]T, CollectionState) {
+	result := make([]T, 0)
 	continuation := ""
 	seen := map[string]bool{}
 	for page := 0; page < maxPages; page++ {
-		items, err := resource.List(ctx, metav1.ListOptions{Limit: pageSize, Continue: continuation})
+		items, next, err := list(ctx, metav1.ListOptions{Limit: pageSize, Continue: continuation})
 		if err != nil {
 			*issues = append(*issues, issueForError(source, "", "", err))
 			state := CollectionUnavailable
@@ -452,16 +463,15 @@ func listUnstructured(ctx context.Context, resource dynamic.ResourceInterface, s
 			*issues = append(*issues, coverageIssue(source, "The resource collection reached its bounded item limit."))
 			return result, CollectionIncomplete
 		}
-		take := len(items.Items)
+		take := len(items)
 		if take > remaining {
 			take = remaining
 		}
-		result = append(result, items.Items[:take]...)
-		if take < len(items.Items) {
+		result = append(result, items[:take]...)
+		if take < len(items) {
 			*issues = append(*issues, coverageIssue(source, "The API returned more items than the bounded collection can retain."))
 			return result, CollectionIncomplete
 		}
-		next := items.GetContinue()
 		if next == "" {
 			return result, CollectionComplete
 		}

@@ -108,7 +108,10 @@ func observedReadyCondition(obj *unstructured.Unstructured, staleCode string) Re
 		return result("RESOURCE_GENERATION_MISSING", "The resource metadata generation is missing or invalid.")
 	}
 	observed, found, err := unstructured.NestedInt64(obj.Object, "status", "observedGeneration")
-	if err != nil || !found || observed <= 0 {
+	if err != nil || observed < 0 {
+		return result("RESOURCE_STATUS_INVALID", "The controller observed generation is malformed.")
+	}
+	if !found || observed == 0 {
 		return result(staleCode, "The controller has not reported a valid observed generation.")
 	}
 	if observed < generation {

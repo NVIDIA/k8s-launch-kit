@@ -365,3 +365,15 @@ func directoryNames(path string) []string {
 	}
 	return names
 }
+
+var _ = Describe("Shared validation publication outcome", func() {
+	It("preserves the measured verdict while failing unsuccessful output", func() {
+		result := validation.Result{Mode: validation.ModeFull, Verdict: validation.VerdictPassed}
+		validation.ApplyReportPublication(&result, validation.ReportDisposition{Status: validation.ReportFailed}, errors.New("private-publication-cause"))
+		Expect(result.Verdict).To(Equal(validation.VerdictPassed))
+		Expect(result.ExitCode()).NotTo(BeZero())
+		Expect(result.Checks).To(HaveLen(1))
+		Expect(result.Checks[0].ID).To(Equal(validation.CheckID("report/publication")))
+		Expect(result.Cause).To(HaveOccurred())
+	})
+})

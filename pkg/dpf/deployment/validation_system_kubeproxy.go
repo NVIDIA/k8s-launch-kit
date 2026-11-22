@@ -22,17 +22,29 @@ import (
 	sigsyaml "sigs.k8s.io/yaml"
 )
 
-// This current addon contract follows kubeadm's pinned v1.36.2 proxy manifest
-// builder (the Kubernetes module embedded in the selected Kamaji image), plus
-// the corroborated Kamaji ClusterRoleBinding controller anchor. It does not
-// assert equivalence with the unavailable private fork reconciliation source.
+// The addon contract follows the selected kubeadm proxy manifest builder and
+// Kamaji ClusterRoleBinding anchor. Configuration validity and Pod health are
+// independent: a configuration defect must not hide observable running Pods.
 func (o *validationObserver) observeValidationKubeProxy(ctx context.Context, management validationManagementReader, tenant *tenantClient, r *validationRecorder) error {
+	const parent validation.CheckID = "tenant/kube-proxy"
 	if tenant == nil {
-		r.recordError("tenant/kube-proxy", r.tenantDependencyError())
-		r.pendingDependents("tenant/kube-proxy/device/", "tenant/kube-proxy")
+		r.recordError(parent, r.tenantDependencyError())
+		r.kubeProxyDependents(parent)
 		return nil
 	}
-	returnErr := r.run("tenant/kube-proxy", func() error {
+	r.start(parent)
+	buffered := r.bufferCompletions()
+	reader := validationTenantResources{tenant: tenant}
+	var observed []*unstructured.Unstructured
+	read := func(api, kind, namespace, name string) (*unstructured.Unstructured, error) {
+		object, err := reader.Get(ctx, validationObject(api, kind, namespace, name))
+		if err == nil {
+			observed = append(observed, object)
+		}
+		return object, err
+	}
+	var binding rbacv1.ClusterRoleBinding
+	sourceErr := buffered.run("tenant/kube-proxy/source", func() error {
 		expected, _, err := tenantPlanInputs(o.desired.plan)
 		if err != nil {
 			return err
@@ -48,100 +60,156 @@ func (o *validationObserver) observeValidationKubeProxy(ctx context.Context, man
 		if err != nil || !found || len(addon) != 0 {
 			return validationFailure(validation.Unverified, validation.ReasonUnsupported, "Selected Kamaji kube-proxy addon is disabled or has unsupported overrides.")
 		}
-		reader := validationTenantResources{tenant: tenant}
-		roleObject, err := reader.Get(ctx, validationObject("rbac.authorization.k8s.io/v1", "ClusterRoleBinding", "", "kubeadm:node-proxier"))
+		roleObject, err := read("rbac.authorization.k8s.io/v1", "ClusterRoleBinding", "", "kubeadm:node-proxier")
 		if err != nil {
 			return err
 		}
-		var binding rbacv1.ClusterRoleBinding
 		if err := runtime.DefaultUnstructuredConverter.FromUnstructured(roleObject.Object, &binding); err != nil {
 			return err
 		}
 		if err := validationKubeProxyBinding(&binding); err != nil {
 			return err
 		}
-		accountObject, err := reader.Get(ctx, validationObject("v1", "ServiceAccount", metav1.NamespaceSystem, "kube-proxy"))
+		account, err := read("v1", "ServiceAccount", metav1.NamespaceSystem, "kube-proxy")
 		if err != nil {
 			return err
 		}
-		if !validationKubeProxyOwned(accountObject.GetOwnerReferences(), binding.UID) || accountObject.GetUID() == "" || accountObject.GetDeletionTimestamp() != nil {
+		if !validationKubeProxyOwned(account.GetOwnerReferences(), binding.UID) || account.GetUID() == "" || account.GetDeletionTimestamp() != nil {
 			return validationFailure(validation.Failed, validation.ReasonHealth, "Kube-proxy ServiceAccount does not belong to the selected addon anchor.")
 		}
-		configObject, err := reader.Get(ctx, validationObject("v1", "ConfigMap", metav1.NamespaceSystem, "kube-proxy"))
-		if err != nil {
-			return err
-		}
-		var config corev1.ConfigMap
-		if err := runtime.DefaultUnstructuredConverter.FromUnstructured(configObject.Object, &config); err != nil {
-			return err
-		}
-		endpoint, _, err := tenant.bootstrapCredentialSource(ctx)
-		if err != nil {
-			return err
-		}
-		if err := validationKubeProxyConfiguration(&config, o.desired.plan.Intent().Bootstrap.PodCIDR, endpoint); err != nil {
-			return err
-		}
-		current, err := reader.Get(ctx, validationObject("apps/v1", "DaemonSet", metav1.NamespaceSystem, "kube-proxy"))
-		if err != nil {
-			return err
-		}
-		if !validationKubeProxyOwned(current.GetOwnerReferences(), binding.UID) || current.GetUID() == "" || current.GetDeletionTimestamp() != nil {
-			return validationFailure(validation.Failed, validation.ReasonHealth, "Kube-proxy DaemonSet does not belong to the current addon anchor.")
-		}
-		expectedSet := validationExpectedKubeProxy(o.desired.plan.Intent().Bootstrap.TenantKubernetesVersion)
-		if !validationSystemWorkloadMatches(expectedSet, current) {
-			return validationFailure(validation.Failed, validation.ReasonHealth, "Kube-proxy image, command or functional Pod configuration differs from the selected addon recipe.")
-		}
-		set, err := validationDaemonSetFromObject(current)
-		if err != nil {
-			return err
-		}
-		nodes, err := o.validationSelectedTenantNodes(ctx, management, tenant)
-		if err != nil {
-			return err
-		}
-		if err := validationDaemonSetReady(set, len(nodes)); err != nil {
-			return err
-		}
-		owned, err := validationKubeProxyOwnedPods(ctx, tenant, set, nodes)
-		if err != nil {
-			return err
-		}
-		var coverageErr error
-		for serial := range nodes {
-			err := r.run(validation.CheckID("tenant/kube-proxy/device/"+serial), func() error {
-				pod := owned[serial]
-				if pod == nil {
-					return validationFailure(validation.Failed, validation.ReasonMissing, "Selected tenant Node requires exactly one current owned Ready kube-proxy Pod.")
-				}
-				if err := validationPodNetworkRequestsMatch(pod, &set.Spec.Template); err != nil {
-					return err
-				}
-				// The selected Kamaji TCP explicitly enables AlwaysPullImages.
-				if err := validationPodMatchesTemplate(pod, &set.Spec.Template.Spec, "DaemonSet", true); err != nil {
-					return err
-				}
-				return validationPodReady(pod, &set.Spec.Template.Spec)
-			})
-			coverageErr = validationPodCoverageError(coverageErr, err)
-		}
-		if coverageErr != nil {
-			return coverageErr
-		}
-
-		after, err := reader.Get(ctx, validationObject("apps/v1", "DaemonSet", metav1.NamespaceSystem, "kube-proxy"))
-		if err != nil {
-			return err
-		}
-		if !sameValidationSemantic(current, after) {
-			return fmt.Errorf("kube-proxy changed: %w", errValidationResourceChanged)
-		}
-		return tenant.VerifyIdentity(ctx)
+		return nil
 	})
-	r.pendingDependents("tenant/kube-proxy/device/", "tenant/kube-proxy")
-	if validationIdentityChanged(returnErr) {
-		return returnErr
+	var resultErr error
+	if sourceErr != nil {
+		resultErr = sourceErr
+		buffered.kubeProxyDependents("tenant/kube-proxy/source")
+	} else {
+		resultErr = buffered.run("tenant/kube-proxy/configuration", func() error {
+			object, err := read("v1", "ConfigMap", metav1.NamespaceSystem, "kube-proxy")
+			if err != nil {
+				return err
+			}
+			var config corev1.ConfigMap
+			if err := runtime.DefaultUnstructuredConverter.FromUnstructured(object.Object, &config); err != nil {
+				return err
+			}
+			endpoint, _, err := tenant.bootstrapCredentialSource(ctx)
+			if err != nil {
+				return err
+			}
+			return validationKubeProxyConfiguration(&config, o.desired.plan.Intent().Bootstrap.PodCIDR, endpoint)
+		})
+		var set *appsv1.DaemonSet
+		var nodes map[string]corev1.Node
+		setErr := buffered.run("tenant/kube-proxy/daemonset", func() error {
+			current, err := read("apps/v1", "DaemonSet", metav1.NamespaceSystem, "kube-proxy")
+			if err != nil {
+				return err
+			}
+			if !validationKubeProxyOwned(current.GetOwnerReferences(), binding.UID) || current.GetUID() == "" || current.GetDeletionTimestamp() != nil {
+				return validationFailure(validation.Failed, validation.ReasonHealth, "Kube-proxy DaemonSet does not belong to the current addon anchor.")
+			}
+			expected := validationExpectedKubeProxy(o.desired.plan.Intent().Bootstrap.TenantKubernetesVersion)
+			if !validationSystemWorkloadMatches(expected, current) {
+				return validationFailure(validation.Failed, validation.ReasonHealth, "Kube-proxy image, command or functional Pod configuration differs from the selected addon recipe.")
+			}
+			set, err = validationDaemonSetFromObject(current)
+			if err != nil {
+				return err
+			}
+			nodes, err = o.validationSelectedTenantNodes(ctx, management, tenant)
+			if err != nil {
+				return err
+			}
+			return validationDaemonSetReady(set, len(nodes))
+		})
+		resultErr = validationKubeProxyError(resultErr, setErr)
+		if set == nil || nodes == nil {
+			buffered.kubeProxyDependents("tenant/kube-proxy/daemonset")
+		} else {
+			owned, membershipErr := validationKubeProxyOwnedPods(ctx, tenant, set, nodes)
+			for _, device := range o.desired.plan.Intent().Devices {
+				podErr := buffered.run(validation.CheckID("tenant/kube-proxy/device/"+device.Serial), func() error {
+					if membershipErr != nil {
+						return membershipErr
+					}
+					pod := owned[device.Serial]
+					if pod == nil {
+						return validationFailure(validation.Failed, validation.ReasonMissing, "Selected tenant Node requires exactly one current owned Ready kube-proxy Pod.")
+					}
+					if err := validationPodNetworkRequestsMatch(pod, &set.Spec.Template); err != nil {
+						return err
+					}
+					// The selected Kamaji TCP explicitly enables AlwaysPullImages.
+					if err := validationPodMatchesTemplate(pod, &set.Spec.Template.Spec, "DaemonSet", true); err != nil {
+						return err
+					}
+					return validationPodReady(pod, &set.Spec.Template.Spec)
+				})
+				resultErr = validationKubeProxyError(resultErr, podErr)
+			}
+		}
+	}
+	// Recheck the observations used above before publishing any child result.
+	// ConfigMap data and RBAC subjects are not part of generic spec comparison.
+	closingErr := validationKubeProxySourcesCurrent(ctx, reader, observed)
+	if closingErr == nil {
+		closingErr = tenant.VerifyIdentity(ctx)
+	}
+	r.acceptBuffered(buffered, closingErr)
+	resultErr = validationKubeProxyError(resultErr, closingErr)
+	if resultErr == nil {
+		r.record(parent, validation.Passed, validation.ReasonNone, "Kube-proxy ownership, configuration, DaemonSet and selected DPU Pods satisfy the addon contract.", "")
+	} else {
+		r.recordError(parent, resultErr)
+	}
+	if validationIdentityChanged(resultErr) {
+		return resultErr
+	}
+	return nil
+}
+
+func validationKubeProxyError(previous, current error) error {
+	if validationIdentityChanged(current) {
+		return current
+	}
+	if validationIdentityChanged(previous) {
+		return previous
+	}
+	return validationPodCoverageError(previous, current)
+}
+
+// kubeProxyDependents names the missing prerequisite while preserving a
+// Pending state, so ordinary controller convergence remains eligible to poll.
+func (r *validationRecorder) kubeProxyDependents(parent validation.CheckID) {
+	state, reason := validation.Unverified, validation.ReasonDependency
+	if outcome, ok := r.outcomes[parent]; ok && outcome.State == validation.Pending {
+		state, reason = validation.Pending, validation.ReasonProgressing
+	}
+	for _, id := range r.order {
+		if !strings.HasPrefix(string(id), "tenant/kube-proxy/") || id == parent {
+			continue
+		}
+		if _, exists := r.outcomes[id]; !exists {
+			r.record(id, state, reason, "This check depends on "+string(parent)+".", "Resolve the named prerequisite and repeat validation.")
+		}
+	}
+}
+
+func validationKubeProxySourcesCurrent(ctx context.Context, reader validationTenantResources, observed []*unstructured.Unstructured) error {
+	for _, before := range observed {
+		after, err := reader.Get(ctx, before)
+		if err != nil {
+			return err
+		}
+		if !sameValidationSemantic(before, after) || !jsonEqual(before.GetOwnerReferences(), after.GetOwnerReferences()) {
+			return fmt.Errorf("kube-proxy %s changed: %w", before.GetKind(), errValidationResourceChanged)
+		}
+		for _, field := range []string{"data", "binaryData", "immutable", "roleRef", "subjects"} {
+			if !jsonEqual(before.Object[field], after.Object[field]) {
+				return fmt.Errorf("kube-proxy %s %s changed: %w", before.GetKind(), field, errValidationResourceChanged)
+			}
+		}
 	}
 	return nil
 }

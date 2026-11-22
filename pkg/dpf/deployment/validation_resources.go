@@ -294,7 +294,7 @@ func (o *validationObserver) openValidationTenant(ctx context.Context, managemen
 	if err := validationTenantReady(o.desired.rules.TenantReadiness(expected, sources.observed)); err != nil {
 		return nil, err
 	}
-	tenant, err := newTenantClient(ctx, o.desired.rules, management, expected, string(current.GetUID()), o.request.RequestTimeout, nil, nil)
+	tenant, err := newTenantClient(ctx, o.desired.rules, management, expected, string(current.GetUID()), o.request.RequestTimeout, o.runtime.tenantDial, o.runtime.requestLimiter)
 	if err != nil {
 		return nil, validationTenantConnectionError(ctx, err)
 	}

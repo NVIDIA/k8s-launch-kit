@@ -60,7 +60,7 @@ func verifyActivationControlResources(ctx context.Context, client activationCont
 		return activationBoundaryFailure(ctx, journal, diagnostic.ReasonCode, diagnostic.Message, diagnostic)
 	}
 	if err := verifyManagementBootstrap(ctx, client, verification.execution, verification.management); err != nil {
-		return activationBoundaryFailure(ctx, journal, "ACTIVATION_BOOTSTRAP_CHANGED", "Management bootstrap changed at the activation boundary.", err)
+		return activationBootstrapFailure(ctx, journal, err)
 	}
 	if err := validateWorkloadTargeting(ctx, client, verification.execution, tenant, verification.tenantUID, verification.selected, objects); err != nil {
 		return activationBoundaryFailure(ctx, journal, "ACTIVATION_WORKLOAD_TARGET_CHANGED", "The retained workload resources no longer resolve only to the selected tenant and device cohort.", err)

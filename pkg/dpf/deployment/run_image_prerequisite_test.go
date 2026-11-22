@@ -30,7 +30,7 @@ func retainedTestImageResolver(_ context.Context, reference string, _ time.Durat
 func imagePrerequisiteRunRequest(t *testing.T, plan *generation.Plan, prerequisites PrerequisiteVerifier) RunRequest {
 	t.Helper()
 	root := t.TempDir()
-	return RunRequest{Plan: plan, Access: config.Request{Kubeconfig: filepath.Join(root, "must-not-be-opened")},
+	return RunRequest{PublishAcceptance: testAcceptancePublisher(t), Plan: plan, Access: config.Request{Kubeconfig: filepath.Join(root, "must-not-be-opened")},
 		ReportPath: filepath.Join(root, "run.jsonl"), ProbeJournalPath: filepath.Join(root, "probes.json"),
 		VerifyPrerequisites: prerequisites,
 		VerifyChartSource: func(context.Context, *generation.Plan) (PreflightCheck, error) {
@@ -184,7 +184,7 @@ func TestRunImageMetadataAcceptsRetainedAnonymousRepositoryBeforeDiscovery(t *te
 	}
 }
 
-func TestEarlyImageMetadataSuccessDoesNotReplaceRuntimeRead(t *testing.T) {
+func TestRunEarlyImageMetadataSuccessPrecedesManagementAccess(t *testing.T) {
 	fixture := newRuntimeStageFixture(t, []string{"SERIAL-A", "SERIAL-B"})
 	calls := 0
 	resolver := func(_ context.Context, ref string, _ time.Duration, _ http.RoundTripper) (hbnPodImageIdentity, error) {
@@ -206,9 +206,5 @@ func TestEarlyImageMetadataSuccessDoesNotReplaceRuntimeRead(t *testing.T) {
 	if err == nil || !strings.Contains(err.Error(), "OPERATION_MANAGEMENT_UNMEASURED") || calls != 1 {
 		t.Fatalf("early read not established: calls=%d err=%v", calls, err)
 	}
-	fixture.transports.resolveImage = resolver
-	result, err := fixture.run(testJournal(fixture.prepared.execution))
-	if err == nil || calls != 2 || result.TrafficValidated || result.ReasonCode != "HBN_RUNTIME_IMAGE_IDENTITY_UNAVAILABLE" || fixture.commandReads != 0 || fixture.trafficReads != 0 {
-		t.Fatalf("runtime reused early metadata: calls=%d result=%+v err=%v", calls, result, err)
-	}
+	// The native Run acceptance fixture separately verifies a fresh second image read.
 }

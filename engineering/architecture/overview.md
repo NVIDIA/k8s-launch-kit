@@ -292,7 +292,7 @@ same-origin anonymous Bearer token exchange. Kubelet pull credentials are a
 separate authority. Each resume repeats this prerequisite, and runtime resolves
 metadata afresh; an early identity is not a future-pull or traffic receipt. It
 then refreshes prerequisites and runs management, tenant, enrollment, software,
-workload declarations, activation, host networking and native HBN runtime checks.
+workload declarations, activation, host networking and full canonical validation.
 It never enters a Host lifecycle service. The DPF root pipeline remains a
 capability rejection before client construction. Standalone DPF validation binds
 its own app service: pure retained preparation → immutable validation plan →
@@ -302,6 +302,25 @@ reset callbacks, install/apply methods or host-configuration authority. The
 consumer-owned `validation.Observer` and `RuntimeSession` interfaces separate
 resource polling from bounded runtime measurements. Host and DPF HTML share
 `validationreport` page rendering while preserving target-specific acceptance.
+
+Deployment acceptance composes the same immutable validation plan, observer and
+runner as standalone validation. A deployment-only decorator adds current
+operation receipt and physical verification; it does not run a second traffic
+matrix or replace validation outcomes. The historical HBN summary is projected
+from the canonical measurements. The application reserves an acceptance-report
+destination after validating inputs and before remote effects. Publication returns
+only its disposition, and final operation-record or output failures prevent a
+successful deployment result. A single-host `provisioned` result permits only the
+explicit cross-host coverage gap with all other required checks passing.
+
+Kamaji producer compatibility is a release-owned exception separate from the
+upstream component BOM. Discovery, deployment preflight and standalone validation
+call the same bounded management observer with explicit namespace and release.
+The observer resolves the trusted catalog rule and verifies the current controller
+rollout, process, ownership, image identity and platform. It does not upgrade this
+external prerequisite. Tenant kube-proxy source, configuration, DaemonSet and
+per-device Pod results remain independently observable under their applicable
+identity boundaries.
 
 DPF deploy reserves one typed, nonsecret ConfigMap checkpoint in the existing
 operator namespace before DPUDeployment creation. `--resume` binds its exact

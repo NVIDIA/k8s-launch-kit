@@ -623,6 +623,17 @@ must use zero-trust mode. A release candidate does not match a selected GA
 release. A clean cluster can be planned for operator installation; leftover or
 incompatible resources require resolution before deployment.
 
+Launch Kit also verifies the running Kamaji producer against the selected release's
+HBN-BGP compatibility requirement. It checks the current Deployment, ReplicaSet,
+Ready manager Pods, process settings, immutable image identity and management-node
+platform. A Ready controller using an affected or unrecognized image still blocks
+readiness. The HBN-BGP beta profile currently requires a separately qualified
+upstream edge build to generate the correct tenant kube-proxy Pod CIDR. This
+exception is separate from the published DPF BOM; see the
+[management prerequisite procedure](dpf-deployment.md#management-cluster-prerequisites).
+The infrastructure owner installs this prerequisite explicitly. Discovery neither
+upgrades the shared controller nor repairs existing tenant networking.
+
 For tenant storage, Launch Kit checks Kamaji's shared `default` datastore,
 which the selected DPF release uses, then follows its endpoints to the etcd
 StatefulSet, service, pods, claims and bound volumes in the selected DPF

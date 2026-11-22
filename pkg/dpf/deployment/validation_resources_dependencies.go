@@ -5,6 +5,7 @@ package deployment
 
 import (
 	"context"
+	"fmt"
 
 	"github.com/nvidia/k8s-launch-kit/pkg/dpf/validation"
 	appsv1 "k8s.io/api/apps/v1"
@@ -18,7 +19,7 @@ func (o *validationObserver) validationExternalWorkloads() []preflightWorkload {
 	return append(result, preflightWorkload{id: "argo.controller", namespace: namespace, kind: "StatefulSet", selector: "app.kubernetes.io/name=argocd-application-controller"}, preflightWorkload{id: "argo.repository", namespace: namespace, kind: "Deployment", selector: "app.kubernetes.io/name=argocd-repo-server"})
 }
 func (o *validationObserver) validationDependencyChecks() []validation.CheckSpec {
-	var result []validation.CheckSpec
+	result := []validation.CheckSpec{validationSpec("management/dependency/kamaji.compatibility", validation.AreaManagement, "Kamaji tenant networking compatibility", false)}
 	for _, workload := range o.validationExternalWorkloads() {
 		result = append(result, validationSpec("management/dependency/"+workload.id, validation.AreaManagement, workload.id, false))
 	}
@@ -28,6 +29,28 @@ func (o *validationObserver) validationDependencyChecks() []validation.CheckSpec
 	return result
 }
 func (o *validationObserver) observeValidationDependencies(ctx context.Context, management validationManagementReader, r *validationRecorder) error {
+	err := r.run("management/dependency/kamaji.compatibility", func() error {
+		result := management.observeKamajiCompatibility(ctx, o.desired.operatorNamespace, o.desired.plan.Intent().Release)
+		if result.Namespace != o.desired.operatorNamespace || result.Release != o.desired.plan.Intent().Release || result.Message == "" || result.ReasonCode == "" {
+			return validationFailure(validation.Unverified, validation.ReasonIncomplete, "Kamaji compatibility was not observed for the selected namespace and release.")
+		}
+		if result.ReasonCode == "KAMAJI_COMPATIBILITY_CHANGED" {
+			return fmt.Errorf("kamaji changed during compatibility observation: %w", errValidationResourceChanged)
+		}
+		if result.State == "passed" && result.ReasonCode == "KAMAJI_COMPATIBILITY_VERIFIED" {
+			return nil
+		}
+		if result.ReasonCode == "KAMAJI_COMPATIBILITY_ROLLOUT_PENDING" {
+			return validationFailure(validation.Pending, validation.ReasonProgressing, result.Message)
+		}
+		if result.State == "failed" {
+			return validationFailure(validation.Failed, validation.ReasonHealth, result.Message)
+		}
+		return validationFailure(validation.Unverified, validation.ReasonUnavailable, result.Message)
+	})
+	if validationIdentityChanged(err) {
+		return &validation.ObservationError{Category: validation.FatalIdentity, Cause: err}
+	}
 	for _, workload := range o.validationExternalWorkloads() {
 		err := r.run(validation.CheckID("management/dependency/"+workload.id), func() error {
 			objects, err := management.List(ctx, validationObject("apps/v1", workload.kind, workload.namespace, ""), workload.selector)

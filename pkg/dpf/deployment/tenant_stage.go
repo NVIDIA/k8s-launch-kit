@@ -208,7 +208,7 @@ func verifyManagementBootstrap(ctx context.Context, client identityResourceReade
 		return bootstrapVerificationFailure("BOOTSTRAP_CONFIG_VERSION_CHANGED", nil)
 	}
 	if readiness := execution.rules.ResourceReadiness(config); !readiness.Ready {
-		return errBootstrapConfigNotReady
+		return bootstrapConfigReadinessFailure(readiness)
 	}
 	currentManager, err := client.Get(ctx, execution.manager.DeepCopy())
 	if err != nil {

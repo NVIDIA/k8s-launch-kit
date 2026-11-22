@@ -55,12 +55,21 @@ func (c *APIClient) getOperatorCRD(ctx context.Context, name string) (*unstructu
 	if err := c.VerifyIdentity(ctx); err != nil {
 		return nil, err
 	}
-	object, err := c.dynamic.Resource(schema.GroupVersionResource{Group: "apiextensions.k8s.io", Version: "v1", Resource: "customresourcedefinitions"}).Get(ctx, name, metav1.GetOptions{})
+	object, err := c.getCurrentOperatorCRD(ctx, name)
 	if err != nil {
-		return nil, safeAPIError("read retained DPF CRD", err)
+		return nil, err
 	}
 	if err := c.VerifyIdentity(ctx); err != nil {
 		return nil, err
+	}
+	return object, nil
+}
+
+// getCurrentOperatorCRD performs one current read inside a source-bound collection.
+func (c *APIClient) getCurrentOperatorCRD(ctx context.Context, name string) (*unstructured.Unstructured, error) {
+	object, err := c.dynamic.Resource(schema.GroupVersionResource{Group: "apiextensions.k8s.io", Version: "v1", Resource: "customresourcedefinitions"}).Get(ctx, name, metav1.GetOptions{})
+	if err != nil {
+		return nil, safeAPIError("read retained DPF CRD", err)
 	}
 	return object, nil
 }

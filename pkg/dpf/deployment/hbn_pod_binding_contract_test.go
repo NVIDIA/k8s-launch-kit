@@ -6,7 +6,6 @@ package deployment
 import (
 	"reflect"
 	"slices"
-	"strings"
 	"testing"
 	"time"
 
@@ -153,43 +152,5 @@ func TestHBNBindingContainerIdentitiesAreOwnedAndOrdered(t *testing.T) {
 	pod.Status.InitContainerStatuses[0].State.Terminated.FinishedAt.Time = pod.Status.InitContainerStatuses[0].State.Terminated.FinishedAt.Add(time.Second)
 	if before.Containers[1].FinishedAt == bind().Containers[1].FinishedAt {
 		t.Fatal("completed init identity time was not retained")
-	}
-}
-
-func TestHBNRuntimeFinalObservationFailureRetainsAllMeasurements(t *testing.T) {
-	f := newRuntimeStageFixture(t, []string{"SERIAL-A", "SERIAL-B"})
-	readsAfterTraffic := 0
-	f.leaseHook = func(_ int, snapshot *hostWorkloadLeaseSnapshot) {
-		if f.commandReads == 4 && f.trafficReads == 2 {
-			readsAfterTraffic++
-			// The last traffic post-fence has two allocation reads. Fail
-			// only the next complete observation, after all rows are fenced.
-			if readsAfterTraffic == 3 {
-				snapshot.TenantNodes[0].SetUID("replacement-at-final-observation")
-			}
-		}
-	}
-	journal := testJournal(f.prepared.execution)
-	result, err := f.run(journal)
-	if err == nil || result.State != "failed" || result.TrafficValidated || result.ReasonCode != "HBN_RUNTIME_FINAL_FENCE_FAILED" || len(result.BGP) != 2 || len(result.Routes) != 2 || len(result.Traffic) != 2 {
-		t.Fatalf("final observation failure lost/requalified evidence: %+v err=%v", result, err)
-	}
-	for _, row := range result.BGP {
-		if !row.Fenced {
-			t.Fatal("earlier BGP receipt was not preserved")
-		}
-	}
-	for _, row := range result.Routes {
-		if !row.Fenced {
-			t.Fatal("earlier route receipt was not preserved")
-		}
-	}
-	for _, row := range result.Traffic {
-		if !row.Fenced {
-			t.Fatal("earlier traffic receipt was not preserved")
-		}
-	}
-	if strings.Contains(journal.file.(*managementMemoryFile).String(), "HBN_RUNTIME_COHORT_VALIDATED") {
-		t.Fatal("final failed observation emitted a cohort pass")
 	}
 }

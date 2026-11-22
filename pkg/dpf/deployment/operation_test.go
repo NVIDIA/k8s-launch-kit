@@ -426,38 +426,6 @@ func TestOperationLostHoldConfirmationNeverInfersHistory(t *testing.T) {
 	}
 }
 
-func TestOperationRuntimeRetryMeasuresEveryRowWithoutEffects(t *testing.T) {
-	f := newRuntimeStageFixture(t, []string{"SERIAL-A", "SERIAL-B"})
-	operation, store := checkpointFixtureWithState(t, f.activationIntegrationFixture, func(state *operationState) {
-		state.DeploymentUID = f.activation.DeploymentUID
-		for node, p := range f.activation.progress {
-			state.Progress[node] = savedProgress(p)
-		}
-	})
-	f.prepared.operation = operation
-	beforePatches, beforeClaims, beforeCheckpoints := len(f.activationIntegrationFixture.client.patches), f.activationIntegrationFixture.client.guardCalls, store.updates
-	f.trafficHook = func(_ int, result *sshprobe.HostTrafficResult) {
-		result.State = sshprobe.TrafficProbeFailed
-		result.Ordinary.State = sshprobe.TrafficProbeFailed
-		result.Ordinary.Counters.Received = 2
-		result.Ordinary.Counters.LostPct = 33.3333
-	}
-	first, err := f.run(testJournal(f.prepared.execution))
-	if err == nil || first.TrafficValidated {
-		t.Fatal("failed runtime attempt passed")
-	}
-	f.prepared.operation = reopenOperation(t, store)
-	priorCommands, priorTraffic := f.commandReads, f.trafficReads
-	f.trafficHook = nil
-	second, err := f.run(testJournal(f.prepared.execution))
-	if err != nil || !second.TrafficValidated || len(second.BGP) != 2 || len(second.Routes) != 2 || len(second.Traffic) != 2 || f.commandReads-priorCommands != 4 || f.trafficReads-priorTraffic != 2 {
-		t.Fatalf("fresh runtime matrix=%+v err=%v", second, err)
-	}
-	if len(f.activationIntegrationFixture.client.patches) != beforePatches || f.activationIntegrationFixture.client.guardCalls != beforeClaims || store.updates != beforeCheckpoints {
-		t.Fatal("runtime retry invoked activation or checkpoint mutation")
-	}
-}
-
 type lostDDCreateClient struct {
 	recoveryActivationClient
 	lose bool
