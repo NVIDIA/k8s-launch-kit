@@ -1,0 +1,73 @@
+# SPDX-FileCopyrightText: Copyright 2026 NVIDIA CORPORATION & AFFILIATES
+# SPDX-License-Identifier: Apache-2.0
+
+machineType: DGX-GB300-Compute-Tray
+manufacturer: NVIDIA
+gpuType: NVIDIA-GB300
+nicModel: NVIDIA Dual ConnectX-8 SuperNIC C8280Z Mezzanine Board for GB300 systems
+numaNodes: 2
+
+capabilities:
+  nodes:
+    sriov: true
+    rdma: true
+    ib: true
+
+pfs:
+  - deviceID: "1023"
+    pciAddress: "0000:03:00.0"
+    rdmaDevice: mlx5_0
+    networkInterface: eth_r0_p0
+    traffic: east-west
+    rail: 0
+    numaNode: 0
+    psid: mt_0000001513
+    partNumber: 900-9X86E-00CX-ST0
+
+  - deviceID: "1023"
+    pciAddress: "0002:03:00.0"
+    rdmaDevice: mlx5_2
+    networkInterface: eth_r1_p0
+    traffic: east-west
+    rail: 1
+    numaNode: 0
+    psid: mt_0000001513
+    partNumber: 900-9X86E-00CX-ST0
+
+  - deviceID: "1023"
+    pciAddress: "0010:03:00.0"
+    rdmaDevice: mlx5_4
+    networkInterface: eth_r2_p0
+    traffic: east-west
+    rail: 2
+    numaNode: 1
+    psid: mt_0000001513
+    partNumber: 900-9X86E-00CX-ST0
+
+  - deviceID: "1023"
+    pciAddress: "0012:03:00.0"
+    rdmaDevice: mlx5_6
+    networkInterface: eth_r3_p0
+    traffic: east-west
+    rail: 3
+    numaNode: 1
+    psid: mt_0000001513
+    partNumber: 900-9X86E-00CX-ST0
+
+  - deviceID: a2dc
+    pciAddress: "0016:03:00.0"
+    rdmaDevice: mlx5_8
+    networkInterface: enP22p3s0f0np0
+    traffic: north-south
+    numaNode: 1
+    psid: mt_0000001188
+    partNumber: 900-9D3B6-00CN-PN0
+
+  - deviceID: a2dc
+    pciAddress: "0016:03:00.1"
+    rdmaDevice: mlx5_9
+    networkInterface: enP22p3s0f1np1
+    traffic: north-south
+    numaNode: 1
+    psid: mt_0000001188
+    partNumber: 900-9D3B6-00CN-PN0

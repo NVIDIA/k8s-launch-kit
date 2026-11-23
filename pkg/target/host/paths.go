@@ -174,6 +174,19 @@ func LoadUserConfig(input UserConfigInput, opts options.Options) (*config.Launch
 		return nil, "", err
 	}
 	if path == "" {
+		nvaieRequested := opts.NVAIERelease != ""
+		for _, override := range opts.ConfigInputs.Overrides {
+			if override.Path == "nvaieRelease" {
+				nvaieRequested = true
+			}
+		}
+		if nvaieRequested {
+			result, resolveErr := resolve.Resolve(resolve.Request{Input: &config.Input{Config: &config.LaunchKitConfig{}, Present: config.PathSet{}}, Options: opts})
+			if result != nil {
+				return result.Config, "", resolveErr
+			}
+			return nil, "", resolveErr
+		}
 		return nil, "", nil
 	}
 	isEffective := config.IsEffectiveConfigPath(path)

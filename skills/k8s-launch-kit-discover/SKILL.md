@@ -223,6 +223,26 @@ on DOCA release mismatches against the selected Network Operator SBOM; validatio
 fails them using the saved snapshot. Package build suffixes are preserved but
 not compared. See [host driver discovery](../../docs/user/discovery.md#host-installed-doca-host).
 
+## NVIDIA AI Enterprise selection
+
+For Host workflows, `--nvaie-release 9.0` (or saved `nvaieRelease: "9.0"`)
+constrains Network Operator to the exact matching release catalog. Discovery
+collects observations and preserves the selection; validation refreshes the
+platform and component evidence and adds it to the existing HTML/JSON outputs.
+Generation preserves the constraint. Conflicting explicit Network Operator
+selections fail; other NVAIE components remain externally managed. The component
+allowlist compares recognized operator, driver and toolkit container image versions
+using Kubernetes API metadata and existing installed DOCA-HOST discovery evidence,
+regardless of the desired container-driver setting. Saved packages are labeled as
+discovery snapshots. The shared matrix matcher uses observed machine and GPU
+labels for reviewed preset aliases and retains raw facts in JSON.
+Unsupported products are omitted. HTML uses one Expected / Discovered / Match
+table; JSON retains details. No new runtime probes are added, and undetected
+installation forms do not prove absence. Required
+missing/unknown evidence is non-passing in validation. The bundled matrix is an
+offline snapshot and kind does not qualify bare-metal hardware. See the
+[full contract](../../docs/user/validation.md#nvidia-ai-enterprise-release-checks).
+
 ## Usage (from AI agent)
 
 ```bash

@@ -57,6 +57,7 @@ type Options struct {
 	// NetworkOperatorRelease is a MAJOR.MINOR catalog key (e.g. "26.4"), not
 	// a full semver. Selects component image tags + repository from the
 	// embedded releases catalog and drives version-gated template sections.
+	NVAIERelease           string   `flag:"nvaie-release" config:"nvaieRelease" scopes:"root,generate,discover,validate" usage:"NVIDIA AI Enterprise release to select and assess against its reviewed software and platform matrix (Host only)"`
 	NetworkOperatorRelease string   `flag:"network-operator-release" config:"networkOperator.selectedRelease,networkOperator.version,networkOperator.componentVersion,networkOperator.repository,networkOperator.operatorRepository,networkOperator.helmRepoURL,docaDriver.version" resolve:"network-operator-release" scopes:"root,generate,discover" usage:"Network Operator release line to deploy (MAJOR.MINOR); selects catalog-managed component versions and repositories"`
 	ImagePullSecrets       []string `flag:"image-pull-secrets" config:"networkOperator.imagePullSecrets" scopes:"root,generate,discover" usage:"Image pull secret names for Network Operator components and authenticated Helm downloads (comma-separated)"`
 	// SkipNetworkOperatorHelm disables values.yaml generation, Network Operator

@@ -57,6 +57,7 @@ flag groups and `l8k schema` for each flag's `targets` list.
 | `--kubeconfig` | root, discover, generate with deploy, deploy, clean, validate, sosreport | host | Path to kubeconfig. Falls back to `$KUBECONFIG` and then `~/.kube/config`. It represents the host workload cluster, not a universal multi-context input. |
 | `--user-config` | root, discover, generate, deploy, clean, validate | host; DPF standalone discover/generate/deploy/validate | Host configuration, or optional supported DPF overrides alongside required `--inventory`. |
 | `--config-dir` | all | host | Directory containing optional `l8k-config.yaml` and `presets/` overrides. |
+| `--nvaie-release` | root, discover, generate, validate | host | NVAIE release constraint (initial catalog: `9.0`); selects the matching Network Operator catalog and adds live discovery/validation observations. |
 | `--network-operator-release` | root, discover, generate | host | Catalogued release line such as `26.1`, `26.4`, `26.7`, or `26.10`. |
 | `--network-operator-namespace` | root, discover, generate, deploy, clean, validate | host | Override the Network Operator namespace. It is a no-op for discovery. |
 | `--skip-network-operator-helm` | generate, deploy, validate, root pipeline | host | Skip `values.yaml` generation, Network Operator chart installation, and Helm-specific validation. Custom-resource handling remains enabled. |
@@ -84,6 +85,7 @@ available throughout the command tree.
 | --- | --- | --- | --- | --- | --- | --- |
 | `--target` | yes | yes | yes | yes | yes | — |
 | `--kubeconfig`, `--user-config`, `--flavor`, `--network-operator-namespace` | yes | yes | yes | yes | yes | yes |
+| `--nvaie-release` | yes | yes | yes | — | yes | — |
 | `--network-operator-release`, `--image-pull-secrets`, profile/Spectrum-X flags | yes | yes | yes | — | — | — |
 | `--enabled-plugins` | yes | yes | yes | — | — | — |
 | `--node-selector` | yes | yes | yes (`--for`) | — | — | — |

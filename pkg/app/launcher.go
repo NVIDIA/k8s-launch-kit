@@ -35,6 +35,7 @@ import (
 	"github.com/nvidia/k8s-launch-kit/pkg/kubeclient"
 	applog "github.com/nvidia/k8s-launch-kit/pkg/log"
 	"github.com/nvidia/k8s-launch-kit/pkg/networkoperatorplugin"
+	"github.com/nvidia/k8s-launch-kit/pkg/nvaie"
 	"github.com/nvidia/k8s-launch-kit/pkg/options"
 	"github.com/nvidia/k8s-launch-kit/pkg/plugin"
 	"github.com/nvidia/k8s-launch-kit/pkg/presets"
@@ -56,6 +57,7 @@ type Launcher struct {
 	generatedBundles map[generatedProfileKey]*bundle.Bundle
 	configAssets     assets.ConfigDir
 	presetCatalog    *presets.Catalog
+	assessNVAIEFunc  func(context.Context, *rest.Config, string, []string, map[string]string, *nvaie.DOCAHostEvidence) *nvaie.Assessment
 	context          context.Context
 }
 

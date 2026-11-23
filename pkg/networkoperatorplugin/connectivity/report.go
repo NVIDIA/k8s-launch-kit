@@ -21,12 +21,17 @@ import (
 	"fmt"
 	"html/template"
 	"io"
+	"maps"
+	"slices"
 	"sort"
+	"strings"
 	"time"
 
+	"github.com/nvidia/k8s-launch-kit/pkg/config"
 	"github.com/nvidia/k8s-launch-kit/pkg/networkoperatorplugin"
 	"github.com/nvidia/k8s-launch-kit/pkg/networkoperatorplugin/crstate"
 	"github.com/nvidia/k8s-launch-kit/pkg/networkoperatorplugin/preflight"
+	"github.com/nvidia/k8s-launch-kit/pkg/nvaie"
 	"github.com/nvidia/k8s-launch-kit/pkg/presetmatch"
 	"github.com/nvidia/k8s-launch-kit/pkg/validationreport"
 )
@@ -57,6 +62,7 @@ type OverallVerdict struct {
 // it from values it has already computed (Manifests, Matrix) plus a
 // few small lookups (cluster API version, node labels).
 type ReportData struct {
+	NVAIE *nvaie.Assessment
 	// Verdict is the overall pass/fail outcome rendered as a
 	// prominent banner at the top of the report. Computed by the
 	// caller (CLI) from the same inputs that drive the exit code.
@@ -261,11 +267,255 @@ func reportPage(cluster ClusterInfo, verdict OverallVerdict) validationreport.Pa
 	}
 }
 
+type nvaieReportRow struct {
+	Component  string
+	Expected   string
+	Discovered string
+	Match      nvaie.Status
+	Nodes      []string
+	Scope      string
+}
+
+func nvaieReportRows(assessment *nvaie.Assessment) []nvaieReportRow {
+	rows := nvaiePlatformRows(assessment)
+	for _, component := range assessment.Components {
+		if len(component.NodeChecks) == 0 {
+			rows = append(rows, nvaieComponentRow(component))
+			continue
+		}
+		var nodeRows []nvaieReportRow
+		for _, node := range component.NodeChecks {
+			local := component
+			local.Check = node.Check
+			// Only templates attributed through this node's observed Pod owners
+			// belong here; their versions remain explicitly marked as declared.
+			local.Workloads = node.Workloads
+			local.Observations = nil
+			local.PackageObservations = nil
+			for _, observation := range component.Observations {
+				if observation.Node == node.Node {
+					local.Observations = append(local.Observations, observation)
+				}
+			}
+			for _, observation := range component.PackageObservations {
+				if observation.Node == node.Node {
+					local.PackageObservations = append(local.PackageObservations, observation)
+				}
+			}
+			if len(local.Observations) == 0 && len(local.PackageObservations) == 0 && local.Detection != nvaie.DetectionUnknown {
+				local.Detection = nvaie.NotDetected
+			}
+			row := nvaieComponentRow(local)
+			row.Nodes = []string{node.Node}
+			nodeRows = append(nodeRows, row)
+		}
+		rows = append(rows, groupNVAIERows(nodeRows)...)
+		if component.ScopeCheck != nil {
+			component.Check = *component.ScopeCheck
+			row := nvaieComponentRow(component)
+			row.Scope = "Cluster / scope"
+			row.Discovered += " · " + component.ScopeCheck.Detail
+			rows = append(rows, row)
+		}
+	}
+	return rows
+}
+
+func nvaieComponentRow(component nvaie.ComponentResult) nvaieReportRow {
+	status := component.Check.Status
+	if status == "" {
+		status = nvaie.Unknown
+	}
+	return nvaieReportRow{
+		Component: component.Expected.Name, Expected: component.Expected.Version,
+		Discovered: nvaieComponentVersions(component), Match: status,
+	}
+}
+
+func nvaiePlatformRows(assessment *nvaie.Assessment) []nvaieReportRow {
+	if len(assessment.Nodes) == 0 || slices.ContainsFunc(assessment.Nodes, func(node nvaie.NodeResult) bool { return node.Facts.Name == "" }) {
+		return []nvaieReportRow{nvaiePlatformRow(assessment)}
+	}
+	rows := make([]nvaieReportRow, 0, len(assessment.Nodes))
+	for _, node := range assessment.Nodes {
+		local := *assessment
+		local.Nodes = []nvaie.NodeResult{node}
+		// Catalog and cluster-read prerequisites apply to every node group.
+		row := nvaiePlatformRow(&local)
+		row.Nodes = []string{node.Facts.Name}
+		rows = append(rows, row)
+	}
+	return groupNVAIERows(rows)
+}
+
+// Group identical displayed outcomes, retaining deterministic node membership.
+// Match comes from the assessment; presentation never re-evaluates versions.
+func groupNVAIERows(rows []nvaieReportRow) []nvaieReportRow {
+	type key struct {
+		status     nvaie.Status
+		discovered string
+	}
+	groups := make(map[key]int)
+	var result []nvaieReportRow
+	for _, row := range rows {
+		k := key{row.Match, row.Discovered}
+		if i, found := groups[k]; found {
+			result[i].Nodes = append(result[i].Nodes, row.Nodes...)
+		} else {
+			groups[k] = len(result)
+			result = append(result, row)
+		}
+	}
+	for i := range result {
+		slices.Sort(result[i].Nodes)
+		result[i].Nodes = slices.Compact(result[i].Nodes)
+	}
+	slices.SortFunc(result, func(a, b nvaieReportRow) int {
+		if a.Match != b.Match {
+			return strings.Compare(string(a.Match), string(b.Match))
+		}
+		return strings.Compare(a.Discovered, b.Discovered)
+	})
+	return result
+}
+
+func nvaiePlatformRow(assessment *nvaie.Assessment) nvaieReportRow {
+	status, detail := nvaie.Pass, ""
+	merge := func(checks []nvaie.Check) bool {
+		hasPlatformChecks := false
+		for _, check := range checks {
+			switch check.Name {
+			case "pods", "deployments", "daemonsets", "replicasets":
+				// Component evidence is reported in the component rows.
+				continue
+			}
+			if !check.Required {
+				continue
+			}
+			hasPlatformChecks = true
+			if check.Status == nvaie.Pass || check.Status == nvaie.NotApplicable {
+				continue
+			}
+			switch {
+			case check.Status == nvaie.Fail && status != nvaie.Fail:
+				status, detail = nvaie.Fail, check.Detail
+			case status == nvaie.Pass:
+				status, detail = nvaie.Unknown, check.Detail
+			}
+		}
+		return hasPlatformChecks
+	}
+	complete := merge(assessment.Checks) && len(assessment.Nodes) > 0
+	var platforms []string
+	for _, node := range assessment.Nodes {
+		if !merge(node.Checks) {
+			complete = false
+		}
+		facts := node.Facts
+		fields := []string{strings.TrimSpace(facts.Platform + " " + facts.PlatformVersion), facts.MatrixOS, facts.GPUProduct}
+		if node.MatrixGPU != "" {
+			fields[2] = node.MatrixGPU
+		}
+		if facts.MatrixOS == "" {
+			fields[1] = facts.OS
+		}
+		fields = slices.DeleteFunc(fields, func(field string) bool { return field == "" })
+		if len(fields) > 0 {
+			platforms = append(platforms, strings.Join(fields, " · "))
+		}
+	}
+	if status == nvaie.Pass && !complete {
+		status, detail = nvaie.Unknown, "Platform evidence incomplete"
+	}
+	slices.Sort(platforms)
+	platforms = slices.Compact(platforms)
+	if len(platforms) == 0 && assessment.ServerVersion != "" {
+		platforms = append(platforms, "API server "+assessment.ServerVersion)
+	}
+	if detail != "" {
+		platforms = append(platforms, detail)
+	}
+	if len(platforms) == 0 {
+		platforms = append(platforms, "Unknown")
+	}
+	return nvaieReportRow{
+		Component: "Platform compatibility", Expected: "NVAIE " + assessment.Release + " matrix",
+		Discovered: strings.Join(platforms, ", "), Match: status,
+	}
+}
+
+func nvaieComponentVersions(component nvaie.ComponentResult) string {
+	if len(component.PackageObservations) > 0 {
+		packages := nvaiePackageVersions(component)
+		if len(component.Observations) > 0 || len(component.Workloads) > 0 {
+			return "Host packages " + packages + " · Container images " + nvaieImageVersions(component)
+		}
+		return packages
+	}
+	if component.Detection == nvaie.NotDetected {
+		return "Not detected"
+	}
+	return nvaieImageVersions(component)
+}
+
+func nvaieImageVersions(component nvaie.ComponentResult) string {
+	observed := map[string]bool{}
+	declared := map[string]bool{}
+	unknown := component.Detection == nvaie.DetectionUnknown
+	for _, observation := range component.Observations {
+		if observation.StatusVersion != "" {
+			observed[observation.StatusVersion] = true
+		}
+		if observation.Version != "" && observation.Version != observation.StatusVersion {
+			declared[observation.Version] = true
+		}
+		unknown = unknown || observation.ImageStatus == nvaie.Unknown || observation.StatusVersion == ""
+	}
+	for _, workload := range component.Workloads {
+		if workload.Version != "" {
+			declared[workload.Version] = true
+		}
+		unknown = unknown || workload.ImageStatus == nvaie.Unknown || workload.Version == ""
+	}
+	versions := slices.Collect(maps.Keys(observed))
+	for version := range declared {
+		if !observed[version] {
+			versions = append(versions, version+" (declared)")
+		}
+	}
+	slices.Sort(versions)
+	if unknown || len(versions) == 0 {
+		versions = append(versions, "Unknown")
+	}
+	return strings.Join(versions, ", ")
+}
+
+func nvaiePackageVersions(component nvaie.ComponentResult) string {
+	versions := make([]string, 0, len(component.PackageObservations))
+	for _, observation := range component.PackageObservations {
+		switch {
+		case observation.Status == config.DOCAHostInstalled && observation.Release != "":
+			versions = append(versions, observation.Release)
+		case observation.Status == config.DOCAHostNotInstalled:
+			versions = append(versions, "Not detected")
+		default:
+			versions = append(versions, "Unknown")
+		}
+	}
+	slices.Sort(versions)
+	discovered := strings.Join(slices.Compact(versions), ", ")
+	if !component.PackageEvidenceFresh {
+		discovered += " (discovery snapshot)"
+	}
+	return discovered
+}
+
 // reportFuncMap returns the helpers exposed inside the template. Kept
 // small on purpose — anything more complex than a one-liner belongs
 // in Go code rather than the template.
 func reportFuncMap() template.FuncMap {
 	return template.FuncMap{
+		"nvaieReportRows": nvaieReportRows,
 		// stateClass maps a crstate.CRState to the CSS class used
 		// to colour the row / badge.
 		"stateClass": func(s crstate.CRState) string {

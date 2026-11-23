@@ -41,6 +41,13 @@ A result or gate extension MUST define command execution success separately from
 - **AND** unavailable selected sources and ambiguous identities still fail inventory; an observed BMC address never authorizes sending credentials to it automatically.
 - **AND** host-only or ARM-only input preserves partial identity evidence and exits nonzero because DPU BMC administrator authorization is missing; it cannot publish a completed handoff.
 
+#### Scenario: Host package compatibility failure
+
+- **WHEN** saved DOCA-HOST evidence has a different or unparseable release, or cannot be compared with a selected Network Operator release
+- **THEN** Host validation retains the compatibility failure and runs the other checks, including every supported NVAIE component check when requested; a failed comparison is not an abort condition.
+- **AND** HTML, JSON and JUnit retain the failure, and the final outcome is exit 4 even when other checks pass, manifests are in progress, or connectivity-only mode is selected.
+- **AND** malformed input and unavailable check inputs retain their explicit errors; a missing observation never becomes a pass.
+
 ### Requirement: Output compatibility
 
 Output extensions SHALL preserve command-specific framing, existing public field meanings, diagnostic separation and exit mapping unless a compatibility change is explicit. Text, JSON and HTML MUST describe compatible evidence without assuming identical envelopes.

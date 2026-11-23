@@ -41,6 +41,7 @@ import (
 	"github.com/nvidia/k8s-launch-kit/pkg/networkoperatorplugin/connectivity"
 	"github.com/nvidia/k8s-launch-kit/pkg/networkoperatorplugin/crstate"
 	"github.com/nvidia/k8s-launch-kit/pkg/networkoperatorplugin/preflight"
+	"github.com/nvidia/k8s-launch-kit/pkg/nvaie"
 	"github.com/nvidia/k8s-launch-kit/pkg/presetmatch"
 	"github.com/nvidia/k8s-launch-kit/pkg/presets"
 )
@@ -449,16 +450,17 @@ func writeHTMLReportIfWanted(
 	reportPath string,
 	version string,
 	kubeconfigPath string,
-) {
+	assessment *nvaie.Assessment,
+) error {
 	if reportPath == "" {
 		info, err := os.Stat(deploymentDir)
 		if err != nil || !info.IsDir() {
-			return
+			return nil
 		}
 	}
 	path := resolveReportPath(reportPath, deploymentDir)
 	if path == "" {
-		return
+		return nil
 	}
 	reportStarted := time.Now()
 	if info, err := os.Stat(path); err == nil {
@@ -488,19 +490,24 @@ func writeHTMLReportIfWanted(
 		Warnings:       *warnings,
 	}
 
+	data.NVAIE = assessment
+
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		log.Log.Error(err, "Failed to create report directory", "path", path)
-		return
+		return fmt.Errorf("create report directory: %w", err)
 	}
 	f, err := os.Create(path)
 	if err != nil {
 		log.Log.Error(err, "Failed to create report file", "path", path)
-		return
+		return fmt.Errorf("create report file: %w", err)
 	}
 	defer f.Close()
 	if err := connectivity.RenderHTML(f, data); err != nil {
 		log.Log.Error(err, "Failed to render report", "path", path)
-		return
+		return fmt.Errorf("render report: %w", err)
+	}
+	if err := f.Close(); err != nil {
+		return fmt.Errorf("close report: %w", err)
 	}
 	abs, _ := filepath.Abs(path)
 	log.Log.V(1).Info("validation report written",
@@ -510,6 +517,7 @@ func writeHTMLReportIfWanted(
 	} else {
 		fmt.Fprintf(os.Stderr, "\nHTML report written to %s\n", abs)
 	}
+	return nil
 }
 
 // readKubeContext returns the current-context from the resolved

@@ -144,6 +144,7 @@ func init() {
 	setFlagGroup(discoverCmd, "flavor", GroupCommon)
 	setFlagGroup(discoverCmd, "network-operator-namespace", GroupCommon)
 	setFlagGroup(discoverCmd, "network-operator-release", GroupCommon)
+	setFlagGroup(discoverCmd, "nvaie-release", GroupCommon)
 	setFlagGroup(discoverCmd, "manage-operators", GroupCommon)
 	setFlagGroup(discoverCmd, "node-selector", GroupCommon)
 	setFlagGroup(discoverCmd, "image-pull-secrets", GroupCommon)

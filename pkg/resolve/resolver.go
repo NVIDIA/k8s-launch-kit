@@ -72,6 +72,10 @@ func Resolve(request Request) (*Result, error) {
 		}
 	}
 
+	if err := selectNVAIERelease(effective, inputs, present); err != nil {
+		return nil, err
+	}
+
 	config.PopulateSpectrumXPlatforms(effective.ClusterConfig)
 	var decisions []DefaultDecision
 	if request.ApplyHardwareDefaults {
@@ -99,6 +103,9 @@ func Resolve(request Request) (*Result, error) {
 	}
 	if err := ExpandNetworkOperatorRelease(selectedRelease, effective); err != nil {
 		return nil, fmt.Errorf("expand networkOperator.selectedRelease: %w", err)
+	}
+	if err := ValidateNVAIECohort(effective); err != nil {
+		return nil, err
 	}
 	if err := config.NormalizeResolvedConfigWithPresence(effective, request.Input.SourcePath, present); err != nil {
 		return nil, err

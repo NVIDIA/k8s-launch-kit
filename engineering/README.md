@@ -14,6 +14,7 @@ operator documentation or included in user documentation exports.
 - [Target extension contract](advanced/targets.md)
 - [DPF integration plan](architecture/dpf-integration-plan.md)
 - [Host target migration history](architecture/host-target-migration-plan.md)
+- [NVAIE catalog maintenance](reference/nvaie-catalog.md)
 - [Documentation maintenance and publishing](reference/docs-publishing.md)
 
 See [CONTRIBUTING](../CONTRIBUTING.md) for development and review requirements.

@@ -30,6 +30,12 @@ physical NICs each. Re-run discovery with NetworkBay status for old configs that
 assigned one rail per NIC; generation does not guess the pairing from PCI order. See [Spectrum-X prerequisites and configuration](docs/user/spectrum-x.md#ra24-dospcx-profile),
 including the required NCO implementation/CRDs beyond the current 26.10 beta.2 package.
 
+Host discovery and validation optionally accept `--nvaie-release 9.0` to select the
+matching Network Operator catalog and assess the published NVIDIA AI Enterprise
+platform and a documented set of component versions. The HTML report groups
+expected and discovered versions by node outcome. JSON retains detection methods,
+evidence and filtered matrix links. See [NVAIE release checks](docs/user/validation.md#nvidia-ai-enterprise-release-checks).
+
 ## Documentation
 
 The [Launch Kit documentation](https://nvidia.github.io/k8s-launch-kit/) is the operational guide. Use **Documentation version** in the navigation to select a GA release. Start with [planning](docs/user/profiles.md), [installation](docs/user/installation.md), and the [SR-IOV Ethernet walkthrough](docs/user/quick-start.md). OpenShift and Spectrum-X have [separate](docs/user/openshift.md) [guides](docs/user/spectrum-x.md). The [CLI](docs/reference/cli.md) and [configuration](docs/reference/configuration.md) references cover exact inputs.
@@ -119,7 +125,7 @@ This phase can be skipped if you provide your own configuration file by using --
 This phase resolves credentials from --kubeconfig, $KUBECONFIG, or ~/.kube/config.
 Fresh discovery fills profile settings from the detected hardware and built-in
 defaults. With --user-config, discovery replaces clusterConfig and
-discoveredSecondaryNetwork and discoveredDocaHost while preserving other settings. Explicit CLI overrides apply in both modes.
+discoveredSecondaryNetwork and discoveredDocaHost while preserving other settings. Explicit CLI overrides apply in both modes. An enabled `nvaieRelease` also persists its matching Network Operator catalog coordinates.
 
 ### Generate Deployment Files
 Based on the discovered or provided configuration,

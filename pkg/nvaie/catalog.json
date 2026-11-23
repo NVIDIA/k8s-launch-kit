@@ -1,0 +1,447 @@
+{
+  "schema": "l8k.nvaie.catalog.v1",
+  "source": {
+    "matrixURL": "https://docs.nvidia.com/ai-enterprise/support-matrix/latest/index.html",
+    "staticURL": "https://docs.nvidia.com/ai-enterprise/release-9/latest/support/support-matrix-9/9.0.html",
+    "dataURL": "https://docs.nvidia.com/ai-enterprise/support-matrix/latest/data/matrix_data.36919e29.js",
+    "retrievedAt": "2026-11-20T11:54:47+00:00",
+    "indexSHA256": "24ebe95a2af870dafe2102b0af2eb2619bf11872d607c2a9f79752ab695280f9",
+    "dataSHA256": "2332f8cfbe27b62e9cd2a0f070799ae512447d222101a9daaece980acb79eb7b"
+  },
+  "releases": [
+    {
+      "version": "9.0",
+      "components": [
+        {
+          "name": "Base Command Manager (BCM)",
+          "version": "11.34.0",
+          "x86": true,
+          "arm": true
+        },
+        {
+          "name": "Container Toolkit",
+          "version": "1.20.1",
+          "x86": true,
+          "arm": true
+        },
+        {
+          "name": "DOCA Driver for Networking",
+          "version": "3.5.0",
+          "x86": true,
+          "arm": true
+        },
+        {
+          "name": "DOCA Microservices",
+          "version": "3.5.0",
+          "x86": true,
+          "arm": true
+        },
+        {
+          "name": "DPU Operator (DPF)",
+          "version": "26.8.0",
+          "x86": true,
+          "arm": false
+        },
+        {
+          "name": "Data Center GPU Driver",
+          "version": "620.70.06",
+          "x86": true,
+          "arm": true
+        },
+        {
+          "name": "Fabric Manager",
+          "version": "2.0.0.rel102",
+          "x86": true,
+          "arm": true
+        },
+        {
+          "name": "GPU Operator",
+          "version": "26.7.2",
+          "x86": true,
+          "arm": true
+        },
+        {
+          "name": "NIM Operator",
+          "version": "3.1.4",
+          "x86": true,
+          "arm": true
+        },
+        {
+          "name": "Network Operator",
+          "version": "26.7.1",
+          "x86": true,
+          "arm": true
+        },
+        {
+          "name": "Run:ai",
+          "version": "3.0",
+          "x86": true,
+          "arm": true
+        },
+        {
+          "name": "Virtual GPU Manager",
+          "version": "620.70.04",
+          "x86": true,
+          "arm": false
+        },
+        {
+          "name": "vGPU for Compute Guest Driver",
+          "version": "Linux 620.70.06 / Windows 621.14",
+          "x86": true,
+          "arm": false
+        }
+      ],
+      "gpus": [
+        {
+          "arch": "Ampere",
+          "name": "A10",
+          "type": "PCIe GPU Server"
+        },
+        {
+          "arch": "Ampere",
+          "name": "A100",
+          "type": "HGX Server"
+        },
+        {
+          "arch": "Ampere",
+          "name": "A100 SXM",
+          "type": "HGX Server"
+        },
+        {
+          "arch": "Ampere",
+          "name": "A100X",
+          "type": "PCIe GPU Server"
+        },
+        {
+          "arch": "Ampere",
+          "name": "A10G",
+          "type": "PCIe GPU Server"
+        },
+        {
+          "arch": "Ampere",
+          "name": "A10M",
+          "type": "PCIe GPU Server"
+        },
+        {
+          "arch": "Ampere",
+          "name": "A16",
+          "type": "PCIe GPU Server"
+        },
+        {
+          "arch": "Ampere",
+          "name": "A2",
+          "type": "PCIe GPU Server"
+        },
+        {
+          "arch": "Ampere",
+          "name": "A30",
+          "type": "PCIe GPU Server"
+        },
+        {
+          "arch": "Ampere",
+          "name": "A30X",
+          "type": "PCIe GPU Server"
+        },
+        {
+          "arch": "Ampere",
+          "name": "A40",
+          "type": "PCIe GPU Server"
+        },
+        {
+          "arch": "Ampere",
+          "name": "A800",
+          "type": "HGX Server"
+        },
+        {
+          "arch": "Ampere",
+          "name": "A800 SXM",
+          "type": "HGX Server"
+        },
+        {
+          "arch": "Ampere",
+          "name": "AX800",
+          "type": "PCIe GPU Server"
+        },
+        {
+          "arch": "Blackwell",
+          "name": "B200 SXM",
+          "type": "HGX Server"
+        },
+        {
+          "arch": "Blackwell Ultra",
+          "name": "B300 SXM",
+          "type": "HGX Server"
+        },
+        {
+          "arch": "Grace Blackwell",
+          "name": "DGX GB200 NVL72",
+          "type": "DGX Server"
+        },
+        {
+          "arch": "Grace Blackwell",
+          "name": "DGX GB300 NVL72",
+          "type": "DGX Server"
+        },
+        {
+          "arch": "Grace Blackwell",
+          "name": "GB200 NVL4",
+          "type": "Grace System"
+        },
+        {
+          "arch": "Grace Blackwell",
+          "name": "GB200 NVL72",
+          "type": "Grace System"
+        },
+        {
+          "arch": "Grace Blackwell",
+          "name": "GB300 NVL72",
+          "type": "Grace System"
+        },
+        {
+          "arch": "Grace Hopper",
+          "name": "GH200",
+          "type": "Grace System"
+        },
+        {
+          "arch": "Hopper",
+          "name": "H100",
+          "type": "HGX Server"
+        },
+        {
+          "arch": "Hopper",
+          "name": "H100 NVL",
+          "type": "NVL Server"
+        },
+        {
+          "arch": "Hopper",
+          "name": "H100 SXM",
+          "type": "HGX Server"
+        },
+        {
+          "arch": "Hopper",
+          "name": "H20",
+          "type": "PCIe GPU Server"
+        },
+        {
+          "arch": "Hopper",
+          "name": "H200 NVL",
+          "type": "NVL Server"
+        },
+        {
+          "arch": "Hopper",
+          "name": "H200 SXM",
+          "type": "HGX Server"
+        },
+        {
+          "arch": "Hopper",
+          "name": "H800",
+          "type": "HGX Server"
+        },
+        {
+          "arch": "Hopper",
+          "name": "H800 NVL",
+          "type": "NVL Server"
+        },
+        {
+          "arch": "Hopper",
+          "name": "H800 SXM",
+          "type": "HGX Server"
+        },
+        {
+          "arch": "Ada Lovelace",
+          "name": "L2",
+          "type": "PCIe GPU Server"
+        },
+        {
+          "arch": "Ada Lovelace",
+          "name": "L20",
+          "type": "PCIe GPU Server"
+        },
+        {
+          "arch": "Ada Lovelace",
+          "name": "L4",
+          "type": "PCIe GPU Server"
+        },
+        {
+          "arch": "Ada Lovelace",
+          "name": "L40",
+          "type": "PCIe GPU Server"
+        },
+        {
+          "arch": "Ada Lovelace",
+          "name": "L40S",
+          "type": "PCIe GPU Server"
+        },
+        {
+          "arch": "Ada Lovelace",
+          "name": "Orin (with optional RTX 6000 Ada Lovelace GPU)",
+          "type": "IGX Server"
+        },
+        {
+          "arch": "Ada Lovelace",
+          "name": "RTX 5000 Ada Generation",
+          "type": "Workstation"
+        },
+        {
+          "arch": "Ada Lovelace",
+          "name": "RTX 5880 Ada Generation",
+          "type": "Workstation"
+        },
+        {
+          "arch": "Ada Lovelace",
+          "name": "RTX 6000 Ada Generation",
+          "type": "Workstation"
+        },
+        {
+          "arch": "Ampere",
+          "name": "RTX A5000",
+          "type": "Workstation"
+        },
+        {
+          "arch": "Ampere",
+          "name": "RTX A6000",
+          "type": "Workstation"
+        },
+        {
+          "arch": "Blackwell",
+          "name": "RTX PRO 4500 Blackwell Server Edition",
+          "type": "PCIe GPU Server"
+        },
+        {
+          "arch": "Blackwell",
+          "name": "RTX PRO 6000 Blackwell Server Edition",
+          "type": "PCIe GPU Server"
+        },
+        {
+          "arch": "Turing",
+          "name": "T4",
+          "type": "PCIe GPU Server"
+        },
+        {
+          "arch": "Turing",
+          "name": "T4G",
+          "type": "PCIe GPU Server"
+        },
+        {
+          "arch": "Vera Rubin",
+          "name": "Vera Rubin NVL72",
+          "type": "Vera System"
+        }
+      ],
+      "bareMetalK8s": [
+        {
+          "dpuOp": "-",
+          "engine": "Containerd",
+          "gpuDriver": "vGPU Guest/Data Center",
+          "gpuOp": "Supported",
+          "netOp": "Supported",
+          "os": "Ubuntu 22.04 LTS, 24.04 LTS, 26.04 LTS",
+          "platform": "Charmed Kubernetes",
+          "version": "1.33 - 1.37"
+        },
+        {
+          "dpuOp": "-",
+          "engine": "Containerd",
+          "gpuDriver": "vGPU Guest/Data Center",
+          "gpuOp": "Supported",
+          "netOp": "-",
+          "os": "Red Hat Enterprise Linux 8.6, 8.8, 8.10, 9.4, 9.6, 10.0, 10.2",
+          "platform": "HPE Ezmeral Runtime Enterprise",
+          "version": "5.6"
+        },
+        {
+          "dpuOp": "-",
+          "engine": "Containerd",
+          "gpuDriver": "vGPU Guest/Data Center",
+          "gpuOp": "Supported",
+          "netOp": "Supported",
+          "os": "Ubuntu 22.04 LTS, 24.04 LTS, 26.04 LTS",
+          "platform": "Nutanix NKP",
+          "version": "2.12, 2.13"
+        },
+        {
+          "dpuOp": "-",
+          "engine": "CRI-O",
+          "footnotes": [
+            3,
+            6
+          ],
+          "gpuDriver": "vGPU Guest/Data Center",
+          "gpuOp": "Supported",
+          "netOp": "Supported",
+          "netOpFootnotes": [
+            9
+          ],
+          "os": "Red Hat CoreOS 4.20 - 4.22",
+          "platform": "Red Hat OpenShift",
+          "runai": "Supported",
+          "version": "4.20 - 4.22"
+        },
+        {
+          "dpuOp": "-",
+          "engine": "Containerd",
+          "gpuDriver": "vGPU Guest/Data Center",
+          "gpuOp": "Supported",
+          "netOp": "Supported",
+          "os": "Red Hat Enterprise Linux 8.6, 8.8, 8.10, 9.4, 9.6, 10.0, 10.2",
+          "platform": "SUSE Rancher RKE2",
+          "runai": "Supported",
+          "version": "1.33 - 1.37"
+        },
+        {
+          "dpuOp": "-",
+          "engine": "Containerd",
+          "gpuDriver": "vGPU Guest/Data Center",
+          "gpuOp": "Supported",
+          "netOp": "Supported",
+          "os": "Ubuntu 22.04 LTS, 24.04 LTS, 26.04 LTS",
+          "platform": "SUSE Rancher RKE2",
+          "runai": "Supported",
+          "version": "1.33 - 1.37"
+        },
+        {
+          "dpuOp": "Supported",
+          "engine": "CRI-O",
+          "gpuDriver": "vGPU Guest/Data Center",
+          "gpuOp": "Supported",
+          "netOp": "Supported",
+          "os": "Red Hat Enterprise Linux 8.6, 8.8, 8.10, 9.4, 9.6, 10.0, 10.2",
+          "platform": "Upstream Kubernetes",
+          "version": "1.33 - 1.37"
+        },
+        {
+          "dpuOp": "Supported",
+          "engine": "Containerd",
+          "gpuDriver": "vGPU Guest/Data Center",
+          "gpuOp": "Supported",
+          "netOp": "Supported",
+          "os": "Red Hat Enterprise Linux 8.6, 8.8, 8.10, 9.4, 9.6, 10.0, 10.2",
+          "platform": "Upstream Kubernetes",
+          "runai": "Supported",
+          "version": "1.33 - 1.37"
+        },
+        {
+          "dpuOp": "-",
+          "engine": "CRI-O",
+          "gpuDriver": "vGPU Guest/Data Center",
+          "gpuOp": "Supported",
+          "netOp": "-",
+          "os": "Ubuntu 22.04 LTS, 24.04 LTS, 26.04 LTS",
+          "platform": "Upstream Kubernetes",
+          "version": "1.33 - 1.37"
+        },
+        {
+          "dpuOp": "Supported",
+          "engine": "Containerd",
+          "gpuDriver": "vGPU Guest/Data Center",
+          "gpuOp": "Supported",
+          "netOp": "Supported",
+          "os": "Ubuntu 22.04 LTS, 24.04 LTS, 26.04 LTS",
+          "platform": "Upstream Kubernetes",
+          "runai": "Supported",
+          "version": "1.33 - 1.37"
+        }
+      ]
+    }
+  ]
+}

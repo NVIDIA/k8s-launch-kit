@@ -23,6 +23,7 @@ import (
 
 type junitInput struct {
 	Data            connectivity.ReportData
+	DOCAHostIssues  []string
 	Fabric          string
 	RequireCoverage bool
 	Configured      bool
@@ -149,6 +150,13 @@ func buildJUnit(input junitInput) junitDocument {
 		static.Time = fmt.Sprintf("%.3f", staticDuration.Seconds())
 	}
 	d := input.Data
+	if len(input.DOCAHostIssues) > 0 {
+		static.Cases = append(static.Cases, junitStatus("DOCAHostCompatibility", false, false,
+			strings.Join(input.DOCAHostIssues, "; "), input.DOCAHostIssues))
+	}
+	if v := d.NVAIE; v != nil {
+		static.Cases = append(static.Cases, junitStatus("NVAIECompatibility", v.Passed(), false, "Required NVAIE matrix/component checks failed or remain unknown", v))
+	}
 	if v := d.Release; v != nil {
 		static.Cases = append(static.Cases, junitStatus("NetworkOperatorVersion", v.Match, v.Skipped, v.Reason, v))
 	}

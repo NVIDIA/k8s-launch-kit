@@ -70,7 +70,11 @@ func validationOptions(request ValidateRequest) options.Options {
 		SkipNetworkOperatorHelm:    request.SkipNetworkOperatorHelm.Value,
 		SkipNetworkOperatorHelmSet: request.SkipNetworkOperatorHelm.Set,
 	}
+	opts.NVAIERelease = request.NVAIERelease.Value
 	opts.ConfigInputs = configflags.Infer(opts)
+	if request.NVAIERelease.Set {
+		opts.ConfigInputs.Overrides = append(opts.ConfigInputs.Overrides, configinput.Override{Flag: "nvaie-release", Path: "nvaieRelease", Value: request.NVAIERelease.Value})
+	}
 	opts.ConfigInputs.Overrides = append(opts.ConfigInputs.Overrides, validationOverrides(request)...)
 	return opts
 }

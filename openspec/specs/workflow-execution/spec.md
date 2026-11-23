@@ -43,6 +43,12 @@ A workflow extension MUST propagate cancellation and errors, stop dependent stag
 - **WHEN** generation fails in a discover/generate/deploy pipeline
 - **THEN** deployment does not run and the available earlier-stage diagnostics remain reportable.
 
+#### Scenario: Independent Host validation checks
+
+- **WHEN** a saved DOCA-HOST compatibility comparison fails
+- **THEN** other Host validation checks continue, including live NVAIE platform/component collection, and the completed report retains the failed comparison.
+- **AND** compatibility failure does not prevent configured connectivity checks when their inputs are usable; dependency rules for discover/generate/deploy do not turn independent validation findings into phase aborts.
+
 #### Scenario: Cancellation
 
 - **WHEN** the command context is canceled during a phase

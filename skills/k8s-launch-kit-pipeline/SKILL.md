@@ -26,6 +26,25 @@ generated output, then deploys that same retained snapshot. If artifact
 validation fails, it reports the source file/document and does not enter Helm
 or resource apply. A standalone deploy loads its own snapshot from disk.
 
+## NVIDIA AI Enterprise selection
+
+For Host workflows, `--nvaie-release 9.0` (or saved `nvaieRelease: "9.0"`)
+constrains Network Operator to the exact matching release catalog. Discovery
+collects observations and preserves the selection; validation refreshes the
+platform and component evidence and adds it to the existing HTML/JSON outputs.
+Generation preserves the constraint. Conflicting explicit Network Operator
+selections fail; other NVAIE components remain externally managed. The component
+allowlist compares recognized operator, driver and toolkit container image versions
+using Kubernetes API metadata and existing installed DOCA-HOST discovery evidence,
+regardless of the desired container-driver setting. Saved packages are labeled as
+discovery snapshots.
+Unsupported products are omitted. HTML uses one Expected / Discovered / Match
+table; JSON retains details. No new runtime probes are added, and undetected
+installation forms do not prove absence. Required
+missing/unknown evidence is non-passing in validation. The bundled matrix is an
+offline snapshot and kind does not qualify bare-metal hardware. See the
+[full contract](../../docs/user/validation.md#nvidia-ai-enterprise-release-checks).
+
 ## Usage
 
 The root command chains all phases in one invocation:

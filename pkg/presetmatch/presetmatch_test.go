@@ -159,3 +159,57 @@ func TestMatchGroup_GB200NVLTrayInventory(t *testing.T) {
 	group.PFs = group.PFs[:4]
 	assert.Equal(t, StatusDeviation, MatchGroupWithCatalog(group, catalog).Status)
 }
+
+func TestMatchGroup_DGXGB300ComputeTrayInventory(t *testing.T) {
+	const name = "DGX-GB300-Compute-Tray-NVIDIA-GB300"
+	catalog, err := presets.EmbeddedCatalog()
+	require.NoError(t, err)
+
+	group := config.ClusterConfig{
+		MachineType: "DGX-GB300-Compute-Tray",
+		GPUType:     "NVIDIA-GB300",
+		PFs: []config.PFConfig{
+			{DeviceID: "1023", PciAddress: "0000:03:00.0"},
+			{DeviceID: "1023", PciAddress: "0002:03:00.0"},
+			{DeviceID: "1023", PciAddress: "0010:03:00.0"},
+			{DeviceID: "1023", PciAddress: "0012:03:00.0"},
+			{DeviceID: "a2dc", PciAddress: "0016:03:00.0"},
+			{DeviceID: "a2dc", PciAddress: "0016:03:00.1"},
+		},
+	}
+	result := MatchGroupWithCatalog(group, catalog)
+	require.Equal(t, StatusMatch, result.Status)
+	require.Empty(t, result.Deviations)
+	require.True(t, presets.ApplyPreset(result.Preset, &group))
+	for i, pf := range group.PFs[:4] {
+		require.NotNil(t, pf.Rail)
+		require.NotNil(t, pf.NumaNode)
+		assert.Equal(t, i, *pf.Rail)
+		assert.Equal(t, i/2, *pf.NumaNode)
+		assert.Equal(t, "east-west", pf.Traffic)
+		assert.Empty(t, pf.ConnectedGPU)
+		assert.Empty(t, pf.GPUProximity)
+	}
+	for _, pf := range group.PFs[4:] {
+		assert.Equal(t, "north-south", pf.Traffic)
+		assert.Nil(t, pf.Rail)
+	}
+	// A later discovery can have reliable GPU affinity for the same tray.
+	group.PFs[0].ConnectedGPU = "GPU3"
+	group.PFs[0].GPUProximity = "PIX"
+	group.PFs[0].ConnectedGPUPCIAddress = "0009:06:00.0"
+	require.True(t, presets.ApplyPreset(result.Preset, &group))
+	assert.Equal(t, "GPU3", group.PFs[0].ConnectedGPU)
+	assert.Equal(t, "PIX", group.PFs[0].GPUProximity)
+	assert.Equal(t, "0009:06:00.0", group.PFs[0].ConnectedGPUPCIAddress)
+
+	preset, err := catalog.LoadPresetByDir(name)
+	require.NoError(t, err)
+	synthesized, err := presets.SynthesizeClusterConfig(name, preset, map[string]string{"rack": "example"})
+	require.NoError(t, err)
+	require.Len(t, synthesized.PFs, 6)
+	for _, pf := range synthesized.PFs {
+		assert.Empty(t, pf.ConnectedGPU)
+		assert.Empty(t, pf.GPUProximity)
+	}
+}

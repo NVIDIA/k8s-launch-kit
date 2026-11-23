@@ -113,6 +113,9 @@ func (l *Launcher) discoverClusterConfig() error {
 	if err != nil {
 		return fmt.Errorf("copy discovery bootstrap input: %w", err)
 	}
+	if l.options.UserConfig == "" && (l.options.NVAIERelease != "" || bootstrapInput.Config.NVAIERelease != "") {
+		bootstrapInput.Present.DeletePrefix("networkOperator.selectedRelease")
+	}
 	bootstrapInput.Config.DiscoveredDOCAHost = nil
 	bootstrapInput.Config.DiscoveredDOCAHostScope = nil
 	bootstrap, err := resolve.Resolve(resolve.Request{Input: bootstrapInput, Options: l.options})
@@ -163,6 +166,13 @@ func (l *Launcher) discoverClusterConfig() error {
 	finalInput, err := config.CloneInput(rawInput)
 	if err != nil {
 		return fmt.Errorf("copy discovery input: %w", err)
+	}
+	if discoveryConfig.NVAIERelease != "" {
+		finalInput.Config.NVAIERelease = discoveryConfig.NVAIERelease
+		if err := resolve.ExpandNetworkOperatorRelease(discoveryConfig.NetworkOperator.SelectedRelease, finalInput.Config); err != nil {
+			return fmt.Errorf("retain NVAIE discovery cohort: %w", err)
+		}
+		finalInput.Present.Add("networkOperator.selectedRelease")
 	}
 	finalInput.Config.ClusterConfig = discoveryConfig.ClusterConfig
 	finalInput.Config.DiscoveredSecondaryNetwork = discoveryConfig.DiscoveredSecondaryNetwork
@@ -244,6 +254,10 @@ func (l *Launcher) discoverClusterConfig() error {
 		if finalConfig.OCPOperatorInstall != nil {
 			paths = append(paths, "ocpOperatorInstall")
 		}
+		if finalConfig.NVAIERelease != "" {
+			paths = append(paths, "nvaieRelease")
+			paths = append(paths, configflags.ConfigPathsForFlag("network-operator-release")...)
+		}
 		inputs := configflags.Infer(l.options)
 		for _, override := range inputs.Overrides {
 			paths = append(paths, override.Path)
@@ -278,6 +292,14 @@ func (l *Launcher) discoverClusterConfig() error {
 
 	l.ui.Success("Configuration saved: %s", savePath)
 	l.logger.Info("Discovered cluster config saved", "path", savePath)
+
+	if finalConfig.NVAIERelease != "" {
+		assessment := l.assessNVAIE(ctx, finalConfig)
+		l.result.NVAIE = assessment
+		if !assessment.Passed() {
+			l.ui.Warning("NVAIE %s matrix/component checks failed or remain unknown; see the assessment", finalConfig.NVAIERelease)
+		}
+	}
 
 	warnSpectrumXPlatforms(finalConfig.ClusterConfig, l.ui)
 	warnThirdPartyRDMAModules(finalConfig, "discover", l.ui)

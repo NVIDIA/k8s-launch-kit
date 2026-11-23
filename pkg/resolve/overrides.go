@@ -24,6 +24,13 @@ func ApplyCLIConfigOverrides(opts options.Options, cfg *config.LaunchKitConfig) 
 		return fmt.Errorf("config must not be nil")
 	}
 	inputs := configflags.Infer(opts)
+	present := config.PathSet{}
+	if cfg.NetworkOperator != nil && cfg.NetworkOperator.SelectedRelease != "" {
+		present.Add("networkOperator.selectedRelease")
+	}
+	if err := selectNVAIERelease(cfg, inputs, present); err != nil {
+		return err
+	}
 	if err := ApplyExplicitConfigInputs(inputs, cfg); err != nil {
 		return err
 	}
@@ -33,6 +40,9 @@ func ApplyCLIConfigOverrides(opts options.Options, cfg *config.LaunchKitConfig) 
 			return fmt.Errorf("expand networkOperator.selectedRelease: %w", err)
 		}
 	}
+	if err := ValidateNVAIECohort(cfg); err != nil {
+		return err
+	}
 	return normalizeExplicitSpectrumXConfig(cfg)
 }
 
@@ -41,7 +51,32 @@ func ApplyExplicitCLIConfigOverrides(opts options.Options, cfg *config.LaunchKit
 	if cfg == nil {
 		return fmt.Errorf("config must not be nil")
 	}
-	if err := ApplyExplicitConfigInputs(configflags.Infer(opts), cfg); err != nil {
+	inputs := configflags.Infer(opts)
+	hadNVAIERelease := cfg.NVAIERelease != ""
+	explicitNetworkRelease := hasRequest(inputs.Requests, configinput.ResolverNetworkOperatorRelease)
+	// Retained effective coordinates are evidence of what was rendered. Only
+	// an explicit release override may replace that cohort during loading.
+	if hadNVAIERelease && !explicitNetworkRelease {
+		if err := ValidateNVAIECohort(cfg); err != nil {
+			return err
+		}
+	}
+	present := config.PathSet{}
+	if cfg.NetworkOperator != nil && cfg.NetworkOperator.SelectedRelease != "" {
+		present.Add("networkOperator.selectedRelease")
+	}
+	if err := selectNVAIERelease(cfg, inputs, present); err != nil {
+		return err
+	}
+	if err := ApplyExplicitConfigInputs(inputs, cfg); err != nil {
+		return err
+	}
+	if !hadNVAIERelease && cfg.NVAIERelease != "" && !explicitNetworkRelease {
+		if err := ExpandNetworkOperatorRelease(cfg.NetworkOperator.SelectedRelease, cfg); err != nil {
+			return err
+		}
+	}
+	if err := ValidateNVAIECohort(cfg); err != nil {
 		return err
 	}
 	return normalizeExplicitSpectrumXConfig(cfg)

@@ -19,6 +19,8 @@ package cmd
 import (
 	"time"
 
+	"github.com/nvidia/k8s-launch-kit/pkg/configflags"
+	"github.com/nvidia/k8s-launch-kit/pkg/options"
 	"github.com/spf13/cobra"
 
 	"github.com/nvidia/k8s-launch-kit/pkg/dpf/app"
@@ -162,6 +164,7 @@ func newDPFValidateRequest(cmd *cobra.Command) dpftarget.ValidateRequest {
 
 func newHostValidateRequest(cmd *cobra.Command) hosttarget.ValidateRequest {
 	return hosttarget.ValidateRequest{
+		NVAIERelease:      hosttarget.Explicit[string]{Value: validateConfigOptions.NVAIERelease, Set: cmd.Flags().Changed("nvaie-release")},
 		Flavor:            flavor,
 		Kubeconfig:        kubeconfig,
 		DeploymentFiles:   deploymentFiles,
@@ -205,7 +208,10 @@ func newHostValidateRequest(cmd *cobra.Command) hosttarget.ValidateRequest {
 	}
 }
 
+var validateConfigOptions options.Options
+
 func init() {
+	mustBindConfigFlags(validateCmd, &validateConfigOptions, configflags.ScopeValidate)
 	rootCmd.AddCommand(validateCmd)
 	addTargetFlag(validateCmd)
 	validateCmd.Flags().StringVar(&dpfInventoryPath, "inventory", "", "DPF inventory YAML input (required for --target dpf)")
@@ -232,6 +238,7 @@ func init() {
 
 	validateCmd.Flags().StringVar(&validateJUnitPath, "junit-path", "", "Write JUnit XML to this file alongside text/JSON output (disabled when omitted).")
 	setFlagGroup(validateCmd, "kubeconfig", GroupCommon)
+	setFlagGroup(validateCmd, "nvaie-release", GroupValidation)
 	setFlagGroup(validateCmd, "user-config", GroupCommon)
 	setFlagGroup(validateCmd, "flavor", GroupCommon)
 	setFlagGroup(validateCmd, "deployment-files", GroupGeneration)

@@ -65,6 +65,7 @@ type DeployRequest struct {
 
 // ValidateRequest contains the Host-owned inputs for standalone validation.
 type ValidateRequest struct {
+	NVAIERelease      Explicit[string]
 	Flavor            string
 	Kubeconfig        string
 	DeploymentFiles   string
