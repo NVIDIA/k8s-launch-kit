@@ -178,15 +178,97 @@ var _ = ginkgo.Describe("proven Kubernetes artifact procedures", func() {
 	ginkgo.It("ignores an unrelated wrong-version driver DaemonSet outside selected workers", func(ctx ginkgo.SpecContext) {
 		image := "nvcr.io/nvidia/driver:595.91.07-ubuntu24.04"
 		outside := fixtureDaemonSet("outside-driver", "nvidia-driver-ctr", image)
+		outside.Spec.Template.Spec.NodeSelector = map[string]string{"pool": "outside"}
+		outsideNode := worker("outside-worker")
+		outsideNode.Labels["pool"] = "outside"
 		pod := readyPod("outside-driver", "outside-worker", "nvidia-driver-ctr", image)
 		pod.OwnerReferences = []metav1.OwnerReference{ownerReference("DaemonSet", outside)}
-		assessment := Assess(ctx, validClient(worker("outside-worker"), outside, pod), "9.0", []string{"worker"}, nil, nil)
+		assessment := Assess(ctx, validClient(outsideNode, outside, pod), "9.0", []string{"worker"}, nil, nil)
 		component := findComponent(assessment, GPUDriver)
 		Expect(component.Check.Status).To(Equal(Pass))
 		Expect(component.Observations).To(HaveLen(1))
 		Expect(component.Workloads).To(HaveLen(1))
 		Expect(component.Workloads[0].Name).To(Equal("operators/driver"))
 	})
+
+	ginkgo.DescribeTable("retains selected worker coverage during a rollout with only outside Pods", func(ctx ginkgo.SpecContext, componentName, name, container, image string) {
+		selected, outside := worker("worker"), worker("outside-worker")
+		selected.Labels["pool"], outside.Labels["pool"] = "shared", "shared"
+		ds := fixtureDaemonSet(name, container, image)
+		ds.Spec.Template.Spec.NodeSelector = map[string]string{"pool": "shared"}
+		ds.Status.DesiredNumberScheduled = 2
+		pod := readyPod(name, outside.Name, container, image)
+		pod.OwnerReferences = []metav1.OwnerReference{ownerReference("DaemonSet", ds)}
+		client := validClient(selected, outside, ds, pod)
+		assessment := Assess(ctx, client, "9.0", []string{selected.Name}, nil, nil)
+		component := findComponent(assessment, componentName)
+		Expect(component.Detection).To(Equal(Detected))
+		Expect(component.Check.Required).To(BeTrue())
+		Expect(component.Check.Status).To(Equal(Unknown))
+		Expect(component.Observations).To(BeEmpty(), "a Pod on an unselected node is not selected-worker evidence")
+		Expect(component.Workloads).To(HaveLen(1))
+		Expect(component.Workloads[0].ImageStatus).To(Equal(Unknown))
+		Expect(component.MissingNodes).To(Equal([]string{selected.Name}))
+		Expect(componentNodeStatuses(component)).To(Equal(map[string]Status{selected.Name: Unknown}))
+		Expect(assessment.Passed()).To(BeFalse())
+
+		selectedPod := readyPod(name+"-selected", selected.Name, container, image)
+		selectedPod.OwnerReferences = []metav1.OwnerReference{ownerReference("DaemonSet", ds)}
+		_, err := client.CoreV1().Pods("operators").Create(ctx, selectedPod, metav1.CreateOptions{})
+		Expect(err).NotTo(HaveOccurred())
+		ds.Status.CurrentNumberScheduled, ds.Status.UpdatedNumberScheduled = 2, 2
+		ds.Status.NumberReady, ds.Status.NumberAvailable = 2, 2
+		_, err = client.AppsV1().DaemonSets("operators").UpdateStatus(ctx, ds, metav1.UpdateOptions{})
+		Expect(err).NotTo(HaveOccurred())
+		assessment = Assess(ctx, client, "9.0", []string{selected.Name}, nil, nil)
+		component = findComponent(assessment, componentName)
+		Expect(component.Check.Status).To(Equal(Pass))
+		Expect(component.MissingNodes).To(BeEmpty())
+		Expect(component.Observations).To(HaveLen(1))
+		Expect(component.Observations[0].Node).To(Equal(selected.Name))
+		Expect(componentNodeStatuses(component)).To(Equal(map[string]Status{selected.Name: Pass}))
+		Expect(assessment.Passed()).To(BeTrue())
+	},
+		ginkgo.Entry("toolkit", ContainerToolkit, "toolkit", "nvidia-container-toolkit-ctr", "nvcr.io/nvidia/k8s/container-toolkit:v1.20.1-ubuntu24.04"),
+		ginkgo.Entry("GPU driver", GPUDriver, "driver", "nvidia-driver-ctr", "nvcr.io/nvidia/driver:620.70.06-ubuntu24.04"),
+		ginkgo.Entry("DOCA driver", DOCADriver, "doca", "mofed-container", "nvcr.io/nvidia/mellanox/doca-driver:doca3.5.0-26.07-0.7.7.0-1"),
+	)
+
+	ginkgo.DescribeTable("excludes outside-only Pods only with definite controller scope evidence", func(ctx ginkgo.SpecContext, selector map[string]string, nodeName string, missingNode, retained bool) {
+		const image = "nvcr.io/nvidia/k8s/container-toolkit:v1.20.1-ubuntu24.04"
+		selected := worker("worker")
+		selected.Labels["pool"] = "shared"
+		ds := fixtureDaemonSet("toolkit", "nvidia-container-toolkit-ctr", image)
+		ds.Spec.Template.Spec.NodeSelector, ds.Spec.Template.Spec.NodeName = selector, nodeName
+		pod := readyPod("toolkit", "outside-worker", "nvidia-container-toolkit-ctr", image)
+		client := validClient(selected, worker("outside-worker"), ds, pod)
+		if missingNode {
+			Expect(client.CoreV1().Nodes().Delete(ctx, selected.Name, metav1.DeleteOptions{})).To(Succeed())
+		}
+		assessment := Assess(ctx, client, "9.0", []string{selected.Name}, nil, nil)
+		component := findComponent(assessment, ContainerToolkit)
+		Expect(component.Observations).To(BeEmpty())
+		Expect(component.Check.Status).To(Equal(Unknown))
+		Expect(component.Check.Required).To(Equal(retained))
+		if retained {
+			Expect(component.Detection).To(Equal(Detected))
+			Expect(component.Workloads).To(HaveLen(1))
+			Expect(component.Workloads[0].ImageStatus).To(Equal(Unknown))
+			Expect(assessment.Passed()).To(BeFalse())
+		} else {
+			Expect(component.Detection).To(Equal(NotDetected))
+			Expect(component.Workloads).To(BeEmpty())
+			Expect(assessment.Passed()).To(BeTrue())
+		}
+	},
+		ginkgo.Entry("unrestricted selector", map[string]string{}, "", false, true),
+		ginkgo.Entry("matching selector", map[string]string{"pool": "shared"}, "", false, true),
+		ginkgo.Entry("different label", map[string]string{"pool": "outside"}, "", false, false),
+		ginkgo.Entry("missing label on known node", map[string]string{"absent": "value"}, "", false, false),
+		ginkgo.Entry("excluded node name", map[string]string{}, "outside-worker", false, false),
+		ginkgo.Entry("selected node name", map[string]string{}, "worker", false, true),
+		ginkgo.Entry("unobserved selected node", map[string]string{"pool": "outside"}, "", true, true),
+	)
 
 	ginkgo.It("gates selected driver Pods independently of global DaemonSet readiness", func(ctx ginkgo.SpecContext) {
 		image := "nvcr.io/nvidia/driver:620.70.06-ubuntu24.04"

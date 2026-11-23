@@ -118,6 +118,27 @@ var _ = ginkgo.Describe("DOCA product evidence", func() {
 		Expect(result.ScopeCheck.Status).To(Equal(Unknown))
 	})
 
+	ginkgo.It("does not let matching host snapshots hide driver rollout scope", func(ctx ginkgo.SpecContext) {
+		image := "nvcr.io/nvidia/mellanox/doca-driver:doca3.5.0-26.07-0.7.7.0-1"
+		ds := fixtureDaemonSet("doca", "mofed-container", image)
+		ds.Status.DesiredNumberScheduled = 2
+		pod := readyPod("doca", "outside-worker", "mofed-container", image)
+		pod.OwnerReferences = []metav1.OwnerReference{ownerReference("DaemonSet", ds)}
+		host := &DOCAHostEvidence{MembershipKnown: true, Fresh: false, Observations: []HostPackageObservation{{Node: "worker", Status: "installed", Version: "3.5.0"}}}
+		assessment := Assess(ctx, validClient(ds, pod, worker("outside-worker")), "9.0", []string{"worker"}, nil, host)
+		result := findComponent(assessment, DOCADriver)
+		Expect(result.Check.Status).To(Equal(Unknown))
+		Expect(result.Check.Required).To(BeTrue())
+		Expect(result.Observations).To(BeEmpty())
+		Expect(result.Workloads).To(HaveLen(1))
+		Expect(result.Workloads[0].ImageStatus).To(Equal(Unknown))
+		Expect(result.PackageObservations).To(HaveLen(1))
+		Expect(componentNodeStatuses(result)).To(Equal(map[string]Status{"worker": Pass}))
+		Expect(result.ScopeCheck).NotTo(BeNil())
+		Expect(result.ScopeCheck.Status).To(Equal(Unknown))
+		Expect(assessment.Passed()).To(BeFalse())
+	})
+
 	ginkgo.DescribeTable("retains incomplete controller intent without inventing scheduled scope", func(ctx ginkgo.SpecContext, selector map[string]string, nodeName string, affinity, pending, missingNode bool, detected bool) {
 		image := "nvcr.io/nvidia/mellanox/doca-driver:doca3.6.0-26.10-070000-1"
 		ds := fixtureDaemonSet("doca", "mofed-container", image)

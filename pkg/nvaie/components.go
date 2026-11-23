@@ -499,14 +499,6 @@ func scopeNodeLocalObservations(observations map[string][]ComponentObservation, 
 			continue
 		}
 		component := detector.component
-		placedOwners, unplacedOwners := map[workloadIdentity]bool{}, map[workloadIdentity]bool{}
-		for _, observation := range observations[component] {
-			if observation.Node == "" {
-				unplacedOwners[observation.owner] = true
-			} else {
-				placedOwners[observation.owner] = true
-			}
-		}
 		observations[component] = slices.DeleteFunc(observations[component], func(observation ComponentObservation) bool { return !selected[observation.Node] })
 		owners := map[workloadIdentity]bool{}
 		for i := range observations[component] {
@@ -519,8 +511,9 @@ func scopeNodeLocalObservations(observations map[string][]ComponentObservation, 
 				kept = append(kept, workload)
 				continue
 			}
-			if (!placedOwners[workload.identity] || unplacedOwners[workload.identity]) && mayTargetSelectedNodes(workload, workers, nodes) {
-				// Without a scheduled Pod, selectors are only prospective scope.
+			if mayTargetSelectedNodes(workload, workers, nodes) {
+				// Pods elsewhere do not exclude selected workers during rollout.
+				// Without a selected Pod, selectors are only prospective scope.
 				// Retain incomplete intent without treating its tag as live evidence.
 				workload.ImageStatus = Unknown
 				kept = append(kept, workload)
@@ -531,7 +524,7 @@ func scopeNodeLocalObservations(observations map[string][]ComponentObservation, 
 }
 
 // Exclude only definite node-name/selector mismatches. Affinity and scheduling
-// are not reconstructed here: an unscheduled controller remains UNKNOWN.
+// are not reconstructed here: unobserved selected-worker coverage remains UNKNOWN.
 func mayTargetSelectedNodes(workload WorkloadObservation, workers []string, nodes map[string]*corev1.Node) bool {
 	for _, name := range workers {
 		if workload.nodeName != "" && workload.nodeName != name {

@@ -117,8 +117,9 @@ regardless of desired `docaDriver.enable`; that flag controls deployment intent,
 not observed installation. With no installed package observations, preserve the
 container or unknown-host path selected by that flag. Keep concurrent live
 containers visible alongside package evidence; saved packages cannot override their mismatch or
-resolve conflicting delivery. Preserve unscheduled DaemonSet intent as unknown
-unless node-name or selector evidence excludes all selected workers. Do not
+resolve conflicting delivery. Preserve active DaemonSet intent as unknown when no Pods
+have been observed on selected workers, even if Pods exist elsewhere, unless
+node-name or selector evidence excludes all selected workers. Do not
 implement scheduler/affinity simulation to manufacture a scope verdict. Disabled container
 mode alone does not prove that DOCA-HOST is installed. Include all selected
 networking workers for DOCA, including CPU-only workers, and preserve the captured

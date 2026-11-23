@@ -91,9 +91,10 @@ DOCA includes installed DOCA-HOST package observations from discovery even when
 `docaDriver.enable` is true: desired deployment settings do not erase observed
 packages. Live driver-container evidence is still checked; saved packages cannot
 hide a failed container check. When both forms are observed: a version mismatch fails, and even matching
-versions require delivery reconciliation before passing. An unscheduled driver
-DaemonSet remains unknown rather than being treated as absent; only definite
-selector exclusions remove it from the selected-worker scope. Disabling the container alone
+versions require delivery reconciliation before passing. A detected driver or toolkit
+DaemonSet with active intent but no observed Pods on selected workers remains unknown, including
+when Pods exist only on other nodes. Only definite node-name or selector exclusions
+remove it from the selected-worker scope. Disabling the container alone
 does not prove DOCA-HOST is installed; the node might use inbox drivers. Once host
 packages are detected, missing worker evidence or incomplete discovery membership
 prevents a passing coverage result. Saved versions are marked **discovery snapshot**
