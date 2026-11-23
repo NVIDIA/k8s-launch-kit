@@ -30,7 +30,7 @@ func ocpResourceTestClient(objects ...client.Object) client.WithWatch {
 	scheme := runtime.NewScheme()
 	gomega.Expect(corev1.AddToScheme(scheme)).To(gomega.Succeed())
 	gomega.Expect(appsv1.AddToScheme(scheme)).To(gomega.Succeed())
-	for group, kinds := range map[string][]string{"mellanox.com": {"NicClusterPolicy", "NicNodePolicy", "MacvlanNetwork", "HostDeviceNetwork", "IPoIBNetwork"}, cleanNICGroup: {"NicDevice", "NicConfigurationTemplate", "NicFirmwareTemplate", "NicInterfaceNameTemplate", "NicFirmwareSource"}, cleanSriovGroup: {"SriovNetworkNodeState", "SriovNetworkNodePolicy", "SriovNetworkPoolConfig", "SriovNetwork", "SriovIBNetwork"}, "nv-ipam.nvidia.com": {"IPPool", "CIDRPool"}, "k8s.cni.cncf.io": {"NetworkAttachmentDefinition"}} {
+	for group, kinds := range map[string][]string{"mellanox.com": {"NicClusterPolicy", "NicNodePolicy", "MacvlanNetwork", "HostDeviceNetwork", "IPoIBNetwork"}, cleanNICGroup: {"NicDevice", "NicConfigurationTemplate", "NicFirmwareTemplate", "NicInterfaceNameTemplate", "NicFirmwareSource"}, cleanSriovGroup: {"SriovNetworkNodeState", "SriovNetworkNodePolicy", "SriovNetworkPoolConfig", "SriovNetwork", "SriovIBNetwork", "OVSNetwork"}, "nv-ipam.nvidia.com": {"IPPool", "CIDRPool"}, "k8s.cni.cncf.io": {"NetworkAttachmentDefinition"}} {
 		version := "v1alpha1"
 		if group == cleanSriovGroup || group == "k8s.cni.cncf.io" {
 			version = "v1"

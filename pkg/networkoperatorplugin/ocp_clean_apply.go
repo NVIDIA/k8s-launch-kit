@@ -7,6 +7,8 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"reflect"
+	"sort"
 
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
@@ -61,28 +63,107 @@ func applyOCPUnstructured(ctx context.Context, c client.Client, obj *unstructure
 		if live.GetUID() == "" || live.GetResourceVersion() == "" {
 			return fmt.Errorf("existing OpenShift resource has no UID/resourceVersion")
 		}
-		if err := validateOCPBoundOwner(desired, live); err != nil {
-			return err
-		}
-		if live.GetAnnotations()[ocpCleanRetainAnnotation] != "" ||
-			(live.GetAnnotations()[ocpCleanOwnerAnnotation] == "" && validateOCPCleanLiveOwnership(ctx, c, desired, live) != nil) {
-			// Historical deploy permits adoption. Preserve that behavior but
-			// never turn an ambiguous adoption into later deletion permission.
-			annotations := desired.GetAnnotations()
-			annotations[ocpCleanRetainAnnotation] = "true"
-			desired.SetAnnotations(annotations)
-		}
 	}
-	annotations := desired.GetAnnotations()
-	annotations[ocpCleanUIDAnnotation] = string(live.GetUID())
-	desired.SetAnnotations(annotations)
-	desired.SetUID(live.GetUID())
-	desired.SetResourceVersion(live.GetResourceVersion())
-	if err := c.Apply(ctx, client.ApplyConfigurationFromUnstructured(desired), opts...); err != nil {
+	return applyPinnedOCPWithRetry(ctx, c, obj, desired, live, opts)
+}
+
+// A resourceVersion conflict can come solely from a controller status write.
+// Refresh that version without widening the original authorization: incarnation,
+// binding, spec and spec ownership must remain the same throughout the retry.
+func applyPinnedOCPWithRetry(ctx context.Context, c client.Client, obj, desired, original *unstructured.Unstructured, opts []client.ApplyOption) error {
+	if original.GetDeletionTimestamp() != nil {
+		return fmt.Errorf("OpenShift apply target is terminating; refusing to apply its pinned incarnation")
+	}
+	originalOwners, err := ocpApplySpecOwners(original)
+	if err != nil {
 		return err
 	}
-	obj.Object = desired.Object
-	return nil
+	retained := desired.GetAnnotations()[ocpCleanRetainAnnotation] != "" || original.GetAnnotations()[ocpCleanRetainAnnotation] != ""
+	if original.GetAnnotations()[ocpCleanOwnerAnnotation] == "" && validateOCPCleanLiveOwnership(ctx, c, desired, original) != nil {
+		retained = true
+	}
+	applyConflict := false
+	return retry.OnError(retry.DefaultRetry, func(err error) bool {
+		return applyConflict && apierrors.IsConflict(err)
+	}, func() error {
+		applyConflict = false
+		current := &unstructured.Unstructured{}
+		current.SetGroupVersionKind(original.GroupVersionKind())
+		if err := c.Get(ctx, client.ObjectKeyFromObject(original), current); err != nil {
+			return fmt.Errorf("refresh pinned OpenShift apply target: %w", err)
+		}
+		if current.GetDeletionTimestamp() != nil {
+			return fmt.Errorf("OpenShift apply target is terminating; refusing to apply its pinned incarnation")
+		}
+		if current.GetUID() != original.GetUID() || current.GetResourceVersion() == "" {
+			return fmt.Errorf("OpenShift apply target was replaced or has no resourceVersion; refusing to follow another incarnation")
+		}
+		if err := validateOCPBoundOwner(desired, current); err != nil {
+			return err
+		}
+		for _, key := range []string{ocpCleanOwnerAnnotation, ocpCleanUIDAnnotation} {
+			if current.GetAnnotations()[key] != original.GetAnnotations()[key] {
+				return fmt.Errorf("OpenShift apply ownership binding changed while applying the pinned object")
+			}
+		}
+		owners, err := ocpApplySpecOwners(current)
+		if err != nil {
+			return err
+		}
+		if !reflect.DeepEqual(current.Object["spec"], original.Object["spec"]) ||
+			!reflect.DeepEqual(owners, originalOwners) || !reflect.DeepEqual(current.GetOwnerReferences(), original.GetOwnerReferences()) {
+			return fmt.Errorf("OpenShift apply target spec or its ownership changed; inspect the concurrent change before retrying")
+		}
+		if current.GetAnnotations()[ocpCleanRetainAnnotation] != "" ||
+			(current.GetAnnotations()[ocpCleanOwnerAnnotation] == "" && validateOCPCleanLiveOwnership(ctx, c, desired, current) != nil) {
+			// Historical adoption remains permitted. Once ambiguous, it must
+			// never acquire cleanup permission on a subsequent retry.
+			retained = true
+		}
+		// Apply may mutate its input even on error. Each attempt starts with
+		// independent retained intent and a newly observed resourceVersion.
+		candidate := desired.DeepCopy()
+		annotations := candidate.GetAnnotations()
+		annotations[ocpCleanUIDAnnotation] = string(original.GetUID())
+		if retained {
+			annotations[ocpCleanRetainAnnotation] = "true"
+		}
+		candidate.SetAnnotations(annotations)
+		candidate.SetUID(original.GetUID())
+		candidate.SetResourceVersion(current.GetResourceVersion())
+		if err := c.Apply(ctx, client.ApplyConfigurationFromUnstructured(candidate), opts...); err != nil {
+			applyConflict = apierrors.IsConflict(err)
+			return err
+		}
+		obj.Object = candidate.Object
+		return nil
+	})
+}
+
+// Ignore timestamps, status ownership and metadata-only ownership changes, while
+// comparing all managers' exact spec claims independently of entry ordering.
+func ocpApplySpecOwners(obj *unstructured.Unstructured) ([]string, error) {
+	var owners []string
+	for _, entry := range obj.GetManagedFields() {
+		if entry.Subresource != "" || entry.FieldsV1 == nil {
+			continue
+		}
+		var fields map[string]any
+		if err := json.Unmarshal(entry.FieldsV1.GetRawBytes(), &fields); err != nil {
+			return nil, fmt.Errorf("inspect OpenShift apply field ownership: %w", err)
+		}
+		spec, present := fields["f:spec"]
+		if !present {
+			continue
+		}
+		encoded, err := json.Marshal([]any{entry.Manager, entry.Operation, entry.APIVersion, entry.FieldsType, spec})
+		if err != nil {
+			return nil, err
+		}
+		owners = append(owners, string(encoded))
+	}
+	sort.Strings(owners)
+	return owners, nil
 }
 
 func bindOCPCreatedUID(ctx context.Context, c client.Client, created *unstructured.Unstructured) error {
@@ -92,6 +173,9 @@ func bindOCPCreatedUID(ctx context.Context, c client.Client, created *unstructur
 		current.SetGroupVersionKind(created.GroupVersionKind())
 		if err := c.Get(ctx, client.ObjectKeyFromObject(created), current); err != nil {
 			return err
+		}
+		if current.GetDeletionTimestamp() != nil {
+			return fmt.Errorf("created OpenShift apply target is terminating; refusing UID binding")
 		}
 		annotations := current.GetAnnotations()
 		if current.GetUID() != createdUID || annotations[ocpCleanOwnerAnnotation] != owner || annotations[ocpCleanRetainAnnotation] != "" {

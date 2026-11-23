@@ -30,6 +30,9 @@ func checkOCPCleanDependencies(ctx context.Context, c client.Client, cfg *config
 			}
 		}
 	}
+	if err := checkOCPPoolConsumers(ctx, c, cfg, refs); err != nil {
+		return err
+	}
 	if root == nil {
 		return nil
 	}

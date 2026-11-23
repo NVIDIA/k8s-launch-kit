@@ -439,11 +439,13 @@ func restoreOCPConfigurationObject(ctx context.Context, c client.Client, target 
 	var deleted *unstructured.Unstructured
 	var subscription *unstructured.Unstructured
 	restoredAPI := false
+	waivedSubscriptionRollout := false
 	err := retry.RetryOnConflict(retry.DefaultRetry, func() error {
 		messages = nil
 		deleted = nil
 		subscription = nil
 		restoredAPI = false
+		waivedSubscriptionRollout = false
 		current := target.DeepCopy()
 		key := client.ObjectKeyFromObject(target)
 		if err := c.Get(ctx, key, current); apierrors.IsNotFound(err) {
@@ -619,6 +621,17 @@ func restoreOCPConfigurationObject(ctx context.Context, c client.Client, target 
 			restoredAPI = !reflect.DeepEqual(old, next)
 		}
 		journal.Fields = pending
+		if skipWait && len(journal.RestoreEnv) > 0 {
+			// Explicit skip-wait completes the API restoration without claiming
+			// OLM adoption. Release this marker in the same transaction as the
+			// restored fields, preserving unresolved deltas and site settings.
+			// On a skip retry, first prove the pending baseline is still live.
+			if err := ocpSubscriptionRestoreStillDesired(current, journal.RestoreEnv); err != nil {
+				return err
+			}
+			journal.RestoreEnv = nil
+			waivedSubscriptionRollout = true
+		}
 		needsSubscriptionWait := len(journal.RestoreEnv) > 0
 		if len(pending) == 0 && len(journal.RestoreEnv) == 0 {
 			journal = nil
@@ -643,11 +656,12 @@ func restoreOCPConfigurationObject(ctx context.Context, c client.Client, target 
 		}
 	}
 	if subscription != nil {
-		if skipWait {
-			messages = append(messages, fmt.Sprintf("OpenShift Subscription %s API configuration restored; rollout wait skipped; rerun clean without --skip-wait to verify adoption", client.ObjectKeyFromObject(subscription)))
-		} else if err := completeOCPSubscriptionRestore(ctx, c, subscription, cohort); err != nil {
+		if err := completeOCPSubscriptionRestore(ctx, c, subscription, cohort); err != nil {
 			return messages, err
 		}
+	}
+	if waivedSubscriptionRollout {
+		messages = append(messages, fmt.Sprintf("OpenShift Subscription %s API configuration restored; --skip-wait waived rollout verification; controller adoption remains unverified", client.ObjectKeyFromObject(target)))
 	}
 	if (restoredAPI || deleted != nil) && (target.GetKind() == "NodeFeatureDiscovery" || isOCPSysctlAllowlistPatch(target)) {
 		messages = append(messages, fmt.Sprintf("OpenShift %s %s API configuration restored; worker propagation is unverified; inspect the platform controllers and workload behavior", target.GetKind(), client.ObjectKeyFromObject(target)))

@@ -57,11 +57,27 @@ func cleanOCPResourcesWithLogs(ctx context.Context, c client.Client, cfg *config
 			}
 		}
 		others, roots := partitionOCPRootPolicies(refs)
-		n, err := deleteOCPRefs(ctx, c, others, opts.PollInterval)
+		var nonPools, pools []cleanObjectRef
+		for _, ref := range others {
+			if ref.GVK.Group == "nv-ipam.nvidia.com" && ref.GVK.Kind == "IPPool" {
+				pools = append(pools, ref)
+			} else {
+				nonPools = append(nonPools, ref)
+			}
+		}
+		n, err := deleteOCPRefs(ctx, c, nonPools, opts.PollInterval)
 		if err != nil {
 			return n, err
 		}
-		count, err := deleteOCPRefs(ctx, c, roots, opts.PollInterval)
+		if err := checkOCPPoolConsumers(ctx, c, cfg, pools); err != nil {
+			return n, err
+		}
+		count, err := deleteOCPRefs(ctx, c, pools, opts.PollInterval)
+		n += count
+		if err != nil {
+			return n, err
+		}
+		count, err = deleteOCPRefs(ctx, c, roots, opts.PollInterval)
 		n += count
 		if err != nil {
 			return n, err
@@ -190,6 +206,9 @@ func cleanOCPResourcesWithLogs(ctx context.Context, c client.Client, cfg *config
 	}
 	// Clear IP pools and other remaining CR finalizers while their policy-owned
 	// controllers are alive. Only the root-policy stage can remove those workloads.
+	if err := checkOCPPoolConsumers(ctx, c, cfg, ocpCleanPoolRefs(remaining)); err != nil {
+		return deleted, err
+	}
 	if err := run(remaining); err != nil {
 		return deleted, err
 	}
@@ -350,4 +369,14 @@ func partitionOCPRootPolicies(refs []cleanObjectRef) (others, roots []cleanObjec
 		return roots[i].GVK.Kind == "NicNodePolicy" && roots[j].GVK.Kind == "NicClusterPolicy"
 	})
 	return others, roots
+}
+
+func ocpCleanPoolRefs(refs []cleanObjectRef) []cleanObjectRef {
+	var pools []cleanObjectRef
+	for _, ref := range refs {
+		if ref.GVK.Group == "nv-ipam.nvidia.com" && ref.GVK.Kind == "IPPool" {
+			pools = append(pools, ref)
+		}
+	}
+	return pools
 }

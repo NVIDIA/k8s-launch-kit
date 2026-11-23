@@ -22,6 +22,7 @@ import (
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/types"
+	"k8s.io/client-go/util/retry"
 	"k8s.io/utils/ptr"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
@@ -269,6 +270,239 @@ var _ = ginkgo.Describe("OpenShift exact cleanup inventory", func() {
 })
 
 var _ = ginkgo.Describe("OpenShift cleanup ownership during apply", func() {
+	ginkgo.It("does not promote original ambiguous legacy ownership when generation metadata appears before the refreshed read", func() {
+		cfg, artifacts, live := ocpCleanFixture()
+		plan, err := ocpCleanDesiredPlan(cfg, artifacts)
+		gomega.Expect(err).NotTo(gomega.HaveOccurred())
+		annotations := live.GetAnnotations()
+		delete(annotations, launchKitVersionAnnotation)
+		live.SetAnnotations(annotations)
+		reads, applies := 0, 0
+		c := fake.NewClientBuilder().WithReturnManagedFields().WithObjects(live).WithInterceptorFuncs(interceptor.Funcs{
+			Get: func(ctx context.Context, c client.WithWatch, key client.ObjectKey, obj client.Object, opts ...client.GetOption) error {
+				err := c.Get(ctx, key, obj, opts...)
+				reads++
+				if err == nil && reads == 1 {
+					updated := obj.(*unstructured.Unstructured).DeepCopy()
+					a := updated.GetAnnotations()
+					a[launchKitVersionAnnotation] = "test-version"
+					updated.SetAnnotations(a)
+					gomega.Expect(c.Update(ctx, updated)).To(gomega.Succeed())
+				}
+				return err
+			},
+			Apply: func(_ context.Context, _ client.WithWatch, ac runtime.ApplyConfiguration, _ ...client.ApplyOption) error {
+				applies++
+				gomega.Expect(ac.(client.Object).GetAnnotations()[ocpCleanRetainAnnotation]).To(gomega.Equal("true"))
+				return nil
+			},
+		}).Build()
+		gomega.Expect(applyOCPUnstructured(context.Background(), c, plan.refs[0].Desired.DeepCopy(), false)).To(gomega.Succeed())
+		gomega.Expect(reads).To(gomega.Equal(2))
+		gomega.Expect(applies).To(gomega.Equal(1))
+	})
+
+	ginkgo.It("refuses terminating initial and refreshed targets without a subsequent SSA write", func() {
+		for _, terminatingRead := range []int{1, 2, 3} {
+			cfg, artifacts, live := ocpCleanFixture()
+			plan, err := ocpCleanDesiredPlan(cfg, artifacts)
+			gomega.Expect(err).NotTo(gomega.HaveOccurred())
+			reads, applies := 0, 0
+			c := fake.NewClientBuilder().WithReturnManagedFields().WithObjects(live).WithInterceptorFuncs(interceptor.Funcs{
+				Get: func(ctx context.Context, c client.WithWatch, key client.ObjectKey, obj client.Object, opts ...client.GetOption) error {
+					err := c.Get(ctx, key, obj, opts...)
+					reads++
+					if err == nil && reads == terminatingRead {
+						timestamp := metav1.Now()
+						obj.SetDeletionTimestamp(&timestamp)
+					}
+					return err
+				},
+				Apply: func(context.Context, client.WithWatch, runtime.ApplyConfiguration, ...client.ApplyOption) error {
+					applies++
+					gomega.Expect(terminatingRead).To(gomega.Equal(3), "terminating object must not be applied")
+					return apierrors.NewConflict(schema.GroupResource{Group: "mellanox.com", Resource: "nicclusterpolicies"}, live.GetName(), errors.New("status advanced"))
+				},
+			}).Build()
+			gomega.Expect(applyOCPUnstructured(context.Background(), c, plan.refs[0].Desired.DeepCopy(), false)).To(gomega.MatchError(gomega.ContainSubstring("terminating")))
+			gomega.Expect(reads).To(gomega.Equal(terminatingRead))
+			if terminatingRead == 3 {
+				gomega.Expect(applies).To(gomega.Equal(1))
+			} else {
+				gomega.Expect(applies).To(gomega.BeZero())
+			}
+		}
+	})
+
+	ginkgo.It("refuses binding a newly created target that starts terminating before the metadata patch", func() {
+		cfg, artifacts, _ := ocpCleanFixture()
+		plan, err := ocpCleanDesiredPlan(cfg, artifacts)
+		gomega.Expect(err).NotTo(gomega.HaveOccurred())
+		created := false
+		c := fake.NewClientBuilder().WithInterceptorFuncs(interceptor.Funcs{
+			Create: func(ctx context.Context, c client.WithWatch, obj client.Object, opts ...client.CreateOption) error {
+				obj.SetUID("created-uid")
+				created = true
+				return c.Create(ctx, obj, opts...)
+			},
+			Get: func(ctx context.Context, c client.WithWatch, key client.ObjectKey, obj client.Object, opts ...client.GetOption) error {
+				err := c.Get(ctx, key, obj, opts...)
+				if err == nil && created {
+					timestamp := metav1.Now()
+					obj.SetDeletionTimestamp(&timestamp)
+				}
+				return err
+			},
+			Patch: func(context.Context, client.WithWatch, client.Object, client.Patch, ...client.PatchOption) error {
+				ginkgo.Fail("terminating object must not be bound")
+				return nil
+			},
+			Apply: func(context.Context, client.WithWatch, runtime.ApplyConfiguration, ...client.ApplyOption) error {
+				ginkgo.Fail("terminating object must not be applied")
+				return nil
+			},
+		}).Build()
+		gomega.Expect(applyOCPUnstructured(context.Background(), c, plan.refs[0].Desired.DeepCopy(), false)).To(gomega.MatchError(gomega.ContainSubstring("terminating")))
+	})
+
+	ginkgo.It("retries final SSA conflicts after status writes with a fresh resourceVersion and unchanged intent", func() {
+		cfg, artifacts, live := ocpCleanFixture()
+		plan, err := ocpCleanDesiredPlan(cfg, artifacts)
+		gomega.Expect(err).NotTo(gomega.HaveOccurred())
+		setOCPCleanOwner(live, plan.owner)
+		annotations := live.GetAnnotations()
+		annotations[ocpCleanUIDAnnotation] = string(live.GetUID())
+		live.SetAnnotations(annotations)
+		attempts := 0
+		firstVersion := ""
+		c := fake.NewClientBuilder().WithReturnManagedFields().WithObjects(live).WithInterceptorFuncs(interceptor.Funcs{
+			Apply: func(ctx context.Context, c client.WithWatch, ac runtime.ApplyConfiguration, _ ...client.ApplyOption) error {
+				attempts++
+				candidate := ac.(client.Object)
+				gomega.Expect(candidate.GetUID()).To(gomega.Equal(live.GetUID()))
+				gomega.Expect(candidate.GetAnnotations()).NotTo(gomega.HaveKey(ocpCleanRetainAnnotation))
+				if attempts == 1 {
+					firstVersion = candidate.GetResourceVersion()
+					current := live.DeepCopy()
+					gomega.Expect(c.Get(ctx, client.ObjectKeyFromObject(live), current)).To(gomega.Succeed())
+					gomega.Expect(unstructured.SetNestedField(current.Object, "ready", "status", "state")).To(gomega.Succeed())
+					fields := current.GetManagedFields()
+					fields = append(fields, metav1.ManagedFieldsEntry{Manager: "controller", Operation: metav1.ManagedFieldsOperationUpdate, APIVersion: current.GetAPIVersion(), Subresource: "status", FieldsType: "FieldsV1", FieldsV1: metav1.NewFieldsV1(`{"f:status":{"f:state":{}}}`)})
+					current.SetManagedFields(fields)
+					gomega.Expect(c.Update(ctx, current)).To(gomega.Succeed())
+					candidate.SetLabels(map[string]string{"failed-response": "discard"})
+					return apierrors.NewConflict(schema.GroupResource{Group: "mellanox.com", Resource: "nicclusterpolicies"}, candidate.GetName(), errors.New("status advanced"))
+				}
+				gomega.Expect(candidate.GetResourceVersion()).NotTo(gomega.Equal(firstVersion))
+				gomega.Expect(candidate.GetLabels()).NotTo(gomega.HaveKey("failed-response"))
+				return nil
+			},
+		}).Build()
+		gomega.Expect(applyOCPUnstructured(context.Background(), c, plan.refs[0].Desired.DeepCopy(), false)).To(gomega.Succeed())
+		gomega.Expect(attempts).To(gomega.Equal(2))
+	})
+
+	ginkgo.DescribeTable("refuses a changed authorization after a final SSA conflict", func(change func(*unstructured.Unstructured), reason string) {
+		cfg, artifacts, live := ocpCleanFixture()
+		plan, err := ocpCleanDesiredPlan(cfg, artifacts)
+		gomega.Expect(err).NotTo(gomega.HaveOccurred())
+		setOCPCleanOwner(live, plan.owner)
+		annotations := live.GetAnnotations()
+		annotations[ocpCleanUIDAnnotation] = string(live.GetUID())
+		live.SetAnnotations(annotations)
+		attempts := 0
+		c := fake.NewClientBuilder().WithReturnManagedFields().WithObjects(live).WithInterceptorFuncs(interceptor.Funcs{
+			Create: func(context.Context, client.WithWatch, client.Object, ...client.CreateOption) error {
+				ginkgo.Fail("retry must not create any object")
+				return nil
+			},
+			Delete: func(context.Context, client.WithWatch, client.Object, ...client.DeleteOption) error {
+				ginkgo.Fail("retry must not delete any object")
+				return nil
+			},
+			Apply: func(ctx context.Context, c client.WithWatch, ac runtime.ApplyConfiguration, _ ...client.ApplyOption) error {
+				attempts++
+				current := live.DeepCopy()
+				gomega.Expect(c.Get(ctx, client.ObjectKeyFromObject(live), current)).To(gomega.Succeed())
+				before := current.DeepCopy()
+				change(current)
+				if current.GetUID() != before.GetUID() {
+					gomega.Expect(c.Delete(ctx, before)).To(gomega.Succeed())
+					current.SetResourceVersion("")
+					gomega.Expect(c.Create(ctx, current)).To(gomega.Succeed())
+				} else {
+					gomega.Expect(c.Update(ctx, current)).To(gomega.Succeed())
+				}
+				return apierrors.NewConflict(schema.GroupResource{Group: "mellanox.com", Resource: "nicclusterpolicies"}, ac.(client.Object).GetName(), errors.New("concurrent change"))
+			},
+		}).Build()
+		gomega.Expect(applyOCPUnstructured(context.Background(), c, plan.refs[0].Desired.DeepCopy(), false)).To(gomega.MatchError(gomega.ContainSubstring(reason)))
+		gomega.Expect(attempts).To(gomega.Equal(1))
+	},
+		ginkgo.Entry("replacement", func(obj *unstructured.Unstructured) { obj.SetUID("replacement-uid") }, "another incarnation"),
+		ginkgo.Entry("foreign bundle marker", func(obj *unstructured.Unstructured) { setOCPCleanOwner(obj, "foreign-bundle") }, "different OpenShift bundle"),
+		ginkgo.Entry("removed ownership binding", func(obj *unstructured.Unstructured) {
+			a := obj.GetAnnotations()
+			delete(a, ocpCleanOwnerAnnotation)
+			delete(a, ocpCleanUIDAnnotation)
+			obj.SetAnnotations(a)
+		}, "ownership binding changed"),
+		ginkgo.Entry("concurrent spec change", func(obj *unstructured.Unstructured) {
+			gomega.Expect(unstructured.SetNestedField(obj.Object, true, "spec", "nvIpam", "enableWebhook")).To(gomega.Succeed())
+		}, "spec or its ownership changed"),
+		ginkgo.Entry("foreign spec manager with unchanged spec", func(obj *unstructured.Unstructured) {
+			fields := obj.GetManagedFields()
+			fields = append(fields, metav1.ManagedFieldsEntry{Manager: "site", Operation: metav1.ManagedFieldsOperationUpdate, APIVersion: obj.GetAPIVersion(), FieldsType: "FieldsV1", FieldsV1: metav1.NewFieldsV1(`{"f:spec":{"f:nvIpam":{"f:enableWebhook":{}}}}`)})
+			obj.SetManagedFields(fields)
+		}, "spec or its ownership changed"),
+	)
+
+	ginkgo.It("keeps ambiguous adoption retained across final SSA retries", func() {
+		cfg, artifacts, live := ocpCleanFixture()
+		plan, err := ocpCleanDesiredPlan(cfg, artifacts)
+		gomega.Expect(err).NotTo(gomega.HaveOccurred())
+		live.SetManagedFields(nil)
+		attempts := 0
+		c := fake.NewClientBuilder().WithReturnManagedFields().WithObjects(live).WithInterceptorFuncs(interceptor.Funcs{
+			Apply: func(_ context.Context, _ client.WithWatch, ac runtime.ApplyConfiguration, _ ...client.ApplyOption) error {
+				attempts++
+				candidate := ac.(client.Object)
+				gomega.Expect(candidate.GetAnnotations()[ocpCleanRetainAnnotation]).To(gomega.Equal("true"))
+				if attempts == 1 {
+					candidate.SetAnnotations(nil)
+					return apierrors.NewConflict(schema.GroupResource{Group: "mellanox.com", Resource: "nicclusterpolicies"}, candidate.GetName(), errors.New("status advanced"))
+				}
+				return nil
+			},
+		}).Build()
+		gomega.Expect(applyOCPUnstructured(context.Background(), c, plan.refs[0].Desired.DeepCopy(), false)).To(gomega.Succeed())
+		gomega.Expect(attempts).To(gomega.Equal(2))
+	})
+
+	ginkgo.It("bounds final SSA conflict retries and never retries an ambiguous write result", func() {
+		for _, ambiguous := range []bool{false, true} {
+			cfg, artifacts, live := ocpCleanFixture()
+			plan, err := ocpCleanDesiredPlan(cfg, artifacts)
+			gomega.Expect(err).NotTo(gomega.HaveOccurred())
+			attempts := 0
+			c := fake.NewClientBuilder().WithReturnManagedFields().WithObjects(live).WithInterceptorFuncs(interceptor.Funcs{
+				Apply: func(context.Context, client.WithWatch, runtime.ApplyConfiguration, ...client.ApplyOption) error {
+					attempts++
+					if ambiguous {
+						return errors.New("ambiguous transport result")
+					}
+					return apierrors.NewConflict(schema.GroupResource{Group: "mellanox.com", Resource: "nicclusterpolicies"}, live.GetName(), errors.New("status advanced"))
+				},
+			}).Build()
+			gomega.Expect(applyOCPUnstructured(context.Background(), c, plan.refs[0].Desired.DeepCopy(), false)).To(gomega.HaveOccurred())
+			if ambiguous {
+				gomega.Expect(attempts).To(gomega.Equal(1))
+			} else {
+				gomega.Expect(attempts).To(gomega.Equal(retry.DefaultRetry.Steps))
+			}
+		}
+	})
+
 	ginkgo.It("retries UID binding after status advances the created object's resource version", func() {
 		cfg, artifacts, _ := ocpCleanFixture()
 		selected, err := prepareDeploymentObjects(artifacts, true)
