@@ -448,9 +448,24 @@ Do not add GPU counts or resource maps under `clusterConfig`.
   its deadline first, discovery returns that context error. It aborts if **no**
   pod ever becomes Ready. Common causes of a total failure: image tag missing in
   your registry, pull-secret missing.
+- Readiness does not prove device publication. During the subsequent `NicDevice`
+  wait, bootstrap discovery refreshes pending publishers' pod failure states and
+  warns without aborting transient recovery. Eligibility-probe failures identify
+  unverified excluded nodes; inspect these when the wait-set count is too small.
+  Use `--keep-namespace` and current/`--previous` pod logs for diagnosis.
+- Bootstrap ConfigMap access is cluster-wide `get/list/watch`, as required by
+  the daemon's informer cache, with no ConfigMap write verbs. The temporary
+  daemon sets `SKIP_DEVICE_ON_DISCOVERY_ERROR=true` to publish readable peers
+  when firmware/PSID or BlueField operation-mode queries fail on supported
+  images. A failed trust query is unknown, not confirmed host restriction.
+  Skipping can omit ConnectX NICs too and preserve stale CRs; compare saved
+  per-node PCI inventory with expected hardware and inspect retained daemon
+  logs. Success is not proof of completeness; nodes with no published NICs can
+  still time out. Existing operator-managed daemons are unchanged.
 - If discovery reports "no nodes with an NVIDIA NIC (PCI vendor 15b3) were found",
-  the daemon ran but no node's sysfs exposed a `0x15b3` device (no Mellanox/NVIDIA
-  NICs, or `/sys` not mounted/readable in the pod).
+  no probe verified a usable NVIDIA NIC. Check per-node warnings before
+  concluding that hardware is absent: `/sys` may be unreadable or pod exec may
+  have failed during a restart.
 - If discovery reports "no discoverable NVIDIA NICs were found", every detected
   BlueField is in zero-trust (`restricted`) mode. Those devices cannot be
   configured from the host and intentionally do not publish `NicDevice` resources.

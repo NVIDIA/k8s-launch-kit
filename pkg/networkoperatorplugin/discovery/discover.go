@@ -269,7 +269,8 @@ func DiscoverClusterConfig(ctx context.Context, c client.Client, restConfig *res
 	// in another namespace can host the CRs the discovery daemon reconciles
 	// (the daemon's controller queries cluster-wide by node name), so
 	// restricting to nicconfigdaemon.Namespace would miss them.
-	if err := waitNicDevicesDiscovered(ctx, c, expectedNodes); err != nil {
+	if err := waitNicDevicesDiscoveredWithObserver(ctx, c, expectedNodes, 10*time.Second,
+		newBootstrapDaemonObserver(c, uiOutput)); err != nil {
 		return err
 	}
 
@@ -1006,6 +1007,14 @@ func waitNicDevicesDiscovered(parentCtx context.Context, c client.Client, expect
 }
 
 func waitNicDevicesDiscoveredWithInterval(parentCtx context.Context, c client.Client, expectedNodes []string, pollInterval time.Duration) error {
+	return waitNicDevicesDiscoveredWithObserver(parentCtx, c, expectedNodes, pollInterval, nil)
+}
+
+// waitNicDevicesDiscoveredWithObserver optionally diagnoses pending bootstrap
+// publishers. Other callers retain their polling behavior without pod inspection.
+func waitNicDevicesDiscoveredWithObserver(parentCtx context.Context, c client.Client, expectedNodes []string, pollInterval time.Duration,
+	observePending func(context.Context, []string),
+) error {
 	uiOutput := ui.FromContext(parentCtx)
 	progress := uiOutput.StartProgress(fmt.Sprintf("Discovering network devices on %d node(s) (timeout: 10 min)", len(expectedNodes)))
 
@@ -1021,6 +1030,11 @@ func waitNicDevicesDiscoveredWithInterval(parentCtx context.Context, c client.Cl
 	for _, n := range expectedNodes {
 		expectedSet[n] = true
 	}
+	missingNodes := make([]string, 0, len(expectedSet))
+	for node := range expectedSet {
+		missingNodes = append(missingNodes, node)
+	}
+	slices.Sort(missingNodes)
 
 	ticker := time.NewTicker(pollInterval)
 	defer ticker.Stop()
@@ -1044,29 +1058,32 @@ func waitNicDevicesDiscoveredWithInterval(parentCtx context.Context, c client.Cl
 				}
 			}
 
-			allFound := true
+			missingNodes = missingNodes[:0]
 			for node := range expectedSet {
 				if !discoveredNodes[node] {
-					allFound = false
-					break
+					missingNodes = append(missingNodes, node)
 				}
 			}
+			slices.Sort(missingNodes)
 
-			if allFound && len(discoveredNodes) > 0 {
+			if len(missingNodes) == 0 && len(discoveredNodes) > 0 {
 				progress.Success(fmt.Sprintf("Found %d device(s) on %d node(s)", len(list.Items), len(discoveredNodes)))
 				return nil
 			}
+			if observePending != nil {
+				observePending(ctx, missingNodes)
+			}
 
-			progress.Update(fmt.Sprintf("Discovered devices on %d/%d node(s)...", len(discoveredNodes), len(expectedSet)))
+			progress.Update(fmt.Sprintf("Discovered devices on %d/%d node(s)...", len(expectedSet)-len(missingNodes), len(expectedSet)))
 		}
 
 		select {
 		case <-ctx.Done():
 			progress.Fail("Timeout waiting for devices")
 			if lastRetryableListErr != nil {
-				return fmt.Errorf("timeout waiting for NicDevice resources from all expected nodes: %w", lastRetryableListErr)
+				return fmt.Errorf("timeout waiting for NicDevice resources from all expected nodes (missing: %s): %w", strings.Join(missingNodes, ", "), lastRetryableListErr)
 			}
-			return fmt.Errorf("timeout waiting for NicDevice resources from all expected nodes")
+			return fmt.Errorf("timeout waiting for NicDevice resources from all expected nodes (missing: %s)", strings.Join(missingNodes, ", "))
 		case <-ticker.C:
 		}
 	}
@@ -1990,6 +2007,7 @@ func filterNodesWithNICs(ctx context.Context, restConfig *rest.Config,
 		pod := findDaemonPod([]string{node}, dsPods)
 		if pod == nil {
 			log.Log.V(1).Info("No daemon pod on node; excluding from NIC wait set", "node", node)
+			uiOutput.Warning("No discovery daemon pod is available on %s; excluding this unverified node from the NIC wait set (inventory may be incomplete)", node)
 			continue
 		}
 		containerName := ""
@@ -2006,6 +2024,7 @@ func filterNodesWithNICs(ctx context.Context, restConfig *rest.Config,
 			if probeResult != mellanoxNICProbePresent {
 				log.Log.Error(err, "failed to probe node for NVIDIA NIC; excluding from wait set",
 					"node", node, "pod", pod.Name)
+				uiOutput.Warning("Could not inspect NVIDIA NICs on %s using daemon pod %s: %v; excluding this unverified node from the NIC wait set (inventory may be incomplete)", node, pod.Name, err)
 				continue
 			}
 			// A usable NIC was already verified. A later scan failure must not

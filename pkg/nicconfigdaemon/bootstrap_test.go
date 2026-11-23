@@ -197,6 +197,15 @@ func TestEnsure_AppliesDaemonSetWithExpectedImage(t *testing.T) {
 	}
 	assert.Equal(t, "debug", logLevelEnv)
 
+	// Discovery tolerates per-device failures without dropping readable peers.
+	var skipDiscoveryErrorEnv []corev1.EnvVar
+	for _, env := range container.Env {
+		if env.Name == "SKIP_DEVICE_ON_DISCOVERY_ERROR" {
+			skipDiscoveryErrorEnv = append(skipDiscoveryErrorEnv, env)
+		}
+	}
+	assert.Equal(t, []corev1.EnvVar{{Name: "SKIP_DEVICE_ON_DISCOVERY_ERROR", Value: "true"}}, skipDiscoveryErrorEnv)
+
 	// ImagePullSecrets surfaced on the pod spec
 	assert.Equal(t, []corev1.LocalObjectReference{
 		{Name: "my-registry-creds"},
@@ -248,6 +257,31 @@ func TestEnsure_AppliesDaemonSetWithExpectedImage(t *testing.T) {
 	require.NotNil(t, etcVolume.HostPath)
 	assert.Equal(t, "/etc", etcVolume.HostPath.Path)
 	assert.Equal(t, corev1.HostPathDirectory, *etcVolume.HostPath.Type)
+}
+
+func TestEnsure_GrantsReadOnlyConfigMapCacheAccess(t *testing.T) {
+	c := newFakeClient(t)
+	require.NoError(t, Ensure(context.Background(), c, Options{
+		Repository: testRepo,
+		Version:    testVersion,
+	}))
+
+	role := &rbacv1.ClusterRole{}
+	require.NoError(t, c.Get(context.Background(), types.NamespacedName{Name: ClusterRoleName}, role))
+
+	var configMapRules []rbacv1.PolicyRule
+	for _, rule := range role.Rules {
+		for _, resource := range rule.Resources {
+			if resource == "configmaps" {
+				configMapRules = append(configMapRules, rule)
+			}
+		}
+	}
+	require.Len(t, configMapRules, 1)
+	assert.Equal(t, []string{""}, configMapRules[0].APIGroups)
+	assert.Equal(t, []string{"configmaps"}, configMapRules[0].Resources)
+	assert.ElementsMatch(t, []string{"get", "list", "watch"}, configMapRules[0].Verbs)
+	assert.Empty(t, configMapRules[0].ResourceNames, "the daemon cache lists ConfigMaps across namespaces")
 }
 
 func TestEnsure_AppliesDaemonSetWithNodeNameAffinity(t *testing.T) {

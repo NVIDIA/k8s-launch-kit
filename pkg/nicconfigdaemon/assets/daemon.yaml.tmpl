@@ -85,6 +85,10 @@ rules:
   - configmaps
   verbs:
   - get
+  # The daemon watches Spectrum-X profile ConfigMaps through a cluster-wide,
+  # label-filtered cache in addition to reading its firmware map directly.
+  - list
+  - watch
 - apiGroups:
   - ""
   resources:
@@ -227,6 +231,9 @@ spec:
                   fieldPath: metadata.namespace
             - name: LOG_LEVEL
               value: {{ .LogLevel }}
+            # Keep readable NICs discoverable when a peer's device query fails.
+            - name: SKIP_DEVICE_ON_DISCOVERY_ERROR
+              value: "true"
           volumeMounts:
             - name: sys
               mountPath: /sys
