@@ -32,7 +32,7 @@ including the required NCO implementation/CRDs beyond the current 26.10 beta.2 p
 
 ## Documentation
 
-The [Launch Kit documentation](https://nvidia.github.io/k8s-launch-kit/) is the operational guide. Start with [planning](docs/user/profiles.md), [installation](docs/user/installation.md), and the [SR-IOV Ethernet walkthrough](docs/user/quick-start.md). OpenShift and Spectrum-X have [separate](docs/user/openshift.md) [guides](docs/user/spectrum-x.md). The [CLI](docs/reference/cli.md) and [configuration](docs/reference/configuration.md) references cover exact inputs.
+The [Launch Kit documentation](https://nvidia.github.io/k8s-launch-kit/) is the operational guide. Use **Documentation version** in the navigation to select a GA release. Start with [planning](docs/user/profiles.md), [installation](docs/user/installation.md), and the [SR-IOV Ethernet walkthrough](docs/user/quick-start.md). OpenShift and Spectrum-X have [separate](docs/user/openshift.md) [guides](docs/user/spectrum-x.md). The [CLI](docs/reference/cli.md) and [configuration](docs/reference/configuration.md) references cover exact inputs.
 
 ## Installation
 
