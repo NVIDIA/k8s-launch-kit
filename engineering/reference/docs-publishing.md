@@ -90,15 +90,16 @@ Keep canonical explanations in the published Markdown pages and link skill
 references to them. Retained RST files are compatibility material; port useful
 operational details before retiring or shortening them.
 
-## GitHub Pages Workflow
+## GitHub Pages workflow
 
-The workflow builds documentation for every pull request and main-branch push,
-including code-only changes that can affect behavior. It has two phases:
+Run `python scripts/build-versioned-docs.py` from a checkout with all tags
+and the docs dependencies installed to reproduce the Pages artifact in `site/`.
 
-| Event | Behavior |
-| --- | --- |
-| Pull request | Build with `mkdocs build --strict`. |
-| Push to `main` | Build, upload the Pages artifact, and deploy with `actions/deploy-pages`. |
-| Manual dispatch | Build and deploy from the selected ref. |
+The site root serves main. The **Documentation version** navigation lists GA
+tags matching `vMAJOR.MINOR.PATCH` in descending version order. Each release
+with a MkDocs configuration builds from its own tag under `/<tag>/`. Earlier
+releases link to their original documentation on GitHub.
 
-Repository settings must allow GitHub Pages deployment from GitHub Actions.
+Pull requests build the complete artifact with strict validation. Pushes to
+main, completion of the Release workflow, and manual dispatches on main also
+deploy the artifact. Pages uses the existing main-only deployment environment.
