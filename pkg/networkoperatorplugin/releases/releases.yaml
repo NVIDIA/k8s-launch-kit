@@ -68,4 +68,4 @@ releases:
       repository: nvcr.io/nvidia/doca
       version: doca-3.6.0
     validation:
-      image: nvcr.io/nvidia/doca/doca:full-rt-cuda13.0.0-3.6.0-runtime-host
+      image: nvcr.io/nvidia/doca/doca:full-rt-cuda13.3.0-3.6.0-runtime-host
