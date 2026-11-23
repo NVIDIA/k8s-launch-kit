@@ -16,17 +16,17 @@ networkOperator:
   # generate/deploy/validate: --skip-network-operator-helm.
   skipHelmChart: false
 
-  # string | default: "v26.7.0"
+  # string | default: "v26.10.0"
   # Helm chart version. Determines which operator image and CRDs are deployed.
-  version: v26.7.0
+  version: v26.10.0
 
-  # string | default: "network-operator-v26.7.0"
+  # string | default: "network-operator-v26.10.0"
   # Component image tag used for operator container images.
-  componentVersion: network-operator-v26.7.0
+  componentVersion: network-operator-v26.10.0
 
-  # string | default: "26.7"
+  # string | default: "26.10"
   # Catalog release line that supplies the version and repository fields.
-  selectedRelease: "26.7"
+  selectedRelease: "26.10"
 
   # string | default: "nvcr.io/nvidia/mellanox"
   # Container registry for all operator component images.
@@ -58,9 +58,9 @@ docaDriver:
   # OFED/DOCA driver pods on every matching node.
   enable: true
 
-  # string | default: "doca3.5.0-26.07-0.7.7.0-0"
+  # string | default: "doca3.6.0-26.10-070000-1"
   # DOCA driver container image version. Must match the operator version.
-  version: doca3.5.0-26.07-0.7.7.0-0
+  version: doca3.6.0-26.10-070000-1
 
   # bool | default: true
   # Unload known storage-over-RDMA kernel modules (ib_isert, nvme_rdma, nvmet_rdma,

@@ -340,7 +340,7 @@ func TestResolveReleaseSelectionWithCanonicalDefaults(t *testing.T) {
 		opts options.Options
 		want string
 	}{
-		{name: "ordinary default remains 26.7", yaml: "", opts: options.Options{}, want: "26.7"},
+		{name: "ordinary default is 26.10", yaml: "", opts: options.Options{}, want: "26.10"},
 		{name: "user release overrides canonical", yaml: "networkOperator: {selectedRelease: '26.4'}\n", opts: options.Options{}, want: "26.4"},
 		{name: "CLI release overrides user", yaml: "networkOperator: {selectedRelease: '26.4'}\n", opts: options.Options{NetworkOperatorRelease: "26.1"}, want: "26.1"},
 		{name: "Spectrum-X selects compatible older release", yaml: "", opts: options.Options{
