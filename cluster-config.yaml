@@ -10,12 +10,12 @@ networkOperator:
   # version/componentVersion/repository/operatorRepository/helmRepoURL (below)
   # and docaDriver.version are populated from the embedded catalog;
   # explicit values here are overridden.
-  # Supported: 26.1, 26.4, 26.7. Leave empty to use the explicit values
+  # Supported: 26.1, 26.4, 26.7, 26.10. Leave empty to use the explicit values
   # below as-is.
-  # selectedRelease: "26.7"
-  version: v26.7.0
-  componentVersion: network-operator-v26.7.0
-  selectedRelease: "26.7"
+  # selectedRelease: "26.10"
+  version: v26.10.0
+  componentVersion: network-operator-v26.10.0
+  selectedRelease: "26.10"
   skipHelmChart: false
   # Independent ownership of Multus and reference CNI binaries. auto uses
   # discovery evidence; managed installs via NCP; external omits the section.
@@ -56,7 +56,7 @@ validation:
     gpuResourceType: nvidia.com/gpu
 docaDriver:
   enable: true
-  version: doca3.5.0-26.07-0.7.7.0-0
+  version: doca3.6.0-26.10-070000-1
   unloadStorageModules: true
   enableNFSRDMA: false
   unloadThirdPartyRDMAModules: true

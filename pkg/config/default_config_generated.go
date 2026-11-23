@@ -19,12 +19,12 @@ var defaultConfigYAML = []byte(
 	"  # version/componentVersion/repository/operatorRepository/helmRepoURL (below)\n" +
 	"  # and docaDriver.version are populated from the embedded catalog;\n" +
 	"  # explicit values here are overridden.\n" +
-	"  # Supported: 26.1, 26.4, 26.7. Leave empty to use the explicit values\n" +
+	"  # Supported: 26.1, 26.4, 26.7, 26.10. Leave empty to use the explicit values\n" +
 	"  # below as-is.\n" +
-	"  # selectedRelease: \"26.7\"\n" +
-	"  version: v26.7.0\n" +
-	"  componentVersion: network-operator-v26.7.0\n" +
-	"  selectedRelease: \"26.7\"\n" +
+	"  # selectedRelease: \"26.10\"\n" +
+	"  version: v26.10.0\n" +
+	"  componentVersion: network-operator-v26.10.0\n" +
+	"  selectedRelease: \"26.10\"\n" +
 	"  skipHelmChart: false\n" +
 	"  # Independent ownership of Multus and reference CNI binaries. auto uses\n" +
 	"  # discovery evidence; managed installs via NCP; external omits the section.\n" +
@@ -65,7 +65,7 @@ var defaultConfigYAML = []byte(
 	"    gpuResourceType: nvidia.com/gpu\n" +
 	"docaDriver:\n" +
 	"  enable: true\n" +
-	"  version: doca3.5.0-26.07-0.7.7.0-0\n" +
+	"  version: doca3.6.0-26.10-070000-1\n" +
 	"  unloadStorageModules: true\n" +
 	"  enableNFSRDMA: false\n" +
 	"  unloadThirdPartyRDMAModules: true\n" +
