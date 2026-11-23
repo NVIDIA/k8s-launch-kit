@@ -19,6 +19,8 @@ collects observations and preserves the selection; validation refreshes the
 platform and component evidence and adds it to the existing HTML/JSON outputs.
 Generation preserves the constraint. Conflicting explicit Network Operator
 selections fail; other NVAIE components remain externally managed. The component
+coordinates retained in `.l8k/resolved-config.yaml` are checked without silently
+replacing drifted versions; regenerate from source to change that cohort. The
 allowlist compares recognized operator, driver and toolkit container image versions
 using Kubernetes API metadata and existing installed DOCA-HOST discovery evidence,
 regardless of the desired container-driver setting. Saved packages are labeled as

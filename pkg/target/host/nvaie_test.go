@@ -9,6 +9,7 @@ import (
 	"encoding/json"
 	"encoding/xml"
 	"errors"
+	"fmt"
 	"io"
 	"os"
 	"path/filepath"
@@ -16,10 +17,12 @@ import (
 
 	"github.com/nvidia/k8s-launch-kit/pkg/bundle"
 	"github.com/nvidia/k8s-launch-kit/pkg/config"
+	"github.com/nvidia/k8s-launch-kit/pkg/configinput"
 	apperrors "github.com/nvidia/k8s-launch-kit/pkg/errors"
 	"github.com/nvidia/k8s-launch-kit/pkg/networkoperatorplugin/connectivity"
 	"github.com/nvidia/k8s-launch-kit/pkg/nvaie"
 	"github.com/nvidia/k8s-launch-kit/pkg/options"
+	"github.com/nvidia/k8s-launch-kit/pkg/resolve"
 	"github.com/nvidia/k8s-launch-kit/pkg/ui"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -95,7 +98,97 @@ func TestNVAIEEffectiveAndRawConfigRejectConflicts(t *testing.T) {
 				require.NoError(t, os.WriteFile(path, []byte("nvaieRelease: '9.0'\nnetworkOperator: {selectedRelease: '26.4'}\n"), 0600))
 			}
 			_, _, err := LoadUserConfig(UserConfigInput{Explicit: path}, options.Options{})
-			require.ErrorContains(t, err, "conflicts with explicit")
+			if effective {
+				require.ErrorContains(t, err, "requires Network Operator release line 26.7")
+			} else {
+				require.ErrorContains(t, err, "conflicts with explicit")
+			}
+		})
+	}
+}
+
+func TestNVAIEEffectiveConfigPreservesCohortUnlessExplicitlyReplaced(t *testing.T) {
+	for _, tc := range []struct {
+		name       string
+		mutate     func(*config.LaunchKitConfig)
+		opts       options.Options
+		wantError  string
+		projection bool
+	}{
+		{name: "valid saved cohort"},
+		{name: "operator patch drift", mutate: func(c *config.LaunchKitConfig) { c.NetworkOperator.Version = "v26.7.2" }, wantError: "resolved coordinates differ"},
+		{name: "driver drift", mutate: func(c *config.LaunchKitConfig) { c.DOCADriver.Version = "doca3.6.0-incompatible" }, wantError: "resolved coordinates differ"},
+		{name: "missing saved line", mutate: func(c *config.LaunchKitConfig) { c.NetworkOperator.SelectedRelease = "" }, wantError: "requires Network Operator release line"},
+		{name: "repeating constraint does not repair drift", mutate: func(c *config.LaunchKitConfig) { c.NetworkOperator.Version = "v26.7.2" }, opts: options.Options{NVAIERelease: "9.0"}, wantError: "resolved coordinates differ"},
+		{name: "unrelated override does not repair drift", mutate: func(c *config.LaunchKitConfig) { c.DOCADriver.Version = "doca3.6.0-incompatible" }, opts: options.Options{Flavor: config.FlavorOCP}, wantError: "resolved coordinates differ"},
+		{name: "new constraint projects cohort", mutate: func(c *config.LaunchKitConfig) { c.NVAIERelease = ""; c.NetworkOperator.Version = "v26.7.2" }, opts: options.Options{NVAIERelease: "9.0"}, projection: true},
+		{name: "explicit release request projects cohort", mutate: func(c *config.LaunchKitConfig) {
+			c.NetworkOperator.Version = "v26.7.2"
+			c.DOCADriver.Version = "doca3.6.0-incompatible"
+		}, opts: options.Options{ConfigInputs: configinput.Values{Requests: []configinput.Request{{Kind: configinput.ResolverNetworkOperatorRelease, Value: "26.7"}}}}, projection: true},
+	} {
+		for _, explicitPath := range []bool{false, true} {
+			t.Run(fmt.Sprintf("%s/explicit-path=%t", tc.name, explicitPath), func(t *testing.T) {
+				cfg := &config.LaunchKitConfig{NVAIERelease: "9.0"}
+				require.NoError(t, resolve.ExpandNetworkOperatorRelease("26.7", cfg))
+				cfg.NetworkOperator.Repository = "retained.example.invalid/charts"
+				if tc.mutate != nil {
+					tc.mutate(cfg)
+				}
+				dir := t.TempDir()
+				path, err := config.WriteEffectiveConfig(dir, cfg)
+				require.NoError(t, err)
+				before, err := os.ReadFile(path)
+				require.NoError(t, err)
+				input := UserConfigInput{DeploymentFiles: dir}
+				if explicitPath {
+					input.Explicit = path
+				}
+				loaded, loadedPath, err := LoadUserConfig(input, tc.opts)
+				require.Equal(t, path, loadedPath)
+				require.NotNil(t, loaded)
+				if tc.wantError != "" {
+					require.ErrorContains(t, err, tc.wantError)
+					assert.Equal(t, cfg.NetworkOperator, loaded.NetworkOperator)
+					assert.Equal(t, cfg.DOCADriver, loaded.DOCADriver)
+				} else {
+					require.NoError(t, err)
+					assert.Equal(t, "9.0", loaded.NVAIERelease)
+					assert.Equal(t, "v26.7.1", loaded.NetworkOperator.Version)
+					assert.Equal(t, "doca3.5.0-26.07-0.7.7.0-1", loaded.DOCADriver.Version)
+					if tc.projection {
+						assert.NotEqual(t, cfg.NetworkOperator.Repository, loaded.NetworkOperator.Repository)
+					} else {
+						assert.Equal(t, cfg.NetworkOperator, loaded.NetworkOperator)
+					}
+				}
+				after, readErr := os.ReadFile(path)
+				require.NoError(t, readErr)
+				assert.Equal(t, before, after, "loading must not rewrite the retained sidecar")
+			})
+		}
+	}
+}
+
+func TestNVAIEEffectiveVersionDriftStopsBeforeClusterAccess(t *testing.T) {
+	for _, component := range []string{"operator", "driver"} {
+		t.Run(component, func(t *testing.T) {
+			cfg := &config.LaunchKitConfig{NVAIERelease: "9.0"}
+			require.NoError(t, resolve.ExpandNetworkOperatorRelease("26.7", cfg))
+			if component == "operator" {
+				cfg.NetworkOperator.Version = "v26.7.2"
+			} else {
+				cfg.DOCADriver.Version = "doca3.6.0-incompatible"
+			}
+			dir := t.TempDir()
+			_, err := config.WriteEffectiveConfig(dir, cfg)
+			require.NoError(t, err)
+			called := false
+			runner := validateRunner{newKubeClient: func(string) (ctrlclient.Client, *rest.Config, error) { called = true; return nil, nil, nil }}
+			err = runner.Run(context.Background(), ValidateRequest{Kubeconfig: "unused", DeploymentFiles: dir, ReportPath: "-", OutputFormat: "json"})
+			require.ErrorContains(t, err, "resolved coordinates differ")
+			assert.Equal(t, apperrors.ExitValidation, apperrors.ExitCodeFromError(err))
+			assert.False(t, called)
 		})
 	}
 }
@@ -167,7 +260,9 @@ func TestNVAIERejectedCLIReleaseRetainsIntentAcrossReports(t *testing.T) {
 			configPath := filepath.Join(dir, "config.yaml")
 			if effective {
 				var err error
-				configPath, err = config.WriteEffectiveConfig(dir, &config.LaunchKitConfig{NVAIERelease: "9.0", NetworkOperator: &config.NetworkOperatorConfig{SelectedRelease: "26.7"}})
+				cfg := &config.LaunchKitConfig{NVAIERelease: "9.0"}
+				require.NoError(t, resolve.ExpandNetworkOperatorRelease("26.7", cfg))
+				configPath, err = config.WriteEffectiveConfig(dir, cfg)
 				require.NoError(t, err)
 			} else {
 				require.NoError(t, os.WriteFile(configPath, []byte("nvaieRelease: '9.0'\nnetworkOperator: {selectedRelease: '26.7'}\n"), 0600))

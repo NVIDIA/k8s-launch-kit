@@ -32,8 +32,9 @@ including the required NCO implementation/CRDs beyond the current 26.10 beta.2 p
 
 Host discovery and validation optionally accept `--nvaie-release 9.0` to select the
 matching Network Operator catalog and assess the published NVIDIA AI Enterprise
-platform and a documented set of component versions. Results include detection
-methods, unchecked components, missing evidence and filtered matrix links in the HTML report. See [NVAIE release checks](docs/user/validation.md#nvidia-ai-enterprise-release-checks).
+platform and a documented set of component versions. The HTML report groups
+expected and discovered versions by node outcome. JSON retains detection methods,
+evidence and filtered matrix links. See [NVAIE release checks](docs/user/validation.md#nvidia-ai-enterprise-release-checks).
 
 ## Documentation
 

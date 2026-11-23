@@ -141,9 +141,10 @@ checks that operator artifact only; external control-plane and configured operan
 versions remain outside its scope. No Helm Secret or Run:ai API credentials are
 needed by the observer.
 
-NIM was exercised on a live arm64 Kubernetes cluster. Run:ai identity and release
-semantics are verified against the official chart and fixtures; positive live
-verification remains pending registry image access.
+NIM and the Run:ai 3.0.26 cluster operator were exercised on a live arm64 Kubernetes
+cluster. API-only validation observed ready operator artifacts and matched the
+published pins, including Run:ai's 3.0 minor pin. This verifies the supported
+operator observation methods, not connected control-plane or operand behavior.
 
 Unsupported products remain in the reference catalog but are omitted centrally
 from assessment components, so JSON and HTML both exclude them. This includes

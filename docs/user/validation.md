@@ -28,6 +28,11 @@ NVAIE patch, Launch Kit rejects the mapping rather than silently selecting a
 newer patch. Other products remain externally managed and use the bounded
 checks below; the NVAIE option does not install them.
 
+Loading a generated `.l8k/resolved-config.yaml` preserves its exact NVAIE cohort.
+Drifted saved operator or driver versions are rejected before cluster access;
+repeating `--nvaie-release` does not silently repair them. Regenerate the deployment
+from its source configuration to change the cohort.
+
 Checks compare the API server and each selected worker's Kubernetes distribution and version,
 OS release, container runtime, CPU architecture and GPU identity with one
 published matrix row. GPU names are normalized and, where necessary, matched

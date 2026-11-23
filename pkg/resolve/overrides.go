@@ -52,6 +52,15 @@ func ApplyExplicitCLIConfigOverrides(opts options.Options, cfg *config.LaunchKit
 		return fmt.Errorf("config must not be nil")
 	}
 	inputs := configflags.Infer(opts)
+	hadNVAIERelease := cfg.NVAIERelease != ""
+	explicitNetworkRelease := hasRequest(inputs.Requests, configinput.ResolverNetworkOperatorRelease)
+	// Retained effective coordinates are evidence of what was rendered. Only
+	// an explicit release override may replace that cohort during loading.
+	if hadNVAIERelease && !explicitNetworkRelease {
+		if err := ValidateNVAIECohort(cfg); err != nil {
+			return err
+		}
+	}
 	present := config.PathSet{}
 	if cfg.NetworkOperator != nil && cfg.NetworkOperator.SelectedRelease != "" {
 		present.Add("networkOperator.selectedRelease")
@@ -62,7 +71,7 @@ func ApplyExplicitCLIConfigOverrides(opts options.Options, cfg *config.LaunchKit
 	if err := ApplyExplicitConfigInputs(inputs, cfg); err != nil {
 		return err
 	}
-	if cfg.NVAIERelease != "" {
+	if !hadNVAIERelease && cfg.NVAIERelease != "" && !explicitNetworkRelease {
 		if err := ExpandNetworkOperatorRelease(cfg.NetworkOperator.SelectedRelease, cfg); err != nil {
 			return err
 		}
