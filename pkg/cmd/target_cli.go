@@ -327,6 +327,7 @@ func markDeployTargetScopes() {
 }
 
 func markValidateTargetScopes() {
+	markConfigFlagTargetScopes(validateCmd, configflags.ScopeValidate)
 	setFlagTargetScope(validateCmd, []target.Name{target.DPF}, "inventory", "quiet")
 	setFlagTargetScope(validateCmd, []target.Name{target.Host, target.DPF},
 		"deployment-files", "user-config", "connectivity", "connectivity-timeout", "wait", "report-path")

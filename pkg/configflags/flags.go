@@ -26,6 +26,7 @@ const (
 	ScopeRoot     Scope = "root"
 	ScopeGenerate Scope = "generate"
 	ScopeDiscover Scope = "discover"
+	ScopeValidate Scope = "validate"
 )
 
 // Definition is the schema derived from one tagged options.Options field.
@@ -95,7 +96,7 @@ func ValidateDefinitions() error {
 		}
 		for _, scope := range definition.Scopes {
 			switch scope {
-			case ScopeRoot, ScopeGenerate, ScopeDiscover:
+			case ScopeRoot, ScopeGenerate, ScopeDiscover, ScopeValidate:
 			default:
 				return fmt.Errorf("config flag --%s has unknown command scope %q", definition.FlagName, scope)
 			}

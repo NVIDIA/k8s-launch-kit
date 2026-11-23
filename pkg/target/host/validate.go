@@ -38,6 +38,7 @@ import (
 	"github.com/nvidia/k8s-launch-kit/pkg/networkoperatorplugin/connectivity"
 	"github.com/nvidia/k8s-launch-kit/pkg/networkoperatorplugin/preflight"
 	"github.com/nvidia/k8s-launch-kit/pkg/networkoperatorplugin/releases"
+	"github.com/nvidia/k8s-launch-kit/pkg/nvaie"
 	"github.com/nvidia/k8s-launch-kit/pkg/presetmatch"
 	"github.com/nvidia/k8s-launch-kit/pkg/ui"
 )
@@ -47,6 +48,7 @@ const defaultOperatorNamespace = "nvidia-network-operator"
 const skipNetworkOperatorHelmReason = "Network Operator Helm management disabled by configuration"
 
 type validateRunner struct {
+	assessNVAIE           func(context.Context, *rest.Config, string, []string, *nvaie.DOCAHostEvidence) *nvaie.Assessment
 	newKubeClient         func(string) (ctrlclient.Client, *rest.Config, error)
 	runConnectivityMatrix func(context.Context, ctrlclient.Client, *rest.Config, ui.Output, *bundle.Bundle, connectivity.Options) (*connectivity.MatrixResult, error)
 }
@@ -60,6 +62,9 @@ func NewValidateRunner() ValidateRunner {
 }
 
 func (runner validateRunner) Run(operationContext context.Context, request ValidateRequest) (runErr error) {
+	assessment := requestedNVAIE(request)
+	var reportWriteErr error
+	defer func() { emitNVAIE(assessment, request.OutputFormat) }()
 	skipNetworkOperatorHelm := request.SkipNetworkOperatorHelm.Set && request.SkipNetworkOperatorHelm.Value
 
 	// State accumulated during the run. exitWithReport captures it by
@@ -73,6 +78,7 @@ func (runner validateRunner) Run(operationContext context.Context, request Valid
 		results           []networkoperatorplugin.ValidationResult
 		matrix            *connectivity.MatrixResult
 		warnings          []string
+		docaHostIssues    []string
 		presetDeviations  []groupDeviationReport
 		presetResults     []presetmatch.Result
 		reportClient      ctrlclient.Client
@@ -88,15 +94,19 @@ func (runner validateRunner) Run(operationContext context.Context, request Valid
 	// The service returns errors; the outer CLI owns os.Exit. A deferred writer
 	// therefore covers every return, including partial initialization failures.
 	defer func() {
+		if assessment != nil && reportWriteErr != nil {
+			runErr = errors.Join(runErr, apperrors.NewGeneralError("failed to write NVAIE validation report", reportWriteErr))
+		}
 		if request.JUnitPath == "" {
 			return
 		}
 		junit.Data = connectivity.ReportData{
 			Release: versionCheck, ComponentCheck: componentCheck,
 			HelmValues: helmValuesCheck, StrayCRs: strayCheck,
-			Manifests: results, Matrix: matrix, PresetMatches: presetResults,
+			Manifests: results, Matrix: matrix, PresetMatches: presetResults, NVAIE: assessment,
 		}
 		junit.RunError = runErr
+		junit.DOCAHostIssues = docaHostIssues
 		junit.Duration = time.Since(junitStarted)
 		if err := writeJUnitReport(request.JUnitPath, junit); err != nil {
 			if runErr == nil {
@@ -126,12 +136,14 @@ func (runner validateRunner) Run(operationContext context.Context, request Valid
 		if err != nil {
 			overall.Reasons = append(overall.Reasons, err.Error())
 		}
+		overall = nvaieVerdict(overall, assessment)
+		overall.Reasons = append(overall.Reasons, docaHostIssues...)
 		emitVerdictBanner(overall, request.OutputFormat)
-		writeHTMLReportIfWanted(context.Background(), reportClient, reportRestConfig,
+		reportWriteErr = writeHTMLReportIfWanted(context.Background(), reportClient, reportRestConfig,
 			reportBundle, request.DeploymentFiles,
 			operatorNamespace, versionCheck, componentCheck, helmValuesCheck, strayCheck, results, &matrix, &warnings,
 			presetResults, overall, reportConfig, request.OutputFormat,
-			request.ReportPath, request.Version, request.Kubeconfig)
+			request.ReportPath, request.Version, request.Kubeconfig, assessment)
 		return err
 	}
 
@@ -207,6 +219,18 @@ func (runner validateRunner) Run(operationContext context.Context, request Valid
 		}
 		validationCfg = config.NormalizeValidationConfig(cfg.Validation)
 	}
+	if cfgErr == nil && cfg != nil && cfg.NVAIERelease != "" {
+		assessment = pendingNVAIE(cfg.NVAIERelease, "Live NVAIE observations have not completed")
+	}
+	if cfgErr != nil && (assessment != nil || request.NVAIERelease.Set) {
+		if assessment != nil {
+			assessment = pendingNVAIE(assessment.Release, "Configuration resolution failed: "+cfgErr.Error())
+		}
+		return exitWithReport(apperrors.NewValidationError("NVAIE configuration resolution failed", cfgErr, "Align nvaieRelease and the selected Network Operator release"))
+	}
+	if request.NVAIERelease.Set && strings.TrimSpace(request.NVAIERelease.Value) == "" {
+		return exitWithReport(apperrors.NewValidationError("--nvaie-release must not be empty", nil, "Omit the flag to use saved intent"))
+	}
 	if cfgErr != nil {
 		log.Log.V(1).Info("user-config not loaded; version check will be skipped",
 			"path", cfgPath, "error", cfgErr.Error())
@@ -229,9 +253,18 @@ func (runner validateRunner) Run(operationContext context.Context, request Valid
 		if err := config.ValidateDOCAHostObservations(cfg); err != nil {
 			return exitWithReport(apperrors.NewValidationError("invalid host DOCA-HOST observations", err, "Run discovery again to refresh host package evidence"))
 		}
-		if issues := releases.DOCAHostIssues(cfg); len(issues) > 0 {
-			return exitWithReport(apperrors.NewValidationError("discovered host DOCA-HOST release compatibility failed", fmt.Errorf("%s", strings.Join(issues, "; ")),
-				"Align host DOCA-HOST with the selected release SBOM and rerun discovery; this check uses the saved discovery snapshot"))
+		docaHostIssues = releases.DOCAHostIssues(cfg)
+		if len(docaHostIssues) > 0 {
+			// Retain known evidence if later initialization fails. A version
+			// mismatch does not prevent independent live checks from running.
+			if assessment != nil {
+				assessment.Components = []nvaie.ComponentResult{nvaie.AssessDOCAHost(assessment.Release, *savedDOCAHost(cfg))}
+			}
+			if request.OutputFormat == "json" {
+				_ = json.NewEncoder(os.Stdout).Encode(map[string]any{"docaHostIssues": docaHostIssues})
+			} else {
+				fmt.Fprintf(os.Stderr, "DOCA-HOST compatibility failed (discovery snapshot): %s\n", strings.Join(docaHostIssues, "; "))
+			}
 		}
 	}
 	if err := applyValidationOverrides(request, validationCfg); err != nil {
@@ -327,6 +360,24 @@ func (runner validateRunner) Run(operationContext context.Context, request Valid
 	}
 	reportClient = k8sClient
 	reportRestConfig = restConfig
+	if assessment != nil {
+		workers := []string{}
+		if cfg != nil {
+			for _, group := range cfg.ClusterConfig {
+				workers = append(workers, group.WorkerNodes...)
+			}
+		}
+		observer := runner.assessNVAIE
+		if observer == nil {
+			observer = assessNVAIE
+		}
+		var docaHost *nvaie.DOCAHostEvidence
+		installed, _, _ := config.DOCAHostCoverage(cfg)
+		if installed > 0 || (cfg != nil && cfg.DOCADriver != nil && !cfg.DOCADriver.Enable) {
+			docaHost = savedDOCAHost(cfg)
+		}
+		assessment = observer(operationContext, restConfig, assessment.Release, workers, docaHost)
+	}
 
 	ctx := operationContext
 	verdict := validationVerdict{OK: true, VersionOK: true}
@@ -342,11 +393,16 @@ func (runner validateRunner) Run(operationContext context.Context, request Valid
 		if connectivityOnly {
 			overall = connectivityOnlyVerdict(matrix, connectivityChecks)
 		}
+		overall = nvaieVerdict(overall, assessment)
+		if len(docaHostIssues) > 0 {
+			overall.Pass = false
+			overall.Reasons = append(overall.Reasons, docaHostIssues...)
+		}
 		emitVerdictBanner(overall, request.OutputFormat)
-		writeHTMLReportIfWanted(ctx, k8sClient, restConfig, reportBundle, request.DeploymentFiles,
+		reportWriteErr = writeHTMLReportIfWanted(ctx, k8sClient, restConfig, reportBundle, request.DeploymentFiles,
 			operatorNamespace, versionCheck, componentCheck, helmValuesCheck, strayCheck, results, &matrix, &warnings,
 			presetResults, overall, reportConfig, request.OutputFormat,
-			request.ReportPath, request.Version, request.Kubeconfig)
+			request.ReportPath, request.Version, request.Kubeconfig, assessment)
 	}
 
 	if !connectivityOnly {
@@ -477,7 +533,7 @@ func (runner validateRunner) Run(operationContext context.Context, request Valid
 			}
 			warnings = append(warnings, "Connectivity matrix skipped — cluster has in-progress manifests.")
 			emitReport()
-			if ocp && connectivityEnabled || !verdict.VersionOK || componentMismatch || helmValuesMismatch || strayMismatch {
+			if len(docaHostIssues) > 0 || assessment != nil && !assessment.Passed() || ocp && connectivityEnabled || !verdict.VersionOK || componentMismatch || helmValuesMismatch || strayMismatch {
 				return apperrors.NewExitStatus(apperrors.ExitDeployment)
 			}
 			return nil
@@ -533,7 +589,7 @@ func (runner validateRunner) Run(operationContext context.Context, request Valid
 	// / hardware drift from the catalog preset.
 	matrixFailed := matrix != nil && matrix.Summary.Failed > 0
 	coverageFailed := ocp && connectivityEnabled && !connectivityOnlyVerdict(matrix, connectivityChecks).Pass
-	if matrixFailed || coverageFailed || !verdict.VersionOK || componentMismatch || helmValuesMismatch || strayMismatch || hasPresetDeviation(presetResults) {
+	if len(docaHostIssues) > 0 || assessment != nil && !assessment.Passed() || matrixFailed || coverageFailed || !verdict.VersionOK || componentMismatch || helmValuesMismatch || strayMismatch || hasPresetDeviation(presetResults) {
 		return apperrors.NewExitStatus(apperrors.ExitDeployment)
 	}
 	return nil

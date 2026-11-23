@@ -7,6 +7,19 @@ SPDX-License-Identifier: Apache-2.0
 
 `l8k discover` inventories NVIDIA NICs and GPUs, groups nodes with compatible hardware, and writes an editable `cluster-config.yaml`. Fresh discovery resolves a profile; a `--user-config` refresh preserves its non-hardware settings.
 
+## NVIDIA AI Enterprise inventory
+
+Add `--nvaie-release 9.0` to Host discovery to save the NVAIE release constraint,
+select its matching Network Operator catalog and collect platform/component
+compatibility evidence. The normal hardware discovery still runs. Existing
+explicit conflicting Network Operator selections are rejected before bootstrap;
+missing installed components are reported without preventing discovery output.
+The NVAIE observer adds read-only Kubernetes API requests. It evaluates workers
+individually and keeps missing OS, platform, GPU or version evidence unresolved.
+Use `l8k validate` to refresh these observations in the HTML report. See
+[NVAIE release checks](validation.md#nvidia-ai-enterprise-release-checks) for the
+bundled snapshot, supported release and qualification limits.
+
 ## Requirements
 
 - Kubernetes access through `--kubeconfig`, `$KUBECONFIG`, or `~/.kube/config`.
@@ -223,6 +236,8 @@ reference configuration is ignored. With `--user-config`, discovery replaces
 `clusterConfig`, `discoveredSecondaryNetwork`, and `discoveredDocaHost`, and clears
 any previously generated `discoveredDocaHostScope`. It preserves every other loaded section and value,
 including explicit `false` values, and then applies explicit CLI overrides.
+An enabled `nvaieRelease` also persists its matching Network Operator catalog
+coordinates.
 Missing profile values are not filled during this refresh; supply them in the
 file or through CLI flags if they are needed.
 

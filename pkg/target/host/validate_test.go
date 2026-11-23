@@ -99,9 +99,8 @@ func TestListNodesForReportAcceptsNilClient(t *testing.T) {
 	assert.Nil(t, listNodesForReport(context.Background(), nil))
 }
 
-func TestValidateRejectsDOCAHostMismatchAndMalformedSnapshotBeforeClusterAccess(t *testing.T) {
+func TestValidateRejectsMalformedDOCAHostSnapshotBeforeClusterAccess(t *testing.T) {
 	for _, tc := range []struct{ name, observations, expected string }{
-		{"mismatch", "- {node: worker-a, status: installed, version: 3.5.0-041000}", "does not match Network Operator 26.10 release SBOM DOCA 3.6.0"},
 		{"duplicate", "- {node: worker-a, status: installed, version: 3.5.0-041000}\n- {node: worker-a, status: unknown}", "unique, nonempty node names"},
 		{"missing version", "- {node: worker-a, status: installed}", "has no package version"},
 	} {

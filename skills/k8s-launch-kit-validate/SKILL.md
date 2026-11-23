@@ -11,6 +11,27 @@ metadata:
 
 > **PREREQUISITE:** Read `../k8s-launch-kit-shared/SKILL.md` for install paths, global flags, and exit codes.
 
+## NVIDIA AI Enterprise selection
+
+For Host workflows, `--nvaie-release 9.0` (or saved `nvaieRelease: "9.0"`)
+constrains Network Operator to the exact matching release catalog. Discovery
+collects observations and preserves the selection; validation refreshes the
+platform and component evidence and adds it to the existing HTML/JSON outputs.
+Generation preserves the constraint. Conflicting explicit Network Operator
+selections fail; other NVAIE components remain externally managed. The component
+allowlist compares recognized operator, driver and toolkit container image versions
+using Kubernetes API metadata and existing installed DOCA-HOST discovery evidence,
+regardless of the desired container-driver setting. Saved packages are labeled as
+discovery snapshots. Machine and GPU Node labels resolve reviewed preset aliases
+without new probes; broad GPU families on unknown machines remain unresolved.
+Unsupported products are omitted. HTML uses one Expected / Discovered / Match
+table, grouping node-local outcomes by result and version with node membership;
+cluster-wide operators retain one row. JSON retains details. No new runtime probes are added, and undetected
+installation forms do not prove absence. Required
+missing/unknown evidence is non-passing in validation. The bundled matrix is an
+offline snapshot and kind does not qualify bare-metal hardware. See the
+[full contract](../../docs/user/validation.md#nvidia-ai-enterprise-release-checks).
+
 ## DPF target
 
 For explicitly requested DPF validation, follow the [standalone procedure](../../docs/user/dpf-workflows.md#hbn-bgp-validation)
@@ -42,9 +63,11 @@ denied optional health reads do not prove missing networking or successful
 readiness. See [external prerequisites](../../docs/user/validation.md#external-networking-prerequisites).
 
 Saved `discoveredDocaHost` installed-package observations must match the selected
-Network Operator SBOM's three-part DOCA release. Mismatch, malformed evidence,
-or missing release selection fails with exit 2 before cluster checks, including
-static/connectivity-only validation and explicit container-driver enablement.
+Network Operator SBOM's three-part DOCA release. Compatibility failures do not
+stop other checks: they remain in HTML/JUnit and JSON `docaHostIssues`, and make
+the final status exit 4. This includes static/connectivity-only validation,
+in-progress manifests and explicit container-driver enablement. Malformed
+snapshots still fail input validation with exit 2.
 This checks the discovery snapshot; rerun discovery after package changes.
 Package and container build suffixes are not compared. See
 [host compatibility](../../docs/user/validation.md#host-doca-host-release-compatibility).

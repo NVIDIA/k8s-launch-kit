@@ -21,6 +21,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"k8s.io/client-go/rest"
 	"sigs.k8s.io/controller-runtime/pkg/client"
+	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 )
 
 func TestValidatePresetBundleRetainsDiscoveredHostMismatch(t *testing.T) {
@@ -56,20 +57,23 @@ discoveredDocaHost:
 			called := false
 			runner := validateRunner{newKubeClient: func(string) (client.Client, *rest.Config, error) {
 				called = true
-				return nil, nil, fmt.Errorf("unexpected cluster access")
+				return fake.NewClientBuilder().Build(), nil, nil
 			}}
 			report := filepath.Join(t.TempDir(), "report.html")
 			err = runner.Run(context.Background(), ValidateRequest{DeploymentFiles: output,
-				Kubeconfig: filepath.Join(t.TempDir(), "kubeconfig"), ReportPath: report, OutputFormat: "json"})
-			require.ErrorContains(t, err, "does not match Network Operator 26.10 release SBOM DOCA 3.6.0")
-			assert.Equal(t, apperrors.ExitValidation, apperrors.ExitCodeFromError(err))
-			assert.False(t, called, "saved discovery compatibility must gate validation before Kubernetes access")
-			assert.FileExists(t, report)
+				Kubeconfig: filepath.Join(t.TempDir(), "kubeconfig"), ReportPath: report, OutputFormat: "json", SkipNetworkOperatorHelm: Explicit[bool]{Set: true, Value: true}})
+			require.Error(t, err)
+			assert.Equal(t, apperrors.ExitDeployment, apperrors.ExitCodeFromError(err))
+			assert.True(t, called, "saved discovery mismatch must not suppress independent cluster checks")
+			html, readErr := os.ReadFile(report)
+			require.NoError(t, readErr)
+			assert.Contains(t, string(html), "does not match Network Operator 26.10 release SBOM DOCA 3.6.0")
+			called = false
 			resolved.DiscoveredDOCAHostScope.WorkerNodes = nil
 			_, err = config.WriteEffectiveConfig(output, resolved)
 			require.NoError(t, err)
 			err = runner.Run(context.Background(), ValidateRequest{DeploymentFiles: output,
-				Kubeconfig: filepath.Join(t.TempDir(), "kubeconfig"), ReportPath: report, OutputFormat: "json"})
+				Kubeconfig: filepath.Join(t.TempDir(), "kubeconfig"), ReportPath: report, OutputFormat: "json", SkipNetworkOperatorHelm: Explicit[bool]{Set: true, Value: true}})
 			require.ErrorContains(t, err, "membershipKnown=true requires nonempty workerNodes")
 			assert.False(t, called, "malformed preserved scope must not turn missing evidence into a compatibility pass")
 		})

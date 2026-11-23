@@ -478,6 +478,8 @@ func ListPresetSummaries() ([]PresetSummary, []SkippedPreset, error) {
 // validated preset. It matches PFs by PCI address and overrides topology-
 // derived fields (traffic, rail, NUMA, GPU affinity) while preserving
 // live-state fields (RDMA device, network interface, PSID, part number).
+// A preset can also leave both GPU affinity fields empty on an east-west PF
+// to preserve affinity measured during discovery.
 // It returns true when the preset was applied.
 //
 // ApplyPreset is ALL-OR-NOTHING: it applies only when the group and the preset
@@ -529,8 +531,10 @@ func ApplyPreset(preset *Topology, group *config.ClusterConfig) bool {
 		pf.Traffic = pp.Traffic
 		pf.Rail = pp.Rail
 		pf.NumaNode = pp.NumaNode
-		pf.ConnectedGPU = pp.ConnectedGPU
-		pf.GPUProximity = pp.GPUProximity
+		if pp.Traffic != "east-west" || pp.ConnectedGPU != "" || pp.GPUProximity != "" {
+			pf.ConnectedGPU = pp.ConnectedGPU
+			pf.GPUProximity = pp.GPUProximity
+		}
 
 		if pp.PartNumber != "" && pf.PartNumber != "" && pp.PartNumber != pf.PartNumber {
 			log.Log.V(1).Info("Preset part number differs from discovered — using discovered value",

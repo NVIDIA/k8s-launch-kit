@@ -30,6 +30,11 @@ import (
 // Returns a single error describing the first violation. Caller wraps
 // this in a structured ValidationError for the user.
 func ValidateResolvedConfig(cfg *config.LaunchKitConfig) error {
+	if cfg != nil {
+		if err := ValidateNVAIECohort(cfg); err != nil {
+			return err
+		}
+	}
 	if err := config.ValidateSecondaryNetworkConfig(cfg); err != nil {
 		return err
 	}

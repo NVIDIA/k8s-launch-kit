@@ -380,6 +380,19 @@ tr.manifest-expand.state-missing    > td { box-shadow: inset 2px 0 0 var(--missi
   </div>
 </section>
 
+{{- if .NVAIE}}
+<section>
+  <h2>NVIDIA AI Enterprise {{.NVAIE.Release}} compliance</h2>
+  <div class="body">
+    <table><thead><tr><th>Component</th><th>Expected</th><th>Discovered</th><th>Match</th></tr></thead><tbody>
+    {{- range nvaieReportRows .NVAIE}}
+      <tr><td>{{.Component}}{{if .Nodes}}<br><small>{{range $i, $node := .Nodes}}{{if $i}}, {{end}}{{$node}}{{end}}</small>{{end}}{{if .Scope}}<br><small>{{.Scope}}</small>{{end}}</td><td>{{.Expected}}</td><td>{{.Discovered}}</td><td><span class="badge {{if eq .Match "PASS"}}state-success{{else if eq .Match "FAIL"}}state-error{{else}}state-unknown{{end}}">{{.Match}}</span></td></tr>
+    {{- end}}
+    </tbody></table>
+  </div>
+</section>
+{{- end}}
+
 <section>
   <h2>Cluster nodes ({{len .Nodes}})</h2>
   <div class="body">

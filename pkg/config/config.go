@@ -240,6 +240,8 @@ func truncateIdentifierWithHash(s string) string {
 
 // LaunchKitConfig represents the l8k-config.yaml structure
 type LaunchKitConfig struct {
+	// NVAIERelease selects a reviewed NVIDIA AI Enterprise compatibility cohort.
+	NVAIERelease             string                          `yaml:"nvaieRelease,omitempty"`
 	namespacePresence        flavorNamespacePresence         `yaml:"-"`
 	Flavor                   string                          `yaml:"flavor,omitempty"`
 	Cluster                  *ClusterNetworkConfig           `yaml:"cluster,omitempty"`

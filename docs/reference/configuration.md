@@ -39,7 +39,8 @@ Discovery with `--user-config` replaces `clusterConfig`, `discoveredSecondaryNet
 and `discoveredDocaHost`, and clears any previously generated `discoveredDocaHostScope`.
 It preserves every other loaded section, then applies explicit CLI flags. It does not fill
 missing profile fields, recompute validation settings, or expand a release
-selected only in YAML.
+selected only in YAML, except that an enabled `nvaieRelease` also persists the
+matching catalog coordinates required by its release constraint.
 The refresh patches the source YAML, retaining explicit zero values, omitted
 fields, and custom keys. YAML aliases and merge keys are expanded when saving
 so a CLI override affects only its target field.
@@ -52,6 +53,21 @@ value from the YAML file.
 
 Invalid enum values are rejected when CLI inputs are bound. Cross-field
 requirements are checked after the effective configuration is resolved.
+
+## NVIDIA AI Enterprise release intent
+
+`nvaieRelease: "9.0"` enables the optional NVAIE release constraint for Host
+operations. It is absent by default. Discovery and validation accept
+`--nvaie-release`; generation retains the saved constraint. An explicit
+conflicting `networkOperator.selectedRelease` is an error. Otherwise the NVAIE
+pin selects an exact matching entry from the existing Network Operator catalog,
+including its component and DOCA image coordinates. Other NVAIE products remain
+externally managed.
+
+NVAIE discovery refresh also persists the derived catalog coordinates needed to
+keep this selection consistent. Validation always recollects live evidence;
+a saved assessment is not proof of the cluster's current state. See
+[NVAIE checks and limitations](../user/validation.md#nvidia-ai-enterprise-release-checks).
 
 ## DPF discovery configuration
 

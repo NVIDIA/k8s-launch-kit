@@ -24,6 +24,7 @@ l8k preset list
 
 Bundled presets include:
 
+- `DGX-GB300-Compute-Tray-NVIDIA-GB300`
 - `GB200-NVL-NVIDIA-GB200`
 - `GB300-DGX-Station-NVIDIA-GB300`
 - `GB300-NVL-NVIDIA-GB300`
@@ -36,6 +37,11 @@ Bundled presets include:
 - `ThinkSystem-SR675-V3-System-Board-RTX-PRO-6000`
 - `ThinkSystem-SR680a-V3-H200`
 - `UCSC-885A-M8-H22-H200`
+
+The `DGX-GB300-Compute-Tray-NVIDIA-GB300` preset includes four ConnectX-8
+east-west rails and two north-south BlueField-3 PFs at `0016:03:00.0` and
+`0016:03:00.1`. The east-west PFs leave GPU affinity unspecified. Discovery
+keeps measured affinity when available.
 
 The `GB200-NVL-NVIDIA-GB200` preset describes the four-rail ConnectX-7
 InfiniBand tray reported in [issue #323](https://github.com/NVIDIA/k8s-launch-kit/issues/323#issuecomment-6687952187).

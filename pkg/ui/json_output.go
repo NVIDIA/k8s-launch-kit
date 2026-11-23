@@ -23,6 +23,8 @@ import (
 	"os"
 	"sync"
 	"time"
+
+	"github.com/nvidia/k8s-launch-kit/pkg/nvaie"
 )
 
 // LogEntry represents a single message collected during JSON output mode.
@@ -42,6 +44,7 @@ type CleanupResult struct {
 
 // JSONResult is the structured output emitted to stdout in JSON mode.
 type JSONResult struct {
+	NVAIE          *nvaie.Assessment `json:"nvaie,omitempty"`
 	Success        bool              `json:"success"`
 	Phase          string            `json:"phase"`
 	Profile        map[string]string `json:"profile,omitempty"`

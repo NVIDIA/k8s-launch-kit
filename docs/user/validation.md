@@ -5,6 +5,138 @@ SPDX-License-Identifier: Apache-2.0
 
 # Validation
 
+## NVIDIA AI Enterprise release checks
+
+For the Host target, pass `--nvaie-release 9.0` to discovery or validation, or
+save `nvaieRelease: "9.0"` in the cluster configuration. Discovery selects the
+matching Network Operator release catalog entry and reports compatibility
+observations. Validation refreshes those observations and includes an NVIDIA AI
+Enterprise section in the existing HTML report and JSON output. The ordinary
+manifest, release and selected connectivity checks still run.
+
+```bash
+l8k discover --nvaie-release 9.0 --save-cluster-config cluster-config.yaml --output json
+l8k generate --user-config cluster-config.yaml --output json
+l8k validate --user-config cluster-config.yaml --nvaie-release 9.0 --output json
+```
+
+The initial bundled catalog covers NVAIE **9.0**. Its release-specific pins
+select Network Operator **26.7.1** and DOCA **3.5.0**, using Launch Kit's existing
+catalog for image tags and repositories. An explicitly conflicting Network
+Operator release is rejected. If that catalog no longer supplies the exact
+NVAIE patch, Launch Kit rejects the mapping rather than silently selecting a
+newer patch. Other products remain externally managed and use the bounded
+checks below; the NVAIE option does not install them.
+
+Checks compare the API server and each selected worker's Kubernetes distribution and version,
+OS release, container runtime, CPU architecture and GPU identity with one
+published matrix row. GPU names are normalized and, where necessary, matched
+using the discovered machine label: for example, `GB300-NVL` with
+`NVIDIA-GB300` selects `GB300 NVL72`, while `DGX-GB300-Compute-Tray` selects
+`DGX GB300 NVL72`. Ubuntu `24.04.x LTS` matches `24.04 LTS`. Raw machine/GPU
+values remain in JSON, alongside the matched catalog product. The built-in
+preset audit includes H200 SXM and RTX Server Edition aliases; ambiguous
+`GB200-NVL` and the unlisted DGX Station desktop product remain `UNKNOWN`.
+Missing or ambiguous platform evidence is `UNKNOWN`.
+
+The release BOM is reference data, not a list of mandatory Kubernetes installations.
+The initial component detectors have deliberately bounded methods:
+
+| Component | Installation and version evidence | Coverage and limits |
+| --- | --- | --- |
+| Network Operator | Recognized operator Deployment, its owned ready Pod, and matching desired/status image references; exact image release tag | Required for Host validation. Checks the deployed operator artifact, not its binary digest. |
+| GPU Operator | Recognized operator Deployment and owned ready operator container; exact desired/status image release tag | Optional when no supported installation is detected. Validator Pods using the operator image are not operator installations. |
+| NIM Operator | Official `k8s-nim-operator` Deployment and owned ready `manager` container; exact desired/status image release tag | Optional when undetected. Model services and chart upgrade Jobs do not establish the operator version. |
+| Run:ai | Official `runai-oss/go-operator` Deployment and owned ready `runai-go-operator` container | Checks the cluster operator artifact, not the external control plane, configured operands or overall platform health. The published `3.0` minor release includes stable `3.0.x` hotfixes; the full observed patch is reported. |
+| DOCA Driver for Networking | Recognized Network Operator `mofed-container` DaemonSet and owned ready Pod image, plus existing installed DOCA-HOST package observations | Compares the DOCA product release (for example `3.5.0`), retaining full build versions in JSON. Container coverage includes all selected networking workers. Host evidence retains discovery membership and is labeled as a snapshot during validation. |
+| Data Center GPU Driver | Recognized driver DaemonSet and owned ready container; version parsed from its matching desired/status image tag | Checks the declared driver container version on selected GPU workers, not the loaded host driver. |
+| Container Toolkit | Recognized toolkit DaemonSet and owned ready container; version parsed from its matching desired/status image tag | Checks the declared toolkit installer container version, not host packages, binaries or runtime configuration. |
+
+The detector allowlist requires recognized official image coordinates, container
+identity and controller ownership. Mirrors, alternate packaging and host-only
+installations without an eligible existing Pod need another evidence method.
+The observer uses Kubernetes metadata and the existing DOCA-HOST discovery snapshot.
+It runs no new commands in Pods or on hosts and creates no resources.
+It needs read access to Nodes, Pods, Deployments, DaemonSets and `/version`;
+recognized Deployments also require ReplicaSet reads. OpenShift detection also reads its ClusterVersion resource.
+
+The **NVIDIA AI Enterprise 9.0 compliance** section is one compact **Component / Expected / Discovered / Match**
+table, including a platform-compatibility row. Match is `PASS`, `FAIL` or `UNKNOWN`;
+missing evidence never becomes a version match. Platform and node-local component
+rows group nodes with the same result and discovered versions, listing their names.
+For example, a matching toolkit on one worker and missing evidence on another
+appear as separate `PASS` and `UNKNOWN` groups. Cluster-wide operators retain one
+row; evidence that cannot be attributed to nodes remains a cluster/scope row.
+Detailed method, scope, provenance, controller and per-worker evidence are
+retained in JSON instead of separate HTML observation tables. A DOCA-HOST
+compatibility failure does not suppress platform or other component checks.
+
+Only components with supported version checks appear. BCM, DOCA Microservices,
+DPF, Fabric Manager, Virtual GPU Manager and vGPU Guest Driver are omitted.
+The Network Operator driver and DOCA-HOST establish the networking DOCA release;
+they do not establish BCM or separately deployed DOCA Microservices versions.
+
+`NOT_DETECTED` means the supported installation form was not found, not that the
+software is absent. Optional, entirely undetected components do not gate validation.
+Detected components with mismatches or incomplete coverage do gate it. Network
+Operator absence and missing platform evidence remain non-passing. Contradictory
+spec/status images, unverified digests and incomplete operator rollouts cannot pass.
+
+DOCA includes installed DOCA-HOST package observations from discovery even when
+`docaDriver.enable` is true: desired deployment settings do not erase observed
+packages. Live driver-container evidence is still checked; saved packages cannot
+hide a failed container check. When both forms are observed: a version mismatch fails, and even matching
+versions require delivery reconciliation before passing. An unscheduled driver
+DaemonSet remains unknown rather than being treated as absent; only definite
+selector exclusions remove it from the selected-worker scope. Disabling the container alone
+does not prove DOCA-HOST is installed; the node might use inbox drivers. Once host
+packages are detected, missing worker evidence or incomplete discovery membership
+prevents a passing coverage result. Saved versions are marked **discovery snapshot**
+in HTML. The existing [DOCA-HOST compatibility check](#host-doca-host-release-compatibility)
+records incompatible saved packages as failures without stopping other checks, even if
+container mode was explicitly enabled; that failure includes the package row.
+
+Fabric Manager can run in a GPU driver container on applicable systems, but an
+independent version would require a package or executable query. On GB200/GB300
+NVL72 systems, rack fabric services also run on NVLink switch trays. Neither a
+GPU driver tag nor a switch OS version establishes the Fabric Manager version.
+The feature therefore omits it rather than adding another probe. See the
+[Fabric Manager guide](https://docs.nvidia.com/datacenter/tesla/fabric-manager-user-guide/index.html)
+and [DGX rack software guide](https://docs.nvidia.com/dgx/dgxgb200-user-guide/software.html).
+
+The Run:ai comparison follows the [3.0 release linked by NVIDIA AI Enterprise](https://docs.nvidia.com/run-ai/self-hosted/documentation/getting-started/whats-new/whats-new-3-0).
+This minor-release rule applies only to Run:ai minor pins. Exact three-part pins
+remain exact, and prerelease or unrecognized image tags remain unknown.
+
+The initial API observer identifies RKE2 and OpenShift. Conditional matrix
+footnotes remain unresolved until separately reviewed. Discovery remains useful
+before components are installed and saves release intent even when compatibility
+observations are incomplete. Without a release selection, these extra observations
+and report sections are absent. A passing result applies to the performed checks,
+not to every product in the reference BOM.
+
+JSON retains the bundled snapshot's retrieval date, sources and hash, plus
+filtered matrix links for observed GPU/platform/OS facts. Links with unverified
+physical deployment are marked as bare-metal candidates; simulated deployments
+receive GPU-level links. They open the current website, which can differ from
+the reviewed snapshot used for validation.
+
+Matrix comparisons use the bundled snapshot; they do not query the latest
+website. The public [interactive matrix](https://docs.nvidia.com/ai-enterprise/support-matrix/latest/index.html)
+returns an HTML shell: GPU/platform/OS query parameters are applied by browser
+JavaScript to its static data. Parsing the HTTP HTML response does not recover the
+filtered result. The catalog updater parses that data without executing JavaScript;
+the [lifecycle explorer JSON](https://docs.nvidia.com/ai-enterprise/lifecycle/latest/_static/explorer-data.json)
+provides a component-pin cross-check. Neither is a documented REST service contract.
+
+A documentation match does not establish NVIDIA-certified server status,
+physical bare-metal deployment, firmware qualification, licensing or product
+validation. In particular, the [NVAIE 9.0 bare-metal table](https://docs.nvidia.com/ai-enterprise/release-9/latest/support/support-matrix-9/9.0.html#bare-metal-deployments)
+and [Network Operator 26.7.1 platform table](https://docs.nvidia.com/networking/display/kubernetes2671/platform-support.html)
+publish different RKE2 combinations. Review both before deployment. A kind
+simulation cannot satisfy physical-hardware qualification, and unknown facts
+must not be interpreted as certification.
+
 Omitting `--target` selects Host validation, described below. For a generated DPF
 HBN-BGP deployment, follow the [DPF validation guide](dpf-validation.md) and
 [standalone procedure](dpf-workflows.md#hbn-bgp-validation). DPF requires explicit
@@ -31,7 +163,7 @@ and embedded defaults alone do not satisfy that requirement.
 
 ## Host DOCA-HOST release compatibility
 
-Before cluster checks, validation compares installed `discoveredDocaHost`
+Validation compares installed `discoveredDocaHost`
 observations for discovery workers with `networkOperator.selectedRelease`.
 When generation overrides topology with `--for`, the bundle retains these
 workers in `discoveredDocaHostScope`; preset topology cannot bypass this check.
@@ -39,10 +171,13 @@ It checks the three-part DOCA release against the catalog synchronized from the
 Network Operator release SBOM's `Mofed.version`. For example, host package
 `3.5.0-041000-26.07-ubuntu2404` matches a `doca3.5.0-...` driver coordinate;
 package/OFED/container build suffixes are not equivalent and are not compared.
-A different or unparseable DOCA release, missing release selection, or malformed
-snapshot fails with exit `2` and a partial report. Explicitly enabling the
-container driver does not bypass this gate; it also applies with
-`--connectivity=false` and in connectivity-only validation.
+A different or unparseable DOCA release, or missing release selection, records a
+compatibility failure while the other checks continue. The final validation
+status is exit `4`, including when other checks pass or manifests are still
+reconciling. HTML and JUnit retain the failure; JSON emits `docaHostIssues`.
+Malformed snapshots still fail input validation with exit `2`. Explicitly enabling
+the container driver does not bypass compatibility checking; it also applies
+with `--connectivity=false` and in connectivity-only validation.
 
 These are saved discovery-time package observations, not a live host check.
 Rerun discovery after host package changes. Missing or unknown observations do
