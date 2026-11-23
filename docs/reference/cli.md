@@ -17,7 +17,7 @@ configuration fields they set.
 | `l8k discover` | Discover cluster network hardware and write `cluster-config.yaml`. |
 | `l8k generate` | Generate deployment manifests for a selected profile. |
 | `l8k deploy` | Apply previously generated manifests to a cluster. |
-| `l8k clean` | Delete Network Operator custom resources and optionally uninstall its Helm release. |
+| `l8k clean` | Remove a Kubernetes Network Operator deployment or roll back a retained OpenShift deployment bundle. |
 | `l8k validate` | Verify Network Operator version, component versions, manifest state, and connectivity. |
 | `l8k preset list` | List local topology presets. |
 | `l8k preset update` | Download topology presets from GitHub. |
@@ -61,7 +61,7 @@ flag groups and `l8k schema` for each flag's `targets` list.
 | `--network-operator-release` | root, discover, generate | host | Catalogued release line such as `26.1`, `26.4`, `26.7`, or `26.10`. |
 | `--network-operator-namespace` | root, discover, generate, deploy, clean, validate | host | Override the Network Operator namespace. It is a no-op for discovery. |
 | `--skip-network-operator-helm` | generate, deploy, validate, root pipeline | host | Skip `values.yaml` generation, Network Operator chart installation, and Helm-specific validation. Custom-resource handling remains enabled. |
-| `--flavor` | root, discover, generate, deploy, validate, clean | host | `k8s` or `ocp`, overriding config. Clean accepts the flag to reject OpenShift cleanup explicitly. |
+| `--flavor` | root, discover, generate, deploy, validate, clean | host | `k8s` or `ocp`, overriding config. During cleanup, an explicit flavor must match the cluster. |
 | `--output json` | all (inherited) | target-agnostic | Command-specific output; Host validation emits a stream, DPF validation emits one terminal result, and preset/sosreport success remains text. See [Automation](../integrator/automation.md#json-mode). |
 | `--yes`, `-y` | root pipeline only | target-agnostic | Auto-confirm root prompts. Subcommands reject this flag; lifecycle JSON mode auto-confirms. |
 | `--quiet` | root pipeline, discover; DPF validate | root/discover: target-agnostic; validate: dpf | Suppress informational progress; keep the terminal result and errors. Host validate rejects this flag. |
@@ -100,7 +100,7 @@ available throughout the command tree.
 | `--deploy-timeout` | yes | — | — | yes | — | — |
 | `--overwrite-existing` | — | — | yes | yes | — | — |
 | `--skip-network-operator-helm` | yes | — | yes | yes | yes | — |
-| `--deployment-files` | — | — | — | yes | yes | — |
+| `--deployment-files` | — | — | — | yes | yes | yes (OpenShift) |
 | `--yes` | yes | — | — | — | — | — |
 | `--quiet` | yes | yes | — | — | yes (DPF only) | — |
 | Validation flags below | — | — | — | — | yes | — |
@@ -184,7 +184,9 @@ root pipeline. The remaining profile flags also apply to discovery.
 
 ## Clean Flags
 
-`l8k clean` discovers every namespaced custom-resource instance in the resolved
+On OpenShift, pass the retained Host deployment directory. Clean verifies exact resource identities and ownership, removes their configuration, and restores attributable shared settings. OLM installations remain externally managed. See [OpenShift configuration rollback](../user/cleanup.md#openshift-configuration-rollback).
+
+On Kubernetes, `l8k clean` discovers every namespaced custom-resource instance in the resolved
 Network Operator namespace and the known cluster-scoped Network Operator CRs.
 By default, it waits for operator-specific reconciliation before removing supporting resources.
 With `--skip-wait`, it sends deletion requests to the complete set before monitoring any CR for
@@ -205,12 +207,13 @@ in-cluster objects do not select a destructive cleanup target.
 
 | Flag | Description |
 | --- | --- |
+| `--deployment-files` | OpenShift deployment root with its generated manifests and resolved config. Defaults to `./deployment` on OpenShift. |
 | `--skip-wait` | Skip the SR-IOV, NIC, network attachment and MOFED reconciliation checks and use legacy batch deletion. See [cleanup](../user/cleanup.md#wait-for-reconciled-teardown). |
 | `--clean-timeout` | Bound the custom-resource and driver teardown stages, e.g. `45m`. Default `0` waits until cancelled. |
 | `--keep-helm-chart` | Delete custom resources but leave the Network Operator Helm release and chart-managed resources installed regardless of config. |
 | `--kubeconfig` | Cluster to clean. Falls back to `$KUBECONFIG` and then `~/.kube/config`. |
 | `--user-config` | Optional config used only to read `networkOperator.namespace` and `networkOperator.skipHelmChart`; unrelated stale settings do not block cleanup. |
-| `--network-operator-namespace` | Explicit cleanup namespace; takes precedence over config and the standard default. |
+| `--network-operator-namespace` | Select the Kubernetes cleanup namespace. On OpenShift an explicit value must match the retained deployment. |
 
 Cleanup is destructive and asks for confirmation in text mode. JSON mode is
 non-interactive and auto-confirms, so use `--output json` only after verifying

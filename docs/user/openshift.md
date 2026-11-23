@@ -36,16 +36,14 @@ SR-IOV, maintenance, NFD, or Subscription configuration and before applying
 network resources. It merges only the artifact's allowlist entries into the
 existing `openshift-multus/cni-sysctl-allowlist` ConfigMap. Existing site entries,
 comments, other data keys, and metadata are preserved; the generated metadata
-does not transfer ownership of the platform ConfigMap. Repeated deploys skip an
-already-complete allowlist, and concurrent changes are retried. Validation checks
+does not transfer ownership of the platform ConfigMap. Deploy records the entries it adds for later cleanup and retries concurrent changes. Validation checks
 that the artifact's entries are present, allowing additional site entries.
 
 The deploying identity needs **get and patch** permission on that ConfigMap.
 The ConfigMap must already exist; missing resources and API/RBAC errors stop
 deployment. `--dry-run` uses a server-side dry-run patch and does not persist it.
 Generation alone does not patch the cluster. Kubernetes rejects this OCP-specific patch, and bundles without the patch
-do not touch this OpenShift resource. The shared allowlist additions
-persist after deployment and are not removed by `l8k clean`.
+do not touch this OpenShift resource. Cleanup removes entries recorded as additions by this deployment after its consumers have been removed.
 
 ```bash
 oc -n openshift-multus get configmap cni-sysctl-allowlist -o yaml
@@ -182,4 +180,11 @@ Validation creates temporary `l8k-validation-*` namespaces per workload namespac
 
 ## Remove the intended resources
 
-`l8k clean` rejects OpenShift. Preserve the externally installed operators and their Subscriptions. From the reviewed bundle and live inventory, list generated resources by **kind, name, and namespace**; confirm whether each is shared with another workload or cohort. Remove only approved identities through the site's OpenShift change process, wait for finalizers, and record what remains externally owned. Do not substitute the broad [Kubernetes cleanup](cleanup.md) command. If validation cleanup was interrupted, separately inspect `l8k-validation-*` namespaces and remove the exact retained test objects after API access returns.
+Use the original deployment directory to remove the configuration and restore recorded changes to shared operator settings.
+
+```bash
+l8k clean --flavor ocp --kubeconfig ~/.kube/config \
+  --deployment-files ./ocp-deployment --clean-timeout 45m
+```
+
+Review the displayed identities and any retained settings in the result. OLM operators and validation example workloads are outside the deployment cleanup scope. If validation was interrupted, inspect its `l8k-validation-*` namespaces separately. See [OpenShift configuration rollback](cleanup.md#openshift-configuration-rollback) for ownership, wait and retry behavior.

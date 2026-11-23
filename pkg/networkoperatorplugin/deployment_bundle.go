@@ -13,6 +13,7 @@ import (
 )
 
 type deploymentObjects struct {
+	ocpOwner        string // Bound to the selected OpenShift root before any deployment writes.
 	ncp             *unstructured.Unstructured
 	nnps            []*unstructured.Unstructured
 	others          []*unstructured.Unstructured

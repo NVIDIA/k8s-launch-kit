@@ -78,6 +78,8 @@ func TestCleanCommandFlags(t *testing.T) {
 		"keep-helm-chart",
 		"skip-wait",
 		"clean-timeout",
+		"deployment-files",
+		"flavor",
 	} {
 		assert.NotNil(t, cleanCmd.Flags().Lookup(name), "missing --%s", name)
 	}

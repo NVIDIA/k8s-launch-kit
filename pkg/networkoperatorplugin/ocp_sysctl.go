@@ -67,6 +67,10 @@ func mergeOCPSysctlAllowlist(current, desired *unstructured.Unstructured) error 
 }
 
 func ensureOCPSysctlAllowlist(ctx context.Context, c client.Client, desired *unstructured.Unstructured, dryRun bool) error {
+	return ensureOCPSysctlAllowlistForCohort(ctx, c, desired, dryRun, ocpLegacyCohort)
+}
+
+func ensureOCPSysctlAllowlistForCohort(ctx context.Context, c client.Client, desired *unstructured.Unstructured, dryRun bool, cohort string) error {
 	key := client.ObjectKeyFromObject(desired)
 	changed := false
 	err := retry.RetryOnConflict(retry.DefaultRetry, func() error {
@@ -79,6 +83,9 @@ func ensureOCPSysctlAllowlist(ctx context.Context, c client.Client, desired *uns
 		}
 		before := current.DeepCopy()
 		if err := mergeOCPSysctlAllowlist(current, desired); err != nil {
+			return err
+		}
+		if err := recordOCPConfigurationChange(before, current, cohort, false); err != nil {
 			return err
 		}
 		if reflect.DeepEqual(before.Object, current.Object) {

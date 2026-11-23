@@ -26,9 +26,10 @@ import (
 )
 
 var (
-	keepHelmChart bool
-	skipCleanWait bool
-	cleanTimeout  time.Duration
+	keepHelmChart        bool
+	skipCleanWait        bool
+	cleanTimeout         time.Duration
+	cleanDeploymentFiles string
 )
 
 type cleanSettings struct {
@@ -54,6 +55,10 @@ deleted. The known cluster-scoped Network Operator policy and network custom
 resources are also removed. Custom installation namespaces must be supplied by
 flag or config; untrusted in-cluster objects never select the cleanup target.
 
+On OpenShift, cleanup uses the retained OpenShift deployment bundle to select
+individual resources across operator namespaces and keeps the OLM installations.
+Pass --deployment-files to select the bundle (default ./deployment).
+
 Cleanup waits for operator reconciliation before removing supporting resources.
 Use --skip-wait for legacy batch deletion with CR finalizer waits only.
 The namespace and CustomResourceDefinitions are preserved. Pass
@@ -63,6 +68,9 @@ The namespace and CustomResourceDefinitions are preserved. Pass
 
   # Wait for reconciled teardown before removing controllers
   l8k clean --clean-timeout 45m --kubeconfig ~/.kube/config
+
+  # Back out a deployed OpenShift configuration
+  l8k clean --flavor ocp --deployment-files ./ocp-deployment
 
   # Resolve a custom operator namespace explicitly
   l8k clean --kubeconfig ~/.kube/config \
@@ -103,26 +111,32 @@ The namespace and CustomResourceDefinitions are preserved. Pass
 		uiOutput, jsonOutput := ui.NewOutputForFormat(outputFormat, yesFlag)
 		ctx := ui.WithOutput(cmd.Context(), uiOutput)
 
-		settings, err := resolveCleanSettings(keepHelmChart)
-		if err != nil {
-			exitWithError(apperrors.NewValidationError(
-				"failed to resolve cleanup settings from user config",
-				err,
-				"Fix or remove the selected config before cleanup",
-			), outputFormat)
-		}
-		if settings.Flavor == "ocp" {
-			exitWithError(apperrors.NewValidationError("clean is unsupported for OpenShift flavor", nil,
-				"Remove only the specific l8k resources you intend to delete; broad OpenShift cleanup is unavailable"), outputFormat)
-		}
 		openShift, err := isOpenShiftCluster(ctx, k8sClient)
 		if err != nil {
 			exitWithError(apperrors.NewClusterError("cannot determine whether cleanup targets OpenShift", err,
 				"Check cluster access before attempting cleanup"), outputFormat)
 		}
+		if err := validateCleanPlatform(openShift, flavor, cleanDeploymentFiles); err != nil {
+			exitWithError(apperrors.NewValidationError("cleanup target mismatch", err,
+				"Check the kubeconfig context, --flavor and --deployment-files"), outputFormat)
+		}
 		if openShift {
-			exitWithError(apperrors.NewValidationError("clean is unsupported for OpenShift clusters", nil,
-				"Remove only the specific l8k resources you intend to delete; broad OpenShift cleanup is unavailable"), outputFormat)
+			if err := runOpenShiftClean(ctx, k8sClient, restConfig, uiOutput, jsonOutput); err != nil {
+				exitWithError(apperrors.NewDeploymentError("OpenShift cleanup failed", err,
+					"Inspect the bundle, reported resources and operator status before retrying"), outputFormat)
+			}
+			return
+		}
+
+		settings, err := resolveCleanSettings(keepHelmChart)
+		if err != nil {
+			exitWithError(apperrors.NewValidationError(
+				"failed to resolve cleanup settings from user config", err,
+				"Fix or remove the selected config before cleanup"), outputFormat)
+		}
+		if err := validateCleanPlatform(false, settings.Flavor, ""); err != nil {
+			exitWithError(apperrors.NewValidationError("cleanup target mismatch", err,
+				"Check the kubeconfig context and the flavor in the selected config"), outputFormat)
 		}
 		if problems := validation.IsDNS1123Label(settings.Namespace); len(problems) > 0 {
 			exitWithError(apperrors.NewValidationError(
@@ -280,6 +294,7 @@ func finalizeCleanJSON(
 	resources int,
 	helmRemoved bool,
 	keepHelm bool,
+	retained ...string,
 ) {
 	if jsonOutput == nil {
 		return
@@ -293,6 +308,7 @@ func finalizeCleanJSON(
 			CustomResourcesDeleted: resources,
 			HelmReleaseRemoved:     helmRemoved,
 			KeepHelmChart:          keepHelm,
+			Retained:               retained,
 		},
 	})
 }
@@ -301,9 +317,10 @@ func init() {
 	rootCmd.AddCommand(cleanCmd)
 
 	cleanCmd.Flags().StringVar(&kubeconfig, "kubeconfig", "", "Path to kubeconfig file (falls back to $KUBECONFIG, then ~/.kube/config)")
-	cleanCmd.Flags().StringVar(&flavor, "flavor", "", "Cluster flavor: k8s or ocp (OpenShift cleanup is unsupported)")
+	cleanCmd.Flags().StringVar(&flavor, "flavor", "", "Cluster flavor: k8s or ocp; must match the detected cluster")
+	cleanCmd.Flags().StringVar(&cleanDeploymentFiles, "deployment-files", "", "Retained OpenShift deployment bundle to clean (defaults to ./deployment on OpenShift)")
 	cleanCmd.Flags().StringVar(&userConfig, "user-config", "", "Cluster config file used to resolve networkOperator.namespace and networkOperator.skipHelmChart")
-	cleanCmd.Flags().StringVar(&networkOperatorNamespace, "network-operator-namespace", "", "Override the Network Operator namespace from cluster-config.yaml")
+	cleanCmd.Flags().StringVar(&networkOperatorNamespace, "network-operator-namespace", "", "Kubernetes operator namespace override; on OpenShift it must match the retained bundle")
 	cleanCmd.Flags().BoolVar(&skipCleanWait, "skip-wait", false, "Use legacy batch deletion and skip controller-specific reconciliation and driver shutdown checks")
 	cleanCmd.Flags().DurationVar(&cleanTimeout, "clean-timeout", 0, "Maximum time to wait for custom resource teardown (e.g. 45m). Zero waits until cancelled")
 	cleanCmd.Flags().BoolVar(&keepHelmChart, "keep-helm-chart", false, "Delete Network Operator custom resources but keep the network-operator Helm release installed regardless of config")
@@ -311,6 +328,7 @@ func init() {
 	setFlagGroup(cleanCmd, "kubeconfig", GroupCommon)
 	setFlagGroup(cleanCmd, "flavor", GroupCommon)
 	setFlagGroup(cleanCmd, "user-config", GroupCommon)
+	setFlagGroup(cleanCmd, "deployment-files", GroupClean)
 	setFlagGroup(cleanCmd, "network-operator-namespace", GroupCommon)
 	setFlagGroup(cleanCmd, "skip-wait", GroupClean)
 	setFlagGroup(cleanCmd, "clean-timeout", GroupClean)

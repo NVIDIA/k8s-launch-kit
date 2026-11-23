@@ -92,8 +92,8 @@ var schemaCmd = &cobra.Command{
 					Example:     "l8k deploy --deployment-files ./deployment --kubeconfig ~/.kube/config",
 				},
 				"clean": {
-					Description: "Delete Network Operator custom resources and uninstall its Helm release unless config or --keep-helm-chart retains it",
-					Example:     "l8k clean --kubeconfig ~/.kube/config [--skip-wait] [--keep-helm-chart]",
+					Description: "Remove a Kubernetes Network Operator deployment or roll back an OpenShift deployment using its retained bundle",
+					Example:     "l8k clean --flavor ocp --deployment-files ./ocp-deployment --kubeconfig ~/.kube/config",
 				},
 				"validate": {
 					Description: "Verify target deployment state and connectivity. Host also supports connectivity-only example directories. DPF requires explicit inventory and retained deployment-files; connectivity=false selects resource-only scope and JSON emits one terminal result.",

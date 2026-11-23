@@ -378,7 +378,7 @@ rendered resources and cannot use Helm's update/adoption path, including when a
 matching-owner resource appears concurrently. Partial creates or a failed release
 record remain for inspection; failure does not authorize automatic deletion.
 
-`clean` intentionally deletes all relevant namespaced CRs in the selected namespace plus a known cluster-kind set; it is not limited to this run. Preflight remediation and temporary-resource cleanup have different scopes. Current stray-resource preflight skips List errors and can report no conflict; some OCP Get errors are classified as missing. The stronger inspection requirement applies to new/changed paths and is not proof those legacy gaps are fixed. Discovery cleanup is registered only after successful setup. See [workflow modes](../workflow-execution/spec.md) and [platform policy](../platform-support/spec.md).
+On Kubernetes, `clean` intentionally deletes all relevant namespaced CRs in the selected namespace plus a known cluster-kind set; it is not limited to this run. OpenShift cleanup SHALL inspect exact identities from the retained deployment, verify ownership, preserve OLM installations, and restore only recorded changes to shared configuration. Preflight remediation and temporary-resource cleanup have different scopes. Current stray-resource preflight skips List errors and can report no conflict; some OCP Get errors are classified as missing. The stronger inspection requirement applies to new/changed paths and is not proof those legacy gaps are fixed. Discovery cleanup is registered only after successful setup. See [workflow modes](../workflow-execution/spec.md) and [platform policy](../platform-support/spec.md).
 
 ## Integration and evidence
 

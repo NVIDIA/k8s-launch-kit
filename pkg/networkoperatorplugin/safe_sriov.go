@@ -475,6 +475,10 @@ func sriovDaemonIdentity(pod *corev1.Pod) (cleanSriovDaemonIdentity, error) {
 }
 
 func verifySriovDaemonGeneration(ctx context.Context, c client.Client, state *unstructured.Unstructured, readLogs sriovDaemonLogReader) (*unstructured.Unstructured, error) {
+	return verifySriovDaemonGenerationWithProof(ctx, c, state, readLogs, sriovLogProvesGeneration)
+}
+
+func verifySriovDaemonGenerationWithProof(ctx context.Context, c client.Client, state *unstructured.Unstructured, readLogs sriovDaemonLogReader, proves func([]byte, *unstructured.Unstructured, time.Time) bool) (*unstructured.Unstructured, error) {
 	if state.GetUID() == "" || state.GetCreationTimestamp().Time.IsZero() || state.GetGeneration() <= 0 {
 		return nil, fmt.Errorf("NodeState UID, lifetime and generation are required to correlate daemon logs")
 	}
@@ -528,7 +532,7 @@ func verifySriovDaemonGeneration(ctx context.Context, c client.Client, state *un
 	// Released daemons log success before publishing their final status. The
 	// matching log is apply evidence; the caller must validate this fresh API
 	// observation against every retained host/drain postcondition as well.
-	if !sriovLogProvesGeneration(data, state, identity.startedAt.Time) {
+	if !proves(data, state, identity.startedAt.Time) {
 		return nil, nil
 	}
 	return latest, nil
