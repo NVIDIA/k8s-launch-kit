@@ -58,9 +58,11 @@ type CleanResult struct {
 	Namespace              string
 	CustomResourcesDeleted int
 	HelmReleaseRemoved     bool
+	Retained               []string // OpenShift effects intentionally left in place.
 }
 
 type cleanObjectRef struct {
+	Desired   *unstructured.Unstructured // Retained intent for bundle-scoped OpenShift reconciliation.
 	UID       types.UID
 	GVK       schema.GroupVersionKind
 	Namespace string

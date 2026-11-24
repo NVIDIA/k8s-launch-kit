@@ -26,7 +26,7 @@ type deploymentPolicy interface {
 	checkPrerequisites(context.Context, client.Client, *bundle.Bundle, *config.LaunchKitConfig) error
 	bootstrap(context.Context, client.Client, *bundle.Bundle, DeployOptions, helmValuesInstaller) error
 	preflight(context.Context, client.Client, *bundle.Bundle, DeployOptions) error
-	configureAfterPreflight(context.Context, client.Client, *config.LaunchKitConfig, []*unstructured.Unstructured, bool) error
+	configureAfterPreflight(context.Context, client.Client, *config.LaunchKitConfig, deploymentObjects, bool) error
 	canRetryDependentAPI(*unstructured.Unstructured, *unstructured.Unstructured) bool
 }
 
@@ -113,12 +113,21 @@ func (openShiftDeploymentPolicy) preflight(ctx context.Context, c client.Client,
 	return evaluatePreflightResults(ctx, in, filtered, opts, ui.FromContext(ctx))
 }
 
-func (kubernetesDeploymentPolicy) configureAfterPreflight(context.Context, client.Client, *config.LaunchKitConfig, []*unstructured.Unstructured, bool) error {
+func (kubernetesDeploymentPolicy) configureAfterPreflight(context.Context, client.Client, *config.LaunchKitConfig, deploymentObjects, bool) error {
 	return nil
 }
 
-func (openShiftDeploymentPolicy) configureAfterPreflight(ctx context.Context, c client.Client, cfg *config.LaunchKitConfig, objects []*unstructured.Unstructured, dryRun bool) error {
-	return applyOCPOperatorConfiguration(ctx, c, cfg, objects, dryRun)
+func (openShiftDeploymentPolicy) configureAfterPreflight(ctx context.Context, c client.Client, cfg *config.LaunchKitConfig, selected deploymentObjects, dryRun bool) error {
+	if selected.ocpOwner == "" {
+		return applyOCPOperatorConfiguration(ctx, c, cfg, selected.operatorConfigs, dryRun)
+	}
+	if !dryRun {
+		namespace := ocpCleanNamespaces(cfg).operator
+		if err := invalidateOCPCleanReceipt(ctx, c, namespace, selected.ocpOwner); err != nil {
+			return err
+		}
+	}
+	return applyOCPOperatorConfigurationForCohort(ctx, c, cfg, selected.operatorConfigs, dryRun, selected.ocpOwner)
 }
 
 func (kubernetesDeploymentPolicy) canRetryDependentAPI(*unstructured.Unstructured, *unstructured.Unstructured) bool {

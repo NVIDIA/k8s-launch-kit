@@ -6,6 +6,7 @@ package networkoperatorplugin
 import (
 	"context"
 	"errors"
+	"fmt"
 	"net/http"
 	"time"
 
@@ -20,6 +21,7 @@ import (
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
+	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/rest"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
@@ -70,6 +72,14 @@ func policyTestOperators() []client.Object {
 		"status": map[string]any{"replicas": int64(1), "updatedReplicas": int64(1), "availableReplicas": int64(1)},
 	}))
 	return objects
+}
+
+// Model API-server-assigned identity for the atomic OCP create path.
+func policyTestCreate(ctx context.Context, c client.WithWatch, obj client.Object, opts ...client.CreateOption) error {
+	if obj.GetUID() == "" {
+		obj.SetUID(types.UID(fmt.Sprintf("%s-%s-uid", obj.GetObjectKind().GroupVersionKind().Kind, obj.GetName())))
+	}
+	return c.Create(ctx, obj, opts...)
 }
 
 func policyTestBundle(platform hostplatform.Selection, withValues bool, extra ...bundle.File) *bundle.Bundle {
@@ -155,10 +165,17 @@ var _ = ginkgo.Describe("concrete Host policies through the deployment coordinat
 					return c.List(ctx, list, opts...)
 				},
 				Create: func(ctx context.Context, c client.WithWatch, obj client.Object, opts ...client.CreateOption) error {
+					if obj.GetLabels()["app.kubernetes.io/managed-by"] == ocpOperationManager {
+						return policyTestCreate(ctx, c, obj, opts...)
+					}
 					gomega.Expect(preflightScanned).To(gomega.BeTrue())
-					gomega.Expect(applied).To(gomega.BeEmpty())
-					configured = true
-					return c.Create(ctx, obj, opts...)
+					if obj.GetObjectKind().GroupVersionKind().Kind == "MaintenanceOperatorConfig" {
+						gomega.Expect(applied).To(gomega.BeEmpty())
+						configured = true
+					} else {
+						gomega.Expect(configured).To(gomega.BeTrue())
+					}
+					return policyTestCreate(ctx, c, obj, opts...)
 				},
 				Apply: func(_ context.Context, _ client.WithWatch, ac runtime.ApplyConfiguration, _ ...client.ApplyOption) error {
 					obj := ac.(client.Object)
@@ -239,7 +256,10 @@ var _ = ginkgo.Describe("concrete Host policies through the deployment coordinat
 		ginkgo.It("refuses missing OLM prerequisites before configuration or apply "+mode.name, func() {
 			writes := 0
 			c := fake.NewClientBuilder().WithInterceptorFuncs(interceptor.Funcs{
-				Create: func(context.Context, client.WithWatch, client.Object, ...client.CreateOption) error {
+				Create: func(ctx context.Context, c client.WithWatch, obj client.Object, opts ...client.CreateOption) error {
+					if obj.GetLabels()["app.kubernetes.io/managed-by"] == ocpOperationManager {
+						return policyTestCreate(ctx, c, obj, opts...)
+					}
 					writes++
 					return nil
 				},
@@ -275,7 +295,10 @@ var _ = ginkgo.Describe("concrete Host policies through the deployment coordinat
 		scheme := runtime.NewScheme()
 		gomega.Expect(corev1.AddToScheme(scheme)).To(gomega.Succeed())
 		c := fake.NewClientBuilder().WithScheme(scheme).WithObjects(policyTestOperators()...).WithInterceptorFuncs(interceptor.Funcs{
-			Create: func(context.Context, client.WithWatch, client.Object, ...client.CreateOption) error {
+			Create: func(ctx context.Context, c client.WithWatch, obj client.Object, opts ...client.CreateOption) error {
+				if obj.GetLabels()["app.kubernetes.io/managed-by"] == ocpOperationManager {
+					return policyTestCreate(ctx, c, obj, opts...)
+				}
 				writes++
 				return nil
 			},
@@ -314,7 +337,10 @@ var _ = ginkgo.Describe("concrete Host policies through the deployment coordinat
 					}
 					return c.List(ctx, list, opts...)
 				},
-				Create: func(context.Context, client.WithWatch, client.Object, ...client.CreateOption) error {
+				Create: func(ctx context.Context, c client.WithWatch, obj client.Object, opts ...client.CreateOption) error {
+					if obj.GetLabels()["app.kubernetes.io/managed-by"] == ocpOperationManager {
+						return policyTestCreate(ctx, c, obj, opts...)
+					}
 					writes++
 					return errors.New("reached configuration")
 				},
@@ -345,6 +371,7 @@ var _ = ginkgo.Describe("concrete Host policies through the deployment coordinat
 			ctx, cancel := context.WithCancel(context.Background())
 			defer cancel()
 			c := fake.NewClientBuilder().WithObjects(objects...).WithInterceptorFuncs(interceptor.Funcs{
+				Create: policyTestCreate,
 				Get: func(ctx context.Context, c client.WithWatch, key client.ObjectKey, obj client.Object, opts ...client.GetOption) error {
 					if obj.GetObjectKind().GroupVersionKind().Kind == "NicClusterPolicy" && applies > 0 {
 						live := obj.(*unstructured.Unstructured)
@@ -380,7 +407,10 @@ var _ = ginkgo.Describe("concrete Host policies through the deployment coordinat
 		objects := append(policyTestOperators(), stray)
 		writes := 0
 		c := fake.NewClientBuilder().WithObjects(objects...).WithInterceptorFuncs(interceptor.Funcs{
-			Create: func(context.Context, client.WithWatch, client.Object, ...client.CreateOption) error {
+			Create: func(ctx context.Context, c client.WithWatch, obj client.Object, opts ...client.CreateOption) error {
+				if obj.GetLabels()["app.kubernetes.io/managed-by"] == ocpOperationManager {
+					return policyTestCreate(ctx, c, obj, opts...)
+				}
 				writes++
 				return nil
 			},
@@ -413,6 +443,7 @@ var _ = ginkgo.Describe("concrete Host policies through the deployment coordinat
 		poolsApplied := 0
 		reachedExtra := errors.New("reached extra after dependent API retry")
 		c := fake.NewClientBuilder().WithScheme(scheme).WithObjects(objects...).WithInterceptorFuncs(interceptor.Funcs{
+			Create: policyTestCreate,
 			Get: func(ctx context.Context, c client.WithWatch, key client.ObjectKey, obj client.Object, opts ...client.GetOption) error {
 				kind := obj.GetObjectKind().GroupVersionKind().Kind
 				if (kind == "NicClusterPolicy" || kind == "NicNodePolicy") && applied[kind] {

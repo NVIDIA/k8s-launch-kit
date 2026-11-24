@@ -223,7 +223,7 @@ func operatorReadinessError(err error, cfg *config.LaunchKitConfig) error {
 		"Apply the generated operator-install artifacts (00-operator-namespaces.yaml, 00-operatorgroups.yaml, 00-subscriptions.yaml) and wait for the operators to be Ready, then re-run deploy.")
 }
 
-func applyBundleWithInstaller(ctx context.Context, kubeClient client.Client, artifacts *bundle.Bundle, opts DeployOptions, install helmValuesInstaller) error {
+func applyBundleWithInstaller(ctx context.Context, kubeClient client.Client, artifacts *bundle.Bundle, opts DeployOptions, install helmValuesInstaller) (operationErr error) {
 	if ctx == nil {
 		ctx = context.Background()
 	}
@@ -255,6 +255,12 @@ func applyBundleWithInstaller(ctx context.Context, kubeClient client.Client, art
 		return err
 	}
 
+	if opts.Platform == hostplatform.OpenShift {
+		if err := prepareOCPCleanDeployment(ctx, kubeClient, opts.Config, artifacts, &selected); err != nil {
+			return fmt.Errorf("prepare OpenShift configuration ownership: %w", err)
+		}
+	}
+
 	// Bootstrap stays after ownership checks and before common preflight.
 	if err := policy.bootstrap(ctx, kubeClient, artifacts, opts, install); err != nil {
 		return err
@@ -269,8 +275,17 @@ func applyBundleWithInstaller(ctx context.Context, kubeClient client.Client, art
 		return err
 	}
 
+	// OpenShift preflight filters out stray remediation and has no Helm phase.
+	// Hold the deployment lock through every write, retry and readiness poll.
+	if selected.ocpOwner != "" && !opts.DryRun {
+		release, err := acquireOCPOperation(ctx, kubeClient, ocpCleanNamespaces(opts.Config).operator, selected.ocpOwner, "deploy")
+		if err != nil {
+			return err
+		}
+		defer func() { operationErr = errors.Join(operationErr, release()) }()
+	}
 	ncpObj, nnpObjs, otherDocs := selected.ncp, selected.nnps, selected.others
-	if err := policy.configureAfterPreflight(ctx, kubeClient, opts.Config, selected.operatorConfigs, opts.DryRun); err != nil {
+	if err := policy.configureAfterPreflight(ctx, kubeClient, opts.Config, selected, opts.DryRun); err != nil {
 		return err
 	}
 
@@ -354,7 +369,7 @@ func applyBundleWithInstaller(ctx context.Context, kubeClient client.Client, art
 			// Apply decodes its server response into the supplied object. Keep
 			// desired selectors/source metadata immutable for polling and reapply.
 			applied := obj.DeepCopy()
-			if err := applyUnstructuredWithRetry(ctx, kubeClient, applied, dryRun); err != nil {
+			if err := applyUnstructuredWithRetry(ctx, kubeClient, applied, dryRun, opts.Platform); err != nil {
 				if meta.IsNoMatchError(err) && policy.canRetryDependentAPI(obj, ncpObj) {
 					if dryRun {
 						deferred = append(deferred, label)
@@ -425,7 +440,7 @@ func retryDependentAPIWithInterval(ctx context.Context, c client.Client, desired
 			return nil, fmt.Errorf("%s/%s target scope: %w", desired.GetKind(), desired.GetName(), err)
 		}
 		applied := desired.DeepCopy()
-		err := applyUnstructured(ctx, c, applied, false)
+		err := applyUnstructured(ctx, c, applied, false, hostplatform.OpenShift)
 		if err == nil {
 			return applied, nil
 		}
@@ -480,7 +495,7 @@ func applyAndWait(ctx context.Context, c client.Client, registry *crstate.Regist
 	applied := obj.DeepCopy()
 	progress := uiOutput.StartProgress(fmt.Sprintf("Applying %s", label))
 	log.Log.Info("Applying manifest", "kind", obj.GetKind(), "name", obj.GetName(), "namespace", obj.GetNamespace())
-	if err := applyUnstructured(ctx, c, applied, dryRun); err != nil {
+	if err := applyUnstructured(ctx, c, applied, dryRun, platform); err != nil {
 		progress.Fail(fmt.Sprintf("Failed to apply %s: %v", label, err))
 		return err
 	}
@@ -729,7 +744,7 @@ func pollUntilTerminalWithRetryableErrorTimeout(
 					}
 				}
 				applied := obj.DeepCopy()
-				if err := applyUnstructured(ctx, c, applied, false); err != nil {
+				if err := applyUnstructured(ctx, c, applied, false, platform); err != nil {
 					progress.Fail(fmt.Sprintf("Re-apply of %s failed: %v", label, err))
 					return err
 				}
@@ -771,9 +786,9 @@ func manifestRetryableErrorTimeout(obj *unstructured.Unstructured) time.Duration
 // applyUnstructuredWithRetry wraps applyUnstructured with the legacy
 // Pod-specific retry path (up to 3 attempts, 30s apart). Non-Pod kinds
 // surface the first apply error unmodified.
-func applyUnstructuredWithRetry(ctx context.Context, c client.Client, obj *unstructured.Unstructured, dryRun bool) error {
+func applyUnstructuredWithRetry(ctx context.Context, c client.Client, obj *unstructured.Unstructured, dryRun bool, platform hostplatform.Selection) error {
 	uiOutput := ui.FromContext(ctx)
-	err := applyUnstructured(ctx, c, obj, dryRun)
+	err := applyUnstructured(ctx, c, obj, dryRun, platform)
 	if err == nil || !strings.EqualFold(obj.GetKind(), "Pod") {
 		return err
 	}
@@ -787,7 +802,7 @@ func applyUnstructuredWithRetry(ctx context.Context, c client.Client, obj *unstr
 			return ctx.Err()
 		case <-time.After(30 * time.Second):
 		}
-		err = applyUnstructured(ctx, c, obj, dryRun)
+		err = applyUnstructured(ctx, c, obj, dryRun, platform)
 	}
 	return err
 }
@@ -849,7 +864,10 @@ func btoi(b bool) int {
 	return 0
 }
 
-func applyUnstructured(ctx context.Context, c client.Client, obj *unstructured.Unstructured, dryRun bool) error {
+func applyUnstructured(ctx context.Context, c client.Client, obj *unstructured.Unstructured, dryRun bool, platform hostplatform.Selection) error {
+	if platform == hostplatform.OpenShift {
+		return applyOCPUnstructured(ctx, c, obj, dryRun)
+	}
 	opts := []client.ApplyOption{client.FieldOwner("l8k"), client.ForceOwnership}
 	if dryRun {
 		opts = append(opts, client.DryRunAll)

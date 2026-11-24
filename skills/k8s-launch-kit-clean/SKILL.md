@@ -10,7 +10,7 @@ handling.
 
 Component external ownership adds no DaemonSet or host-file deletion. NCP
 removal still tears down its operator-owned children and is not a component
-ownership migration. The existing broad CR deletion boundary can include NADs
+ownership migration. The Kubernetes CR deletion boundary can include NADs
 in the selected namespace. See [external networking](../../docs/user/cleanup.md#external-multus-and-cni-plugins).
 
 ## Safety Boundary
@@ -121,4 +121,4 @@ read-only `helm list` command. If it was kept, verify it remains deployed.
 
 ## OpenShift
 
-`l8k clean --flavor ocp` is rejected. The broad Kubernetes cleanup does not cover separately installed OpenShift operators; remove only exact intended resources manually.
+On OpenShift, obtain the original deployment bundle and confirm its identities and kubeconfig context. Use `l8k clean --flavor ocp --deployment-files <deployment-directory>`. Review retained effects in the result. Operators installed separately through OLM remain installed. See the [OpenShift rollback procedure](../../docs/user/cleanup.md#openshift-configuration-rollback).

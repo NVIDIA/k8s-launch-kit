@@ -48,6 +48,11 @@ Platform adaptations SHALL preserve explicit supported user values and use durab
 - **WHEN** the selected platform requires an externally installed operator
 - **THEN** deployment honors that installation boundary and reports missing prerequisites rather than claiming it installed the operator.
 
+#### Scenario: Remove OpenShift deployment configuration
+
+- **WHEN** clean targets an OpenShift cluster with its retained Host bundle
+- **THEN** it verifies the exact identities and live ownership, waits for controller-managed teardown by default, and restores attributable shared settings after removing their consumers. The command preserves externally installed OLM operators. An explicit `--skip-wait` waives controller-specific checks while keeping ownership and finalizer checks.
+
 #### Scenario: OpenShift interface tuning
 
 - **WHEN** `ignoreARP` is enabled for a supported OpenShift secondary network

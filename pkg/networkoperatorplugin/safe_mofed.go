@@ -34,14 +34,36 @@ const mofedDriverContainer = "mofed-container"
 // A durable checkpoint prevents a retry from mistaking lost terminal status for
 // successful shutdown. It is removed only after the complete verification succeeds.
 func withVerifiedMOFEDShutdown(ctx context.Context, kubeClient client.Client, namespace string, remove func(context.Context) (int, error)) (int, error) {
+	return withScopedMOFEDShutdown(ctx, kubeClient, namespace, nil, remove)
+}
+
+// A scope limits observation, never deletion, to the selected root policies.
+// Nil retains the legacy Kubernetes installation-wide cleanup contract.
+type mofedCleanupScope struct {
+	checkpointName   string
+	includeDaemonSet func(*appsv1.DaemonSet) bool
+	includePod       func(*corev1.Pod) (bool, error)
+	hasIntent        func(context.Context) (bool, error)
+}
+
+func withScopedMOFEDShutdown(ctx context.Context, kubeClient client.Client, namespace string, scope *mofedCleanupScope, remove func(context.Context) (int, error)) (int, error) {
 	if kubeClient == nil || remove == nil || namespace == "" {
 		return 0, fmt.Errorf("verify MOFED shutdown: client, namespace and deletion callback are required")
 	}
 	if err := ctx.Err(); err != nil {
 		return 0, err
 	}
-	if err := checkMOFEDCleanupTarget(ctx, kubeClient, namespace); err != nil {
+	checkpointName := mofedCleanupCheckpoint
+	if scope != nil {
+		checkpointName = scope.checkpointName
+	}
+	if err := checkMOFEDCleanupCheckpoint(ctx, kubeClient, namespace, checkpointName); err != nil {
 		return 0, err
+	}
+	if scope == nil {
+		if err := rejectOtherNamespaceMOFED(ctx, kubeClient, namespace); err != nil {
+			return 0, err
+		}
 	}
 	pods := &corev1.PodList{}
 	if err := kubeClient.List(ctx, pods, client.InNamespace(namespace)); err != nil {
@@ -52,9 +74,20 @@ func withVerifiedMOFEDShutdown(ctx context.Context, kubeClient client.Client, na
 		return 0, fmt.Errorf("inventory MOFED DaemonSets: %w", err)
 	}
 	observer := mofedShutdownObserver{pods: map[types.UID]*mofedShutdownPod{}, resourceVersion: pods.ResourceVersion}
+	if scope != nil {
+		observer.includePod = scope.includePod
+		observer.includeDaemonSet = scope.includeDaemonSet
+	}
 	var initialObservationError error
 	for i := range pods.Items {
 		pod := &pods.Items[i]
+		included, err := observer.includes(pod)
+		if err != nil {
+			return 0, err
+		}
+		if !included {
+			continue
+		}
 		if isMOFEDPod(pod) {
 			for _, status := range pod.Status.ContainerStatuses {
 				if status.Name == mofedDriverContainer && status.State.Terminated != nil {
@@ -68,10 +101,14 @@ func withVerifiedMOFEDShutdown(ctx context.Context, kubeClient client.Client, na
 	}
 	hasDriver := len(observer.pods) != 0
 	for i := range ds.Items {
-		hasDriver = hasDriver || isMOFEDDaemonSet(&ds.Items[i])
+		hasDriver = hasDriver || (isMOFEDDaemonSet(&ds.Items[i]) && (observer.includeDaemonSet == nil || observer.includeDaemonSet(&ds.Items[i])))
 	}
 	if !hasDriver {
-		intended, err := hasMOFEDPolicyIntent(ctx, kubeClient)
+		intent := func(ctx context.Context) (bool, error) { return hasMOFEDPolicyIntent(ctx, kubeClient) }
+		if scope != nil {
+			intent = scope.hasIntent
+		}
+		intended, err := intent(ctx)
 		if err != nil {
 			return 0, err
 		}
@@ -95,7 +132,7 @@ func withVerifiedMOFEDShutdown(ctx context.Context, kubeClient client.Client, na
 	}
 	defer stream.Stop()
 	checkpoint := &corev1.ConfigMap{
-		ObjectMeta: metav1.ObjectMeta{Namespace: namespace, Name: mofedCleanupCheckpoint},
+		ObjectMeta: metav1.ObjectMeta{Namespace: namespace, Name: checkpointName},
 		Data: map[string]string{
 			"state": "shutdown-unverified",
 			"pods":  observer.inventory(),
@@ -207,14 +244,21 @@ func withVerifiedMOFEDShutdown(ctx context.Context, kubeClient client.Client, na
 // Check prior shutdown evidence and the namespace boundary before any
 // destructive stage, and again when acquiring the driver observation.
 func checkMOFEDCleanupTarget(ctx context.Context, kubeClient client.Client, namespace string) error {
+	if err := checkMOFEDCleanupCheckpoint(ctx, kubeClient, namespace, mofedCleanupCheckpoint); err != nil {
+		return err
+	}
+	return rejectOtherNamespaceMOFED(ctx, kubeClient, namespace)
+}
+
+func checkMOFEDCleanupCheckpoint(ctx context.Context, kubeClient client.Client, namespace, name string) error {
 	checkpoint := &corev1.ConfigMap{}
-	checkpointKey := types.NamespacedName{Namespace: namespace, Name: mofedCleanupCheckpoint}
+	checkpointKey := types.NamespacedName{Namespace: namespace, Name: name}
 	if err := kubeClient.Get(ctx, checkpointKey, checkpoint); err == nil {
-		return fmt.Errorf("MOFED cleanup checkpoint %s/%s remains from an incomplete attempt; verify driver recovery on the affected hosts before an administrator removes it", namespace, mofedCleanupCheckpoint)
+		return fmt.Errorf("MOFED cleanup checkpoint %s/%s remains from an incomplete attempt; verify driver recovery on the affected hosts before an administrator removes it", namespace, name)
 	} else if !apierrors.IsNotFound(err) {
 		return fmt.Errorf("read MOFED cleanup checkpoint: %w", err)
 	}
-	return rejectOtherNamespaceMOFED(ctx, kubeClient, namespace)
+	return nil
 }
 
 type mofedShutdownPod struct {
@@ -227,8 +271,10 @@ type mofedShutdownPod struct {
 }
 
 type mofedShutdownObserver struct {
-	pods            map[types.UID]*mofedShutdownPod
-	resourceVersion string
+	includePod       func(*corev1.Pod) (bool, error)
+	includeDaemonSet func(*appsv1.DaemonSet) bool
+	pods             map[types.UID]*mofedShutdownPod
+	resourceVersion  string
 }
 
 func isMOFEDPod(pod *corev1.Pod) bool {
@@ -259,10 +305,27 @@ func isMOFEDDaemonSet(ds *appsv1.DaemonSet) bool {
 	return false
 }
 
+func (o *mofedShutdownObserver) includes(pod *corev1.Pod) (bool, error) {
+	if o.pods[pod.UID] != nil {
+		return true, nil
+	}
+	if !isMOFEDPod(pod) {
+		return false, nil
+	}
+	if o.includePod != nil {
+		return o.includePod(pod)
+	}
+	return true, nil
+}
+
 func (o *mofedShutdownObserver) observe(pod *corev1.Pod, deleted bool) error {
 	tracked := o.pods[pod.UID]
 	if tracked == nil {
-		if !isMOFEDPod(pod) {
+		included, err := o.includes(pod)
+		if err != nil {
+			return err
+		}
+		if !included {
 			return nil
 		}
 		if pod.UID == "" {
@@ -363,7 +426,7 @@ func mofedResourcesAbsent(ctx context.Context, kubeClient client.Client, namespa
 		return false, "", fmt.Errorf("verify MOFED DaemonSet deletion: %w", err)
 	}
 	for i := range sets.Items {
-		if isMOFEDDaemonSet(&sets.Items[i]) {
+		if isMOFEDDaemonSet(&sets.Items[i]) && (observer.includeDaemonSet == nil || observer.includeDaemonSet(&sets.Items[i])) {
 			return false, "", nil
 		}
 	}
@@ -374,7 +437,11 @@ func mofedResourcesAbsent(ctx context.Context, kubeClient client.Client, namespa
 	absent := true
 	for i := range pods.Items {
 		pod := &pods.Items[i]
-		if observer.pods[pod.UID] != nil || isMOFEDPod(pod) {
+		included, err := observer.includes(pod)
+		if err != nil {
+			return false, "", err
+		}
+		if included {
 			if err := observer.observe(pod, false); err != nil {
 				return false, "", err
 			}

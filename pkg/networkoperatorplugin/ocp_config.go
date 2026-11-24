@@ -34,8 +34,15 @@ func isOCPOperatorConfig(obj *unstructured.Unstructured) bool {
 // applyOCPOperatorConfiguration changes only fields rendered by l8k. The
 // Subscription and pre-existing configuration objects keep unrelated fields.
 func applyOCPOperatorConfiguration(ctx context.Context, c client.Client, cfg *config.LaunchKitConfig, docs []*unstructured.Unstructured, dryRun bool) error {
-	if cfg.NetworkOperator == nil {
+	return applyOCPOperatorConfigurationForCohort(ctx, c, cfg, docs, dryRun, ocpLegacyCohort)
+}
+
+func applyOCPOperatorConfigurationForCohort(ctx context.Context, c client.Client, cfg *config.LaunchKitConfig, docs []*unstructured.Unstructured, dryRun bool, cohort string) error {
+	if cfg == nil || cfg.NetworkOperator == nil {
 		return fmt.Errorf("networkOperator config is required")
+	}
+	if err := checkOCPConfigurationMapping(ctx, c, cfg, cohort); err != nil {
+		return err
 	}
 	operatorNamespace := cfg.NetworkOperator.Namespace
 	if operatorNamespace == "" {
@@ -64,7 +71,7 @@ func applyOCPOperatorConfiguration(ctx context.Context, c client.Client, cfg *co
 			return fmt.Errorf("unexpected OpenShift operator configuration %s", desired.GetKind())
 		}
 		if isOCPSysctlAllowlistPatch(desired) {
-			if err := ensureOCPSysctlAllowlist(ctx, c, desired, dryRun); err != nil {
+			if err := ensureOCPSysctlAllowlistForCohort(ctx, c, desired, dryRun, cohort); err != nil {
 				return err
 			}
 		}
@@ -90,13 +97,23 @@ func applyOCPOperatorConfiguration(ctx context.Context, c client.Client, cfg *co
 				if dryRun {
 					opts = append(opts, client.DryRunAll)
 				}
-				return c.Create(ctx, desired.DeepCopy(), opts...)
+				created := desired.DeepCopy()
+				if err := recordOCPConfigurationChange(desired, created, cohort, true); err != nil {
+					return err
+				}
+				if err := c.Create(ctx, created, opts...); err != nil {
+					return err
+				}
+				return bindOCPCreatedConfiguration(ctx, c, created, dryRun)
 			}
 			if err != nil {
 				return err
 			}
 			before := current.DeepCopy()
 			if err := mergeOCPConfiguration(current, desired); err != nil {
+				return err
+			}
+			if err := recordOCPConfigurationChange(before, current, cohort, false); err != nil {
 				return err
 			}
 			if reflect.DeepEqual(before.Object, current.Object) {
@@ -112,7 +129,7 @@ func applyOCPOperatorConfiguration(ctx context.Context, c client.Client, cfg *co
 			return fmt.Errorf("configure %s %s/%s: %w", desired.GetKind(), key.Namespace, key.Name, err)
 		}
 	}
-	changed, err := mergeSubscriptionEnvChanged(ctx, c, operatorNamespace, operatorEnv, dryRun)
+	changed, err := mergeSubscriptionEnvChangedForCohort(ctx, c, operatorNamespace, operatorEnv, dryRun, cohort)
 	if err != nil {
 		return err
 	}
@@ -152,6 +169,24 @@ func mergeOCPConfiguration(current, desired *unstructured.Unstructured) error {
 		have["workerConfig"] = existingWorker
 	} else {
 		for k, v := range want {
+			if desired.GetKind() == "SriovOperatorConfig" && k == "configDaemonNodeSelector" {
+				wanted, ok := v.(map[string]interface{})
+				if !ok {
+					return fmt.Errorf("SR-IOV configDaemonNodeSelector must be a map")
+				}
+				existing, _, err := unstructured.NestedMap(have, k)
+				if err != nil {
+					return err
+				}
+				if existing == nil {
+					existing = map[string]interface{}{}
+				}
+				for key, value := range wanted {
+					existing[key] = value
+				}
+				have[k] = existing
+				continue
+			}
 			if desired.GetKind() == "SriovOperatorConfig" && k == "disablePlugins" {
 				merged, err := mergeOCPStringList(have[k], v)
 				if err != nil {
@@ -240,6 +275,10 @@ func mergeSubscriptionEnv(ctx context.Context, c client.Client, namespace string
 }
 
 func mergeSubscriptionEnvChanged(ctx context.Context, c client.Client, namespace string, desired map[string]string, dryRun bool) (bool, error) {
+	return mergeSubscriptionEnvChangedForCohort(ctx, c, namespace, desired, dryRun, ocpLegacyCohort)
+}
+
+func mergeSubscriptionEnvChangedForCohort(ctx context.Context, c client.Client, namespace string, desired map[string]string, dryRun bool, cohort string) (bool, error) {
 	if namespace == "" {
 		namespace = "nvidia-network-operator"
 	}
@@ -252,6 +291,10 @@ func mergeSubscriptionEnvChanged(ctx context.Context, c client.Client, namespace
 		}
 		if sub == nil {
 			return fmt.Errorf("existing Network Operator Subscription required in %s", namespace)
+		}
+		before := sub.DeepCopy()
+		if _, err := ocpConfigurationView(sub); err != nil {
+			return err
 		}
 		env, _, _ := unstructured.NestedSlice(sub.Object, "spec", "config", "env")
 		for name, value := range desired {
@@ -277,11 +320,14 @@ func mergeSubscriptionEnvChanged(ctx context.Context, c client.Client, namespace
 				changed = true
 			}
 		}
-		if !changed {
-			return nil
-		}
 		if err := unstructured.SetNestedSlice(sub.Object, env, "spec", "config", "env"); err != nil {
 			return err
+		}
+		if err := recordOCPConfigurationChange(before, sub, cohort, false); err != nil {
+			return err
+		}
+		if reflect.DeepEqual(before.Object, sub.Object) {
+			return nil
 		}
 		opts := []client.UpdateOption{}
 		if dryRun {
