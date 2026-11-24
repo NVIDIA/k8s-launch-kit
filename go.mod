@@ -11,6 +11,7 @@ require (
 	github.com/go-logr/logr v1.4.4
 	github.com/go-logr/zapr v1.3.0
 	github.com/gofrs/flock v0.13.0
+	github.com/google/go-cmp v0.7.0
 	github.com/mitchellh/copystructure v1.2.0
 	github.com/onsi/ginkgo/v2 v2.34.0
 	github.com/onsi/gomega v1.44.0
@@ -28,7 +29,7 @@ require (
 	k8s.io/api v0.37.2
 	k8s.io/apiextensions-apiserver v0.37.2
 	k8s.io/apimachinery v0.37.2
-	k8s.io/cli-runtime v0.37.1
+	k8s.io/cli-runtime v0.37.2
 	k8s.io/client-go v0.37.2
 	k8s.io/cluster-bootstrap v0.37.2
 	k8s.io/klog/v2 v2.140.0
@@ -85,7 +86,6 @@ require (
 	github.com/google/btree v1.1.3 // indirect
 	github.com/google/cel-go v0.29.2 // indirect
 	github.com/google/gnostic-models v0.7.0 // indirect
-	github.com/google/go-cmp v0.7.0 // indirect
 	github.com/google/pprof v0.0.0-20260402051712-545e8a4df936 // indirect
 	github.com/google/uuid v1.6.0 // indirect
 	github.com/gorilla/websocket v1.5.4-0.20250319132907-e064f32e3674 // indirect
