@@ -215,14 +215,23 @@ func TestNVAIEInProgressCannotReturnSuccess(t *testing.T) {
 				source = "nvaieRelease: '9.0'\n" + source
 			}
 			require.NoError(t, os.WriteFile(path, []byte(source), 0600))
-			live := &unstructured.Unstructured{Object: map[string]interface{}{"apiVersion": "mellanox.com/v1alpha1", "kind": "NicClusterPolicy", "metadata": map[string]interface{}{"name": "policy"}, "spec": map[string]interface{}{"nvIpam": map[string]interface{}{"version": "network-operator-v26.7.1"}}, "status": map[string]interface{}{"state": "notReady"}}}
+			// Match the live policy to the release this case resolves (the
+			// canonical default, or the line pinned by nvaieRelease) so a version
+			// mismatch cannot stand in for the in-progress result under test.
+			input, err := config.DecodeInput([]byte(source), path)
+			require.NoError(t, err)
+			resolved, err := resolve.Resolve(resolve.Request{Input: input})
+			require.NoError(t, err)
+			componentVersion := resolved.Config.NetworkOperator.ComponentVersion
+			require.NotEmpty(t, componentVersion)
+			live := &unstructured.Unstructured{Object: map[string]interface{}{"apiVersion": "mellanox.com/v1alpha1", "kind": "NicClusterPolicy", "metadata": map[string]interface{}{"name": "policy"}, "spec": map[string]interface{}{"nvIpam": map[string]interface{}{"version": componentVersion}}, "status": map[string]interface{}{"state": "notReady"}}}
 			c := fake.NewClientBuilder().WithObjects(live).Build()
 			observed := false
 			runner := validateRunner{newKubeClient: func(string) (ctrlclient.Client, *rest.Config, error) { return c, nil, nil }, assessNVAIE: func(_ context.Context, _ *rest.Config, release string, _ []string, _ *nvaie.DOCAHostEvidence) *nvaie.Assessment {
 				observed = true
 				return pendingNVAIE(release, "GPU missing")
 			}}
-			err := runner.Run(context.Background(), ValidateRequest{UserConfig: path, Kubeconfig: "test", DeploymentFiles: dir, ReportPath: "-", OutputFormat: "json"})
+			err = runner.Run(context.Background(), ValidateRequest{UserConfig: path, Kubeconfig: "test", DeploymentFiles: dir, ReportPath: "-", OutputFormat: "json"})
 			if enabled {
 				require.Error(t, err)
 				assert.Equal(t, apperrors.ExitDeployment, apperrors.ExitCodeFromError(err))
