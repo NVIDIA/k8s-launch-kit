@@ -23,18 +23,16 @@ The full race-and-coverage run uses a 45-minute per-package timeout because the
 DPF lifecycle suite renders and verifies the retained operator schemas across
 many failure paths. To reproduce that gate, use
 `go test -v -race -timeout=45m -count=1 -coverprofile=coverage.out ./...`.
-CI schedules three independent lanes through `scripts/test-ci.sh`: `lifecycle`
-runs top-level tests starting with `TestRun` or `TestOperation`, `validation` runs
-those starting with `TestValidation`, and `core` runs the complement, including
-examples and fuzz seed tests. Every lane covers all packages and keeps each
-parent's subtests together. `Complete test suite` fails if any lane fails or is
-skipped. Each CI job allows 60 minutes including dependency setup and compilation;
-these limits do not alter the individual workflow deadlines tested by the suite.
+CI and release testing run the same suite across six jobs. One runs every package
+except `pkg/dpf/deployment`, including that package's subpackages. Five jobs
+split the deployment package's top-level tests, runnable examples, and fuzz seed
+tests. Each job takes every fifth name from the sorted Go test list, so subtests
+run together and new tests are picked up automatically.
 
-Run a lane locally with `bash scripts/test-ci.sh core` (or `lifecycle` or
-`validation`). Each writes and displays its own `coverage-<lane>.out` profile.
-Those percentages describe individual lanes; use the full command above for
-combined repository coverage. CI does not upload or merge the lane profiles.
+Run `bash scripts/test-ci.sh 0 6` for the other packages or replace `0` with
+`1` through `5` to reproduce a deployment shard. Each job writes its own coverage
+profile and allows 60 minutes, including setup and compilation. Use the full
+command above to measure combined repository coverage.
 
 DPF deployment fixtures use the pinned operator chart with optional Grafana
 dashboards disabled, avoiding repeated parsing of dashboard JSON in lifecycle
@@ -44,12 +42,9 @@ dashboard ConfigMaps; production defaults are unchanged.
 Dependency-drift tests use terminal observations and reject context-expiry errors
 instead of treating a retryable condition's eventual timeout as successful rejection.
 
-Release testing uses the same three lanes and `scripts/test-ci.sh`, including
-race detection, coverage and the 45-minute per-package timeout. Each release test
-job allows 60 minutes and runs to completion even if another lane fails.
-GoReleaser runs only after all three lanes succeed; the release summary reports
-their combined result. A passing summary job alone does not establish that
-release assets were built: check the test lanes and GoReleaser result.
+`Complete test suite` requires all CI test jobs, the build and lint checks to
+succeed. Release jobs use the Go version from `go.mod` and GoReleaser waits for
+every test job to pass. All test jobs run to completion if a peer fails.
 
 ### Recreate the latest release
 

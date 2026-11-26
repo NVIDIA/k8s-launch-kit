@@ -37,7 +37,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        lane: [core, lifecycle, validation]
+        lane: [packages, deployment-1, deployment-2, deployment-3, deployment-4, deployment-5]
     steps:
       - name: Check out code
         uses: actions/checkout@v7
@@ -52,7 +52,7 @@ jobs:
         run: go mod download
 
       - name: Run tests
-        run: bash scripts/test-ci.sh "${{ matrix.lane }}"
+        run: bash scripts/test-ci.sh ${{ strategy.job-index }} ${{ strategy.job-total }}
 
   goreleaser:
     name: GoReleaser
