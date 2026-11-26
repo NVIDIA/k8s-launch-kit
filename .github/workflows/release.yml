@@ -31,9 +31,13 @@ permissions:
 
 jobs:
   test:
-    name: Test
+    name: Test (${{ matrix.lane }})
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        lane: [core, lifecycle, validation]
     steps:
       - name: Check out code
         uses: actions/checkout@v7
@@ -48,7 +52,7 @@ jobs:
         run: go mod download
 
       - name: Run tests
-        run: go test -race -count=1 ./...
+        run: bash scripts/test-ci.sh "${{ matrix.lane }}"
 
   goreleaser:
     name: GoReleaser

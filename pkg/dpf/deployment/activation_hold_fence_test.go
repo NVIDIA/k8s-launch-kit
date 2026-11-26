@@ -5,6 +5,7 @@ package deployment
 
 import (
 	"context"
+	"errors"
 	"testing"
 	"time"
 
@@ -88,7 +89,8 @@ func TestActivationHoldReleaseRejectsDependencyDriftDuringChildWait(t *testing.T
 		{"config", func(t *testing.T, f *activationIntegrationFixture) {
 			for _, object := range f.client.base.resources {
 				if object.GetKind() == "DPFOperatorConfig" {
-					setBootstrapTestReadiness(t, object, "False", "Error")
+					// Error is retryable; this case needs terminal dependency drift.
+					setBootstrapTestReadiness(t, object, "False", "Failure")
 					return
 				}
 			}
@@ -107,6 +109,9 @@ func TestActivationHoldReleaseRejectsDependencyDriftDuringChildWait(t *testing.T
 					callbacks++
 					return ActivationObservation{}, nil
 				}))
+			if errors.Is(err, context.DeadlineExceeded) || errors.Is(err, context.Canceled) {
+				t.Fatalf("dependency drift must be rejected before context expiry: %v", err)
+			}
 			if !c.waited || err == nil || len(c.patches) != 0 || c.guardCalls != 0 || c.resetSafetyCalls != 0 || callbacks != 0 {
 				t.Fatalf("waited=%v err=%v patches=%v claims=%d reset checks=%d callbacks=%d", c.waited, err, c.patches, c.guardCalls, c.resetSafetyCalls, callbacks)
 			}

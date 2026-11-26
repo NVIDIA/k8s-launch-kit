@@ -604,7 +604,12 @@ func preflightGenerationInputs(t *testing.T) generation.Inputs {
 		t.Fatalf("resolve test bootstrap inputs = %#v, %v", issues, err)
 	}
 	return generation.Inputs{
-		Operator:        bootstrap.OperatorRenderInputs{ReleaseVersion: "26.8.0", ReleaseName: "dpf-operator", KubernetesVersion: "1.35.4", Values: map[string]any{}, Bootstrap: bootstrapInputs},
+		Operator: bootstrap.OperatorRenderInputs{
+			ReleaseVersion: "26.8.0", ReleaseName: "dpf-operator", KubernetesVersion: "1.35.4",
+			// Lifecycle fixtures retain the real chart and CRD schemas, but do
+			// not need to repeatedly parse the optional Grafana dashboard JSON.
+			Values: map[string]any{"grafanaDashboards": map[string]any{"enabled": false}}, Bootstrap: bootstrapInputs,
+		},
 		OperatorArchive: operatorArchive,
 		Workload: hbnrender.Inputs{
 			Namespace: "dpf-operator-system", Generation: generationDefaults, Profile: profile,
