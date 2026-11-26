@@ -334,18 +334,21 @@ var _ = Describe("complete collection nextLink typing", func() {
 var _ = Describe("reset safety cancellation", func() {
 	It("returns no safety receipt and closes only its owned session after cancellation", func() {
 		fixture := newResetFixture()
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
 		server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			if r.URL.Path == "/redfish/v1/TaskService/Tasks/7" {
+				// Cancel only after login and the task read have started.
+				cancel()
 				<-r.Context().Done()
 				return
 			}
 			fixture.handler(w, r)
 		}))
 		defer server.Close()
-		ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
-		defer cancel()
 		observed, err := (Collector{}).ObserveResetSafety(ctx, resetFixtureTarget(server.URL), time.Second, ResetSafetyRequest{Release: "26.8.0", SerialNumber: "SERIAL-A", PSID: "MT_0000001774", NotBefore: time.Date(2026, 11, 13, 12, 0, 0, 0, time.UTC)})
 		Expect(err).To(HaveOccurred())
+		Expect(ctx.Err()).To(MatchError(context.Canceled))
 		Expect(observed).To(BeZero())
 		Expect(fixture.writes).To(Equal([]string{"POST /redfish/v1/SessionService/Sessions", "DELETE /redfish/v1/SessionService/Sessions/owned"}))
 	})
