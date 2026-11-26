@@ -54,7 +54,11 @@ func TestRenderOperatorPinnedChart(t *testing.T) {
 	}
 	objects := decodeRenderedObjects(t, first.Manifest)
 	var foundDeployment bool
+	dashboards := map[string]bool{}
 	for _, object := range objects {
+		if object.GetKind() == "ConfigMap" && object.GetLabels()["grafana_dashboard"] == "1" {
+			dashboards[object.GetName()] = true
+		}
 		if object.GetKind() != "Deployment" || object.GetName() != operatorDeploymentName {
 			continue
 		}
@@ -81,6 +85,11 @@ func TestRenderOperatorPinnedChart(t *testing.T) {
 	}
 	if !foundDeployment {
 		t.Fatal("rendered chart has no operator Deployment")
+	}
+	for _, name := range []string{"dpf-operator-grafana-dashboards", "dpf-operator-grafana-debug-dashboards"} {
+		if !dashboards[name] {
+			t.Errorf("default chart omitted dashboard ConfigMap %s", name)
+		}
 	}
 }
 

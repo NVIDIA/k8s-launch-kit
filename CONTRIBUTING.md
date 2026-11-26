@@ -36,6 +36,21 @@ Run a lane locally with `bash scripts/test-ci.sh core` (or `lifecycle` or
 Those percentages describe individual lanes; use the full command above for
 combined repository coverage. CI does not upload or merge the lane profiles.
 
+DPF deployment fixtures use the pinned operator chart with optional Grafana
+dashboards disabled, avoiding repeated parsing of dashboard JSON in lifecycle
+cases. They retain the real operator resources and complete CRD schemas. The
+bootstrap chart tests separately verify that default rendering includes both
+dashboard ConfigMaps; production defaults are unchanged.
+Dependency-drift tests use terminal observations and reject context-expiry errors
+instead of treating a retryable condition's eventual timeout as successful rejection.
+
+Release testing uses the same three lanes and `scripts/test-ci.sh`, including
+race detection, coverage and the 45-minute per-package timeout. Each release test
+job allows 60 minutes and runs to completion even if another lane fails.
+GoReleaser runs only after all three lanes succeed; the release summary reports
+their combined result. A passing summary job alone does not establish that
+release assets were built: check the test lanes and GoReleaser result.
+
 ### Recreate the latest release
 
 Maintainers can run **Actions → Recreate latest release → Run workflow**,
