@@ -65,8 +65,9 @@ configuration writes and network apply, regardless of filename order,
 without sending the patch through ordinary resource apply. It SHALL append
 missing artifact entries while preserving existing entries, unrelated fields and concurrent
 administrator changes. It SHALL require an existing platform ConfigMap and
-report inspection/patch failures. The shared configuration SHALL persist through
-cleanup; generation alone SHALL NOT modify it.
+report inspection/patch failures. Clean SHALL subtract the selected artifact entries
+from the live allowlist while preserving the platform ConfigMap, unrelated lines
+and recorded additions claimed by another deployment. Generation alone SHALL NOT modify it.
 
 #### Scenario: Allowlist prerequisite fails
 
@@ -378,7 +379,7 @@ rendered resources and cannot use Helm's update/adoption path, including when a
 matching-owner resource appears concurrently. Partial creates or a failed release
 record remain for inspection; failure does not authorize automatic deletion.
 
-On Kubernetes, `clean` intentionally deletes all relevant namespaced CRs in the selected namespace plus a known cluster-kind set; it is not limited to this run. OpenShift cleanup SHALL inspect exact identities from the retained deployment, verify ownership, preserve OLM installations, and restore only recorded changes to shared configuration. Preflight remediation and temporary-resource cleanup have different scopes. Current stray-resource preflight skips List errors and can report no conflict; some OCP Get errors are classified as missing. The stronger inspection requirement applies to new/changed paths and is not proof those legacy gaps are fixed. Discovery cleanup is registered only after successful setup. See [workflow modes](../workflow-execution/spec.md) and [platform policy](../platform-support/spec.md).
+On Kubernetes, `clean` intentionally deletes all relevant namespaced CRs in the selected namespace plus a known cluster-kind set; it is not limited to this run. OpenShift cleanup SHALL inspect exact identities from the retained deployment, verify ownership, and uninstall only attributable managed OLM installations after removing consumers. It subtracts generated Multus allowlist entries and uses recorded prior values to restore other shared configuration. Preflight remediation and temporary-resource cleanup have different scopes. Current stray-resource preflight skips List errors and can report no conflict; some OCP Get errors are classified as missing. The stronger inspection requirement applies to new/changed paths and is not proof those legacy gaps are fixed. Discovery cleanup is registered only after successful setup. See [workflow modes](../workflow-execution/spec.md) and [platform policy](../platform-support/spec.md).
 
 ## Integration and evidence
 

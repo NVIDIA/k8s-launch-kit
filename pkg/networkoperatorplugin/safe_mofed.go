@@ -40,7 +40,6 @@ func withVerifiedMOFEDShutdown(ctx context.Context, kubeClient client.Client, na
 // A scope limits observation, never deletion, to the selected root policies.
 // Nil retains the legacy Kubernetes installation-wide cleanup contract.
 type mofedCleanupScope struct {
-	checkpointName   string
 	includeDaemonSet func(*appsv1.DaemonSet) bool
 	includePod       func(*corev1.Pod) (bool, error)
 	hasIntent        func(context.Context) (bool, error)
@@ -53,14 +52,10 @@ func withScopedMOFEDShutdown(ctx context.Context, kubeClient client.Client, name
 	if err := ctx.Err(); err != nil {
 		return 0, err
 	}
-	checkpointName := mofedCleanupCheckpoint
-	if scope != nil {
-		checkpointName = scope.checkpointName
-	}
-	if err := checkMOFEDCleanupCheckpoint(ctx, kubeClient, namespace, checkpointName); err != nil {
-		return 0, err
-	}
 	if scope == nil {
+		if err := checkMOFEDCleanupCheckpoint(ctx, kubeClient, namespace, mofedCleanupCheckpoint); err != nil {
+			return 0, err
+		}
 		if err := rejectOtherNamespaceMOFED(ctx, kubeClient, namespace); err != nil {
 			return 0, err
 		}
@@ -88,7 +83,7 @@ func withScopedMOFEDShutdown(ctx context.Context, kubeClient client.Client, name
 		if !included {
 			continue
 		}
-		if isMOFEDPod(pod) {
+		if scope == nil && isMOFEDPod(pod) {
 			for _, status := range pod.Status.ContainerStatuses {
 				if status.Name == mofedDriverContainer && status.State.Terminated != nil {
 					initialObservationError = errors.Join(initialObservationError, fmt.Errorf("MOFED pod %s was already terminal at inventory; shutdown during this cleanup cannot be verified", pod.Name))
@@ -131,18 +126,21 @@ func withScopedMOFEDShutdown(ctx context.Context, kubeClient client.Client, name
 		return 0, fmt.Errorf("watch MOFED shutdown before deletion: %w", err)
 	}
 	defer stream.Stop()
-	checkpoint := &corev1.ConfigMap{
-		ObjectMeta: metav1.ObjectMeta{Namespace: namespace, Name: checkpointName},
-		Data: map[string]string{
-			"state": "shutdown-unverified",
-			"pods":  observer.inventory(),
-			"recovery": "Verify driver recovery on affected hosts before manually removing this checkpoint. " +
-				"Pod absence alone is not proof of successful shutdown. " +
-				"The pods field is the initial inventory; additional driver pods may have appeared during teardown.",
-		},
-	}
-	if err := kubeClient.Create(ctx, checkpoint); err != nil {
-		return 0, fmt.Errorf("create MOFED cleanup checkpoint before deletion: %w", err)
+	var checkpoint *corev1.ConfigMap
+	if scope == nil {
+		checkpoint = &corev1.ConfigMap{
+			ObjectMeta: metav1.ObjectMeta{Namespace: namespace, Name: mofedCleanupCheckpoint},
+			Data: map[string]string{
+				"state": "shutdown-unverified",
+				"pods":  observer.inventory(),
+				"recovery": "Verify driver recovery on affected hosts before manually removing this checkpoint. " +
+					"Pod absence alone is not proof of successful shutdown. " +
+					"The pods field is the initial inventory; additional driver pods may have appeared during teardown.",
+			},
+		}
+		if err := kubeClient.Create(ctx, checkpoint); err != nil {
+			return 0, fmt.Errorf("create MOFED cleanup checkpoint before deletion: %w", err)
+		}
 	}
 	if initialObservationError != nil {
 		return 0, initialObservationError
@@ -234,8 +232,10 @@ func withScopedMOFEDShutdown(ctx context.Context, kubeClient client.Client, name
 			continue
 		}
 
-		if err := kubeClient.Delete(ctx, checkpoint, client.Preconditions{UID: &checkpoint.UID}); err != nil {
-			return result.count, fmt.Errorf("remove verified MOFED cleanup checkpoint: %w", err)
+		if checkpoint != nil {
+			if err := kubeClient.Delete(ctx, checkpoint, client.Preconditions{UID: &checkpoint.UID}); err != nil {
+				return result.count, fmt.Errorf("remove verified MOFED cleanup checkpoint: %w", err)
+			}
 		}
 		return result.count, nil
 	}

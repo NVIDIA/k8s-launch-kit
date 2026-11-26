@@ -36,14 +36,14 @@ SR-IOV, maintenance, NFD, or Subscription configuration and before applying
 network resources. It merges only the artifact's allowlist entries into the
 existing `openshift-multus/cni-sysctl-allowlist` ConfigMap. Existing site entries,
 comments, other data keys, and metadata are preserved; the generated metadata
-does not transfer ownership of the platform ConfigMap. Deploy records the entries it adds for later cleanup and retries concurrent changes. Validation checks
+does not transfer ownership of the platform ConfigMap. Deploy retries conflicting patches against the latest ConfigMap. Validation checks
 that the artifact's entries are present, allowing additional site entries.
 
 The deploying identity needs **get and patch** permission on that ConfigMap.
 The ConfigMap must already exist; missing resources and API/RBAC errors stop
 deployment. `--dry-run` uses a server-side dry-run patch and does not persist it.
 Generation alone does not patch the cluster. Kubernetes rejects this OCP-specific patch, and bundles without the patch
-do not touch this OpenShift resource. Cleanup removes entries recorded as additions by this deployment after its consumers have been removed.
+do not touch this OpenShift resource. After removing the deployment’s networks, clean subtracts the entries listed in the generated patch and preserves unrelated site entries.
 
 ```bash
 oc -n openshift-multus get configmap cni-sysctl-allowlist -o yaml
@@ -87,6 +87,15 @@ Launch Kit does not install operators during `deploy`: apply the three artifacts
 first, wait for the CSVs to reach `Succeeded` and their CRDs to be established,
 then run `deploy`. If `deploy` runs before the operators are ready, it stops and
 points back to these artifacts.
+
+When discovery finds an existing externally managed Subscription or OperatorGroup,
+it marks the generated install manifest for retention during clean. Offline
+generation and older bundles cannot establish who first created a matching
+installation. For a new installation, use `oc create -f` on the generated
+install files so an existing object is reported instead of being adopted.
+If an older or offline install manifest was applied over an external installation,
+review the cleanup targets. Set `nvidia.kubernetes-launch-kit.ocp-clean-retain: "true"`
+on that Subscription or OperatorGroup before confirming cleanup.
 
 ## 1. Discover the intended workers
 
@@ -187,4 +196,4 @@ l8k clean --flavor ocp --kubeconfig ~/.kube/config \
   --deployment-files ./ocp-deployment --clean-timeout 45m
 ```
 
-Review the displayed identities and any retained settings in the result. OLM operators and validation example workloads are outside the deployment cleanup scope. If validation was interrupted, inspect its `l8k-validation-*` namespaces separately. See [OpenShift configuration rollback](cleanup.md#openshift-configuration-rollback) for ownership, wait and retry behavior.
+Review the displayed identities and any retained settings in the result. Clean deletes the NFD instance if its live worker rules exactly match the manifest. When the live configuration has extra rules, clean patches out the manifest’s PCI entries and preserves the instance. For a bundle generated with `--manage-operators`, clean also uninstalls its managed operators once their consumers are gone. Externally installed operators and validation example workloads are preserved. If validation was interrupted, inspect its `l8k-validation-*` namespaces separately. See [OpenShift configuration rollback](cleanup.md#openshift-configuration-rollback) for ownership, wait and retry behavior.

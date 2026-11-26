@@ -75,6 +75,7 @@ func TestOCPSysctlAllowlistPreservesAndRetries(t *testing.T) {
 	got := &corev1.ConfigMap{}
 	require.NoError(t, c.Get(ctx, client.ObjectKeyFromObject(initial), got))
 	require.Equal(t, initial.Labels, got.Labels)
+	require.Empty(t, got.Annotations[ocpRollbackAnnotation], "new deployments reconstruct sysctl cleanup from the retained manifest")
 	require.Equal(t, "keep", got.Data["unrelated"])
 	require.True(t, strings.HasPrefix(got.Data["allowlist.conf"], initial.Data["allowlist.conf"]))
 	require.Contains(t, got.Data["allowlist.conf"], "^net.ipv4.conf.IFNAME.concurrent$")
@@ -383,5 +384,265 @@ func TestSysctlPatchPrecedesOperatorConfigurationWrites(t *testing.T) {
 				}
 			})
 		}
+	}
+}
+
+func TestOCPSysctlCleanupSubtractsManifestEntries(t *testing.T) {
+	ctx := context.Background()
+	desired := sysctlPatch(t)
+	initial := desired.DeepCopy()
+	initial.SetUID("allowlist-uid")
+	initial.SetLabels(map[string]string{"owner": "platform"})
+	initial.SetAnnotations(map[string]string{"site": "keep"})
+	baseline := "# platform defaults\n^net.ipv4.conf.IFNAME.*$\n^net.ipv6.conf.IFNAME.*$\n"
+	required, err := sysctlAllowlistPatchEntries(desired)
+	require.NoError(t, err)
+	require.NoError(t, unstructured.SetNestedField(initial.Object, baseline+required+"\n  ^net.ipv4.conf.IFNAME.arp_ignore$  \nsite-without-newline", "data", "allowlist.conf"))
+	require.NoError(t, unstructured.SetNestedField(initial.Object, "keep", "data", "other"))
+	patches := 0
+	c := fake.NewClientBuilder().WithObjects(initial).WithInterceptorFuncs(interceptor.Funcs{
+		List: func(context.Context, client.WithWatch, client.ObjectList, ...client.ListOption) error {
+			t.Fatal("manifest subtraction must not infer ownership from unrelated consumers")
+			return nil
+		},
+		Patch: func(ctx context.Context, c client.WithWatch, obj client.Object, patch client.Patch, opts ...client.PatchOption) error {
+			patches++
+			return c.Patch(ctx, obj, patch, opts...)
+		},
+	}).Build()
+	messages, err := removeOCPSysctlAllowlist(ctx, c, desired, initial, "cohort")
+	require.NoError(t, err)
+	require.Empty(t, messages)
+	got := getRollbackObject(t, c, initial)
+	raw, _, err := unstructured.NestedString(got.Object, "data", "allowlist.conf")
+	require.NoError(t, err)
+	require.Equal(t, baseline+"site-without-newline", raw)
+	require.Equal(t, initial.GetLabels(), got.GetLabels())
+	require.Equal(t, initial.GetAnnotations(), got.GetAnnotations())
+	other, _, err := unstructured.NestedString(got.Object, "data", "other")
+	require.NoError(t, err)
+	require.Equal(t, "keep", other)
+	_, err = removeOCPSysctlAllowlist(ctx, c, desired, initial, "cohort")
+	require.NoError(t, err)
+	require.Equal(t, 1, patches, "repeat cleanup should not patch unchanged state")
+}
+
+func TestOCPSysctlCleanupRetriesConcurrentSiteChanges(t *testing.T) {
+	ctx := context.Background()
+	desired := sysctlPatch(t)
+	initial := desired.DeepCopy()
+	initial.SetUID("allowlist-uid")
+	attempts := 0
+	c := fake.NewClientBuilder().WithObjects(initial).WithInterceptorFuncs(interceptor.Funcs{
+		Patch: func(ctx context.Context, c client.WithWatch, obj client.Object, patch client.Patch, opts ...client.PatchOption) error {
+			attempts++
+			data, err := patch.Data(obj)
+			require.NoError(t, err)
+			require.Contains(t, string(data), "resourceVersion")
+			if attempts == 1 {
+				live := initial.DeepCopy()
+				require.NoError(t, c.Get(ctx, client.ObjectKeyFromObject(initial), live))
+				raw, _, err := unstructured.NestedString(live.Object, "data", "allowlist.conf")
+				require.NoError(t, err)
+				require.NoError(t, unstructured.SetNestedField(live.Object, raw+"\n# concurrent site setting\nsite-entry", "data", "allowlist.conf"))
+				require.NoError(t, c.Update(ctx, live))
+				return apierrors.NewConflict(schema.GroupResource{Resource: "configmaps"}, obj.GetName(), errors.New("site edit"))
+			}
+			return c.Patch(ctx, obj, patch, opts...)
+		},
+	}).Build()
+	_, err := removeOCPSysctlAllowlist(ctx, c, desired, initial, "cohort")
+	require.NoError(t, err)
+	require.Equal(t, 2, attempts)
+	got := getRollbackObject(t, c, initial)
+	raw, _, err := unstructured.NestedString(got.Object, "data", "allowlist.conf")
+	require.NoError(t, err)
+	require.Equal(t, "# concurrent site setting\nsite-entry", raw)
+}
+
+func TestOCPSysctlCleanupPreservesKnownOtherClaims(t *testing.T) {
+	ctx := context.Background()
+	desired := sysctlPatch(t)
+	initial := desired.DeepCopy()
+	initial.SetUID("allowlist-uid")
+	initial.SetAnnotations(map[string]string{"site": "keep"})
+	// This exact requested line predates l8k: it is removed even though the old
+	// journal protects the other additions for a second deployment.
+	preexisting := "^net.ipv4.conf.IFNAME.arp_ignore$"
+	require.NoError(t, unstructured.SetNestedField(initial.Object, "# site\n"+preexisting+"\n", "data", "allowlist.conf"))
+	c := fake.NewClientBuilder().WithObjects(initial).Build()
+	applyRollbackConfiguration(t, c, desired, "cohort-a")
+	applyRollbackConfiguration(t, c, desired, "cohort-b")
+	planned := getRollbackObject(t, c, initial)
+	messages, err := removeOCPSysctlAllowlist(ctx, c, desired, planned, "cohort-a")
+	require.NoError(t, err)
+	require.Len(t, messages, 1)
+	require.Contains(t, messages[0], "another deployment")
+	got := getRollbackObject(t, c, initial)
+	raw, _, err := unstructured.NestedString(got.Object, "data", "allowlist.conf")
+	require.NoError(t, err)
+	require.NotContains(t, raw, preexisting)
+	require.Contains(t, raw, "^net.ipv4.conf.IFNAME.rp_filter$")
+	journal, err := readOCPConfigurationJournal(got)
+	require.NoError(t, err)
+	require.Equal(t, []string{"cohort-b"}, journal.Cohorts)
+	messages, err = removeOCPSysctlAllowlist(ctx, c, desired, got, "cohort-b")
+	require.NoError(t, err)
+	require.Empty(t, messages)
+	got = getRollbackObject(t, c, initial)
+	raw, _, err = unstructured.NestedString(got.Object, "data", "allowlist.conf")
+	require.NoError(t, err)
+	require.Equal(t, "# site\n", raw)
+	require.Equal(t, map[string]string{"site": "keep"}, got.GetAnnotations())
+}
+
+func TestOCPSysctlCleanupMissingEmptyAndFailures(t *testing.T) {
+	for _, mode := range []string{"missing", "empty", "missing key", "only generated", "get denied", "patch denied", "replacement", "invalid data", "invalid journal"} {
+		t.Run(mode, func(t *testing.T) {
+			ctx := context.Background()
+			desired := sysctlPatch(t)
+			planned := desired.DeepCopy()
+			planned.SetUID("planned-uid")
+			initial := planned.DeepCopy()
+			switch mode {
+			case "empty":
+				require.NoError(t, unstructured.SetNestedField(initial.Object, "", "data", "allowlist.conf"))
+			case "missing key":
+				unstructured.RemoveNestedField(initial.Object, "data", "allowlist.conf")
+			case "replacement":
+				initial.SetUID("replacement-uid")
+			case "invalid journal":
+				initial.SetAnnotations(map[string]string{ocpRollbackAnnotation: "invalid"})
+			}
+			builder := fake.NewClientBuilder()
+			if mode != "missing" {
+				builder = builder.WithObjects(initial)
+			}
+			patches := 0
+			c := builder.WithInterceptorFuncs(interceptor.Funcs{
+				Get: func(ctx context.Context, c client.WithWatch, key client.ObjectKey, obj client.Object, opts ...client.GetOption) error {
+					if mode == "get denied" {
+						return apierrors.NewForbidden(schema.GroupResource{Resource: "configmaps"}, key.Name, errors.New("denied"))
+					}
+					err := c.Get(ctx, key, obj, opts...)
+					if mode == "invalid data" && err == nil {
+						require.NoError(t, unstructured.SetNestedField(obj.(*unstructured.Unstructured).Object, int64(1), "data", "allowlist.conf"))
+					}
+					return err
+				},
+				Patch: func(ctx context.Context, c client.WithWatch, obj client.Object, patch client.Patch, opts ...client.PatchOption) error {
+					patches++
+					if mode == "patch denied" {
+						return apierrors.NewForbidden(schema.GroupResource{Resource: "configmaps"}, obj.GetName(), errors.New("denied"))
+					}
+					return c.Patch(ctx, obj, patch, opts...)
+				},
+			}).Build()
+			_, err := removeOCPSysctlAllowlist(ctx, c, desired, planned, "cohort")
+			switch mode {
+			case "missing", "empty", "missing key":
+				require.NoError(t, err)
+				require.Zero(t, patches)
+			case "only generated":
+				require.NoError(t, err)
+				require.Equal(t, 1, patches)
+				got := getRollbackObject(t, c, initial)
+				raw, found, err := unstructured.NestedString(got.Object, "data", "allowlist.conf")
+				require.NoError(t, err)
+				require.True(t, found, "keep the explicit key instead of changing platform fallback behavior")
+				require.Empty(t, raw)
+			default:
+				require.ErrorContains(t, err, "openshift-multus/cni-sysctl-allowlist")
+				if mode == "patch denied" {
+					require.Equal(t, 1, patches)
+				} else {
+					require.Zero(t, patches)
+				}
+			}
+		})
+	}
+}
+
+func TestOCPSysctlCleanupPreflightInspectsOnlySelectedArtifact(t *testing.T) {
+	for _, mode := range []string{"legacy", "invalid data", "invalid journal", "terminating"} {
+		t.Run(mode, func(t *testing.T) {
+			ctx := context.Background()
+			desired := sysctlPatch(t)
+			initial := desired.DeepCopy()
+			initial.SetUID("allowlist-uid")
+			switch mode {
+			case "invalid journal":
+				initial.SetAnnotations(map[string]string{ocpRollbackAnnotation: "invalid"})
+			case "terminating":
+				initial.SetFinalizers([]string{"site/finalizer"})
+				now := metav1.Now()
+				initial.SetDeletionTimestamp(&now)
+			}
+			writes := 0
+			c := fake.NewClientBuilder().WithObjects(initial).WithInterceptorFuncs(interceptor.Funcs{
+				Get: func(ctx context.Context, c client.WithWatch, key client.ObjectKey, obj client.Object, opts ...client.GetOption) error {
+					err := c.Get(ctx, key, obj, opts...)
+					if mode == "invalid data" && err == nil && isOCPSysctlAllowlistPatch(obj.(*unstructured.Unstructured)) {
+						require.NoError(t, unstructured.SetNestedField(obj.(*unstructured.Unstructured).Object, int64(1), "data", "allowlist.conf"))
+					}
+					return err
+				},
+				List: func(ctx context.Context, c client.WithWatch, objects client.ObjectList, opts ...client.ListOption) error {
+					require.NotEqual(t, "NetworkAttachmentDefinitionList", objects.GetObjectKind().GroupVersionKind().Kind, "unrelated NADs do not establish allowlist ownership")
+					return c.List(ctx, objects, opts...)
+				},
+				Patch: func(context.Context, client.WithWatch, client.Object, client.Patch, ...client.PatchOption) error {
+					writes++
+					return nil
+				},
+			}).Build()
+			cfg := &config.LaunchKitConfig{NetworkOperator: &config.NetworkOperatorConfig{Namespace: "operator-ns"}}
+			targets, err := preflightOCPOperatorConfigurationRestore(ctx, c, cfg, []*unstructured.Unstructured{desired}, "cohort")
+			if mode == "legacy" {
+				require.NoError(t, err)
+				require.Len(t, targets, 1)
+				require.Equal(t, initial.GetUID(), targets[0].GetUID())
+			} else {
+				require.Error(t, err)
+			}
+			require.Zero(t, writes)
+		})
+	}
+}
+
+func TestOCPSysctlCleanupReleasesUnscopedLegacyClaim(t *testing.T) {
+	for _, other := range []bool{false, true} {
+		t.Run(fmt.Sprintf("identified-other=%t", other), func(t *testing.T) {
+			ctx := context.Background()
+			desired := sysctlPatch(t)
+			initial := desired.DeepCopy()
+			initial.SetUID("allowlist-uid")
+			require.NoError(t, unstructured.SetNestedField(initial.Object, "# site\n", "data", "allowlist.conf"))
+			c := fake.NewClientBuilder().WithObjects(initial).Build()
+			applyRollbackConfiguration(t, c, desired, ocpLegacyCohort)
+			if other {
+				applyRollbackConfiguration(t, c, desired, "identified-other-bundle")
+			}
+			planned := getRollbackObject(t, c, initial)
+			messages, err := removeOCPSysctlAllowlist(ctx, c, desired, planned, "current-bundle")
+			require.NoError(t, err)
+			got := getRollbackObject(t, c, initial)
+			journal, err := readOCPConfigurationJournal(got)
+			require.NoError(t, err)
+			if other {
+				require.Len(t, messages, 1)
+				require.NotNil(t, journal)
+				require.Equal(t, []string{"identified-other-bundle"}, journal.Cohorts)
+				raw, _, err := unstructured.NestedString(got.Object, "data", "allowlist.conf")
+				require.NoError(t, err)
+				require.Contains(t, raw, "^net.ipv4.conf.IFNAME.arp_ignore$")
+			} else {
+				require.Empty(t, messages)
+				require.Nil(t, journal)
+				raw, _, err := unstructured.NestedString(got.Object, "data", "allowlist.conf")
+				require.NoError(t, err)
+				require.Equal(t, "# site\n", raw)
+			}
+		})
 	}
 }

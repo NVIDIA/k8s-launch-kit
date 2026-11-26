@@ -14,7 +14,6 @@ import (
 	"github.com/onsi/ginkgo/v2"
 	"github.com/onsi/gomega"
 	"k8s.io/apimachinery/pkg/api/meta"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -121,23 +120,23 @@ var _ = ginkgo.Describe("OpenShift surviving pool consumer protection", func() {
 			nad := ocpConsumerNAD("independent", raw)
 			// Test removing the IPPool alone; the independent CIDRPool's controller
 			// remains. Whole-root CIDRPool protection is covered by the shared guard.
-			gomega.Expect(checkOCPCleanDependencies(context.Background(), ocpResourceTestClient(pool, nad), cfg, refs[1:])).To(gomega.Succeed())
+			gomega.Expect(checkOCPPoolConsumers(context.Background(), ocpResourceTestClient(pool, nad), cfg, refs[1:])).To(gomega.Succeed())
 		}
 	})
 
-	ginkgo.It("does not misclassify selected network attachments as surviving consumers", func() {
+	ginkgo.It("checks current consumers even when their networks are retained artifacts", func() {
 		cfg, root, pool, refs := ocpPoolConsumerFixture()
 		network := ocpResourceObject(cleanSriovGroup, "SriovNetwork", config.DefaultSriovOperatorNamespace, "selected-network", map[string]interface{}{"networkNamespace": "unrelated-application", "ipam": `{"type":"nv-ipam","poolName":"selected-pool"}`})
 		nad := ocpConsumerNAD("selected-network", `{"type":"sriov","ipam":{"type":"nv-ipam","poolName":"selected-pool"}}`)
 		nad.SetAnnotations(map[string]string{"sriovnetwork.openshift.io/owner-ref": "SriovNetwork.sriovnetwork.openshift.io/" + network.GetNamespace() + "/" + network.GetName()})
 		refs = append(refs, ocpResourceRef(network))
-		gomega.Expect(checkOCPCleanDependencies(context.Background(), ocpResourceTestClient(root, pool, network, nad), cfg, refs)).To(gomega.Succeed())
+		gomega.Expect(checkOCPPoolConsumers(context.Background(), ocpResourceTestClient(root, pool, network, nad), cfg, refs)).To(gomega.MatchError(gomega.ContainSubstring("still references that pool")))
 	})
 
 	ginkgo.It("uses the CR name when a surviving network omits poolName", func() {
 		cfg, root, pool, refs := ocpPoolConsumerFixture()
 		network := ocpResourceObject(cleanSriovGroup, "SriovIBNetwork", "application", "selected-pool", map[string]interface{}{"ipam": `{"type":"nv-ipam"}`})
-		err := checkOCPCleanDependencies(context.Background(), ocpResourceTestClient(root, pool, network), cfg, refs)
+		err := checkOCPPoolConsumers(context.Background(), ocpResourceTestClient(root, pool, network), cfg, refs)
 		gomega.Expect(err).To(gomega.MatchError(gomega.ContainSubstring("still references that pool")))
 	})
 
@@ -150,18 +149,18 @@ var _ = ginkgo.Describe("OpenShift surviving pool consumer protection", func() {
 			}
 			return c.List(ctx, list, opts...)
 		}})
-		gomega.Expect(errors.Is(checkOCPCleanDependencies(context.Background(), c, cfg, refs), denied)).To(gomega.BeTrue())
+		gomega.Expect(errors.Is(checkOCPPoolConsumers(context.Background(), c, cfg, refs), denied)).To(gomega.BeTrue())
 	})
 
 	ginkgo.It("does not hide malformed inline consumer configurations", func() {
 		cfg, root, pool, refs := ocpPoolConsumerFixture()
 		nad := ocpConsumerNAD("foreign", `{"type":"sriov","ipam":`)
-		err := checkOCPCleanDependencies(context.Background(), ocpResourceTestClient(root, pool, nad), cfg, refs)
+		err := checkOCPPoolConsumers(context.Background(), ocpResourceTestClient(root, pool, nad), cfg, refs)
 		gomega.Expect(err).To(gomega.MatchError(gomega.ContainSubstring("config JSON")))
 		// A structured spec.ipam is outside the served string contract, and cannot
 		// be silently omitted as though the foreign network had no IPAM.
 		network := ocpResourceObject(cleanSriovGroup, "SriovNetwork", "application", "foreign", map[string]interface{}{"ipam": map[string]interface{}{"type": "nv-ipam", "poolName": "selected-pool"}})
-		err = checkOCPCleanDependencies(context.Background(), ocpResourceTestClient(root, pool, network), cfg, refs)
+		err = checkOCPPoolConsumers(context.Background(), ocpResourceTestClient(root, pool, network), cfg, refs)
 		gomega.Expect(err).To(gomega.MatchError(gomega.ContainSubstring("spec.ipam")))
 	})
 
@@ -200,64 +199,7 @@ var _ = ginkgo.Describe("OpenShift pool consumer lifecycle checks", func() {
 			}
 			return c.List(ctx, list, opts...)
 		}})
-		gomega.Expect(checkOCPCleanDependencies(context.Background(), c, cfg, refs)).To(gomega.Succeed())
-	})
-
-	ginkgo.DescribeTable("does not trust copied NAD owner annotations", func(change func(*unstructured.Unstructured, *unstructured.Unstructured, []cleanObjectRef) bool) {
-		cfg, root, pool, refs := ocpPoolConsumerFixture()
-		network := ocpResourceObject(cleanSriovGroup, "SriovNetwork", config.DefaultSriovOperatorNamespace, "selected-network", map[string]interface{}{"networkNamespace": "unrelated-application", "ipam": `{"type":"nv-ipam","poolName":"selected-pool"}`})
-		nad := ocpConsumerNAD("selected-network", `{"type":"sriov","ipam":{"type":"nv-ipam","poolName":"selected-pool"}}`)
-		nad.SetAnnotations(map[string]string{"sriovnetwork.openshift.io/owner-ref": "SriovNetwork.sriovnetwork.openshift.io/" + network.GetNamespace() + "/" + network.GetName()})
-		refs = append(refs, ocpResourceRef(network))
-		present := change(network, nad, refs)
-		objects := []client.Object{root, pool, nad}
-		if present {
-			objects = append(objects, network)
-		}
-		base := ocpResourceTestClient(objects...)
-		c := interceptor.NewClient(base, interceptor.Funcs{Delete: func(context.Context, client.WithWatch, client.Object, ...client.DeleteOption) error {
-			ginkgo.Fail("ambiguous NAD removal must block pool deletion")
-			return nil
-		}})
-		count, err := cleanOCPResources(context.Background(), c, cfg, refs, CleanOptions{Namespace: "operator-system", SkipWait: true, PollInterval: time.Millisecond})
-		gomega.Expect(count).To(gomega.BeZero())
-		gomega.Expect(err).To(gomega.MatchError(gomega.ContainSubstring("surviving NetworkAttachmentDefinition")))
-		gomega.Expect(base.Get(context.Background(), client.ObjectKeyFromObject(pool), pool)).To(gomega.Succeed())
-	},
-		ginkgo.Entry("renamed child", func(_ *unstructured.Unstructured, nad *unstructured.Unstructured, _ []cleanObjectRef) bool {
-			nad.SetName("copied-network")
-			return true
-		}),
-		ginkgo.Entry("moved child", func(_ *unstructured.Unstructured, nad *unstructured.Unstructured, _ []cleanObjectRef) bool {
-			nad.SetNamespace("another-application")
-			return true
-		}),
-		ginkgo.Entry("vanished parent", func(_ *unstructured.Unstructured, _ *unstructured.Unstructured, refs []cleanObjectRef) bool {
-			refs[len(refs)-1].UID = ""
-			return false
-		}),
-		ginkgo.Entry("foreign GC owner", func(_ *unstructured.Unstructured, nad *unstructured.Unstructured, _ []cleanObjectRef) bool {
-			nad.SetOwnerReferences([]metav1.OwnerReference{{APIVersion: "v1", Kind: "ConfigMap", Name: "foreign", UID: "foreign"}})
-			return true
-		}))
-
-	ginkgo.It("accepts an exact GC-owned child of a pinned selected network", func() {
-		cfg, root, pool, refs := ocpPoolConsumerFixture()
-		network := ocpResourceObject("mellanox.com", "MacvlanNetwork", "", "selected-network", map[string]interface{}{"ipam": `{"type":"nv-ipam","poolName":"selected-pool"}`})
-		nad := ocpConsumerNAD("renamed-but-gc-owned", `{"type":"sriov","ipam":{"type":"nv-ipam","poolName":"selected-pool"}}`)
-		nad.SetOwnerReferences([]metav1.OwnerReference{ocpResourceOwner(network)})
-		refs = append(refs, ocpResourceRef(network))
-		gomega.Expect(checkOCPCleanDependencies(context.Background(), ocpResourceTestClient(root, pool, network, nad), cfg, refs)).To(gomega.Succeed())
-	})
-
-	ginkgo.It("uses the SR-IOV parent namespace when target namespace is omitted", func() {
-		cfg, root, pool, refs := ocpPoolConsumerFixture()
-		network := ocpResourceObject(cleanSriovGroup, "SriovNetwork", config.DefaultSriovOperatorNamespace, "selected-network", map[string]interface{}{"ipam": `{"type":"nv-ipam","poolName":"selected-pool"}`})
-		nad := ocpConsumerNAD("selected-network", `{"type":"sriov","ipam":{"type":"nv-ipam","poolName":"selected-pool"}}`)
-		nad.SetNamespace(network.GetNamespace())
-		nad.SetAnnotations(map[string]string{"sriovnetwork.openshift.io/owner-ref": "SriovNetwork.sriovnetwork.openshift.io/" + network.GetNamespace() + "/" + network.GetName()})
-		refs = append(refs, ocpResourceRef(network))
-		gomega.Expect(checkOCPCleanDependencies(context.Background(), ocpResourceTestClient(root, pool, network, nad), cfg, refs)).To(gomega.Succeed())
+		gomega.Expect(checkOCPPoolConsumers(context.Background(), c, cfg, refs)).To(gomega.Succeed())
 	})
 
 	ginkgo.It("rescans after worker/network teardown before pool deletion in both modes", func() {
@@ -287,16 +229,18 @@ var _ = ginkgo.Describe("OpenShift pool consumer lifecycle checks", func() {
 		}
 	})
 
-	ginkgo.It("blocks a surviving NAD after its selected parent disappears in skip-wait mode", func() {
+	ginkgo.It("retains the pool until its selected generated NAD disappears in skip-wait mode", func() {
 		cfg, root, pool, refs := ocpPoolConsumerFixture()
 		network := ocpResourceObject(cleanSriovGroup, "SriovNetwork", config.DefaultSriovOperatorNamespace, "selected-network", map[string]interface{}{"networkNamespace": "unrelated-application", "ipam": `{"type":"nv-ipam","poolName":"selected-pool"}`})
 		nad := ocpConsumerNAD("selected-network", `{"type":"sriov","ipam":{"type":"nv-ipam","poolName":"selected-pool"}}`)
 		nad.SetAnnotations(map[string]string{"sriovnetwork.openshift.io/owner-ref": "SriovNetwork.sriovnetwork.openshift.io/" + network.GetNamespace() + "/" + network.GetName()})
 		refs = append(refs, ocpResourceRef(network))
 		c := ocpResourceTestClient(root, pool, network, nad)
-		count, err := cleanOCPResources(context.Background(), c, cfg, refs, CleanOptions{Namespace: "operator-system", SkipWait: true, PollInterval: time.Millisecond})
+		ctx, cancel := context.WithTimeout(context.Background(), 20*time.Millisecond)
+		defer cancel()
+		count, err := cleanOCPResources(ctx, c, cfg, refs, CleanOptions{Namespace: "operator-system", SkipWait: true, PollInterval: time.Millisecond})
 		gomega.Expect(count).To(gomega.Equal(1))
-		gomega.Expect(err).To(gomega.MatchError(gomega.ContainSubstring("surviving NetworkAttachmentDefinition")))
+		gomega.Expect(errors.Is(err, context.DeadlineExceeded)).To(gomega.BeTrue())
 		gomega.Expect(c.Get(context.Background(), client.ObjectKeyFromObject(pool), pool)).To(gomega.Succeed())
 	})
 })

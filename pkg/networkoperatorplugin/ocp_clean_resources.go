@@ -7,7 +7,7 @@ package networkoperatorplugin
 import (
 	"context"
 	"fmt"
-	"sort"
+	"slices"
 	"time"
 
 	"github.com/nvidia/k8s-launch-kit/pkg/config"
@@ -24,10 +24,6 @@ import (
 // remain observation targets on retries; they never authorize a name-only delete.
 // External platform operators and controller-generated states are never deleted.
 func cleanOCPResources(ctx context.Context, c client.Client, cfg *config.LaunchKitConfig, refs []cleanObjectRef, opts CleanOptions) (int, error) {
-	return cleanOCPResourcesWithLogs(ctx, c, cfg, refs, opts, newSriovDaemonLogReader(opts.RestConfig))
-}
-
-func cleanOCPResourcesWithLogs(ctx context.Context, c client.Client, cfg *config.LaunchKitConfig, refs []cleanObjectRef, opts CleanOptions, readLogs sriovDaemonLogReader) (int, error) {
 	if ctx == nil || c == nil || cfg == nil {
 		return 0, fmt.Errorf("clean OpenShift resources: context, client and config are required")
 	}
@@ -44,82 +40,13 @@ func cleanOCPResourcesWithLogs(ctx context.Context, c client.Client, cfg *config
 		return 0, err
 	}
 	out := ui.FromContext(ctx)
-	receipt, verified, err := loadOCPCleanReceipt(ctx, c, opts.Namespace, refs)
-	if err != nil {
-		return 0, err
-	}
-	completedReceipt := verified && (receipt.object.Data["state"] == "complete" || receipt.object.Data["state"] == "resources-complete")
-	if opts.SkipWait {
-		// An explicit evidence waiver cannot create reusable hardware proof.
-		if !completedReceipt {
-			if err := receipt.save(ctx, c, "cleanup-active"); err != nil {
-				return 0, err
-			}
-		}
-		others, roots := partitionOCPRootPolicies(refs)
-		var nonPools, pools []cleanObjectRef
-		for _, ref := range others {
-			if ref.GVK.Group == "nv-ipam.nvidia.com" && ref.GVK.Kind == "IPPool" {
-				pools = append(pools, ref)
-			} else {
-				nonPools = append(nonPools, ref)
-			}
-		}
-		n, err := deleteOCPRefs(ctx, c, nonPools, opts.PollInterval)
-		if err != nil {
-			return n, err
-		}
-		if err := checkOCPPoolConsumers(ctx, c, cfg, pools); err != nil {
-			return n, err
-		}
-		count, err := deleteOCPRefs(ctx, c, pools, opts.PollInterval)
-		n += count
-		if err != nil {
-			return n, err
-		}
-		count, err = deleteOCPRefs(ctx, c, roots, opts.PollInterval)
-		n += count
-		if err != nil {
-			return n, err
-		}
-		state := "resources-unverified"
-		if completedReceipt {
-			state = "resources-complete"
-		}
-		return n, receipt.save(ctx, c, state)
-	}
-	if err := requireOCPMissingRootProof(ctx, c, refs, receipt, verified); err != nil {
-		return 0, err
-	}
-	// With no surviving target and no earlier receipt, parent disappearance
-	// has also erased the ancestry needed to qualify orphaned workload teardown.
-	// An absence inventory cannot manufacture historical reconciliation evidence.
-	if receipt.object.ResourceVersion == "" {
-		allAbsent := true
-		for _, ref := range refs {
-			if ref.UID != "" {
-				allAbsent = false
-				break
-			}
-		}
-		if allAbsent {
-			return 0, fmt.Errorf("all selected OpenShift resources are absent but no cleanup verification receipt exists; historical worker and workload teardown cannot be verified; inspect affected hosts and use --skip-wait only to explicitly waive that evidence")
-		}
-	}
-	// Claim the shared-restoration stage on an already completed retry. The
-	// resource proof remains complete; a concurrent deployment's CAS invalidation
-	// will conflict with this update before either side performs shared writes.
-	if completedReceipt {
-		if err := receipt.save(ctx, c, "resources-complete"); err != nil {
-			return 0, err
-		}
-	}
 	var sriov *ocpSriovClean
 	var nics *ocpNICClean
-	if !verified {
-		// Acquire every hardware baseline before the first deletion. A durable
-		// receipt preserves these checks through later policy/controller teardown.
-		sriov, err = prepareOCPSriovClean(ctx, c, refs, readLogs)
+	var workloads *ocpPolicyWorkloadClean
+	var err error
+	if !opts.SkipWait {
+		// Capture live worker/controller scope before removing its parent intent.
+		sriov, err = prepareOCPSriovClean(ctx, c, refs)
 		if err != nil {
 			return 0, err
 		}
@@ -127,100 +54,84 @@ func cleanOCPResourcesWithLogs(ctx context.Context, c client.Client, cfg *config
 		if err != nil {
 			return 0, err
 		}
-	}
-	workloads, err := prepareOCPWorkloadClean(ctx, c, opts.Namespace, refs, !completedReceipt)
-	if err != nil {
-		return 0, err
-	}
-	if len(workloads.roots) > 0 {
-		if !completedReceipt {
-			receipt.ancestryCheckpoint = workloads.checkpoint.Name
-			receipt.ancestryUID = workloads.checkpoint.UID
+		workloads, err = prepareOCPWorkloadClean(ctx, c, opts.Namespace, refs)
+		if err != nil {
+			return 0, err
 		}
 		if err := workloads.checkDriverNamespaces(ctx, c); err != nil {
 			return 0, err
 		}
-		if err := checkMOFEDCleanupCheckpoint(ctx, c, opts.Namespace, workloads.mofedCheckpoint()); err != nil {
-			return 0, err
-		}
 	}
-	var networks, templates, policies, remaining, roots []cleanObjectRef
-	for _, ref := range refs {
-		switch {
-		case isCleanNetworkDefinition(ref, ref.Namespace):
+
+	// Deployment applies the cluster root, node roots, then the remaining
+	// manifests in bundle order. Reverse that sequence without mutating the plan.
+	ordered := slices.Clone(refs)
+	slices.Reverse(ordered)
+	others, roots := partitionOCPRootPolicies(ordered)
+	var networks []cleanObjectRef
+	for _, ref := range others {
+		if isCleanNetworkDefinition(ref, ref.Namespace) {
 			networks = append(networks, ref)
-		case isCleanNICTemplate(ref, ref.Namespace):
-			templates = append(templates, ref)
-		case isCleanSriovIntent(ref, ref.Namespace):
-			policies = append(policies, ref)
-		case isCleanRootPolicy(ref.GVK):
-			roots = append(roots, ref)
-		default:
-			remaining = append(remaining, ref)
 		}
 	}
-	// Preflight NAD visibility as well: permission failure must precede deletion.
+	// Missing parents are still exact generated-NAD observation targets on retry.
 	if _, err := ocpNetworkAttachments(ctx, c, networks); err != nil {
 		return 0, err
 	}
-	if !verified {
-		if err := receipt.save(ctx, c, "cleanup-active"); err != nil {
-			return 0, err
+	deleted := 0
+	for _, ref := range others {
+		if ref.GVK.Group == "nv-ipam.nvidia.com" && ref.GVK.Kind == "IPPool" {
+			live, err := inspectOCPDeletionTarget(ctx, c, ref)
+			if err != nil {
+				return deleted, err
+			}
+			if live == nil {
+				continue
+			}
+			if err := checkOCPPoolConsumers(ctx, c, cfg, []cleanObjectRef{ref}); err != nil {
+				return deleted, err
+			}
+		}
+		n, err := deleteOCPRefs(ctx, c, []cleanObjectRef{ref}, opts.PollInterval)
+		deleted += n
+		if err != nil {
+			return deleted, err
+		}
+		if isCleanNetworkDefinition(ref, ref.Namespace) {
+			// This is a dependency/finalizer barrier even with --skip-wait: a
+			// Delete response does not mean the generated NAD has disappeared.
+			if err := pollOCPClean(ctx, opts.PollInterval, "selected generated network attachment", func(ctx context.Context) (string, error) {
+				pending, err := ocpNetworkAttachments(ctx, c, []cleanObjectRef{ref})
+				return joinOCPCleanReasons(pending), err
+			}); err != nil {
+				return deleted, err
+			}
 		}
 	}
-	deleted := 0
-	run := func(selected []cleanObjectRef) error {
-		n, err := deleteOCPRefs(ctx, c, selected, opts.PollInterval)
-		deleted += n
-		return err
-	}
-	if err := run(networks); err != nil {
-		return deleted, err
-	}
-	if err := pollOCPClean(ctx, opts.PollInterval, "selected generated network attachments", func(ctx context.Context) (string, error) {
-		pending, err := ocpNetworkAttachments(ctx, c, networks)
-		return joinOCPCleanReasons(pending), err
-	}); err != nil {
-		return deleted, err
-	}
-	if err := run(templates); err != nil {
-		return deleted, err
-	}
-	if !verified {
+	if !opts.SkipWait {
+		// Several templates/policies may share a device or PF. Remove every
+		// selected intent before waiting for their combined reset.
 		if err := nics.wait(ctx, c, opts.PollInterval); err != nil {
 			return deleted, err
 		}
-	}
-	if err := run(policies); err != nil {
-		return deleted, err
-	}
-	if !verified {
 		if err := sriov.wait(ctx, c, opts.PollInterval); err != nil {
 			return deleted, err
 		}
 	}
-	if !verified {
-		if err := receipt.save(ctx, c, "hardware-verified"); err != nil {
-			return deleted, err
-		}
-	}
-	// Clear IP pools and other remaining CR finalizers while their policy-owned
-	// controllers are alive. Only the root-policy stage can remove those workloads.
-	if err := checkOCPPoolConsumers(ctx, c, cfg, ocpCleanPoolRefs(remaining)); err != nil {
-		return deleted, err
-	}
-	if err := run(remaining); err != nil {
-		return deleted, err
-	}
-	_, roots = partitionOCPRootPolicies(roots)
-	// Driver shutdown is observed continuously, starting before the selected root
-	// policies disappear. Unrelated policies' controllers and drivers may remain.
 	removePolicies := func(ctx context.Context) (int, error) {
-		if _, err := workloads.observe(ctx, c); err != nil {
+		if workloads != nil {
+			if _, err := workloads.observe(ctx, c); err != nil {
+				return 0, err
+			}
+		}
+		// Worker reconciliation can take minutes; refresh root dependencies at
+		// the boundary where their shared controllers would actually be removed.
+		if err := checkOCPCleanDependencies(ctx, c, cfg, refs); err != nil {
 			return 0, err
 		}
+		// Signal every node/cluster root before waiting on cross-root finalizers.
 		n, err := deleteOCPRefs(ctx, c, roots, opts.PollInterval)
-		if err != nil {
+		if err != nil || workloads == nil {
 			return n, err
 		}
 		err = pollOCPClean(ctx, opts.PollInterval, "selected policy workloads", func(ctx context.Context) (string, error) {
@@ -230,7 +141,7 @@ func cleanOCPResourcesWithLogs(ctx context.Context, c client.Client, cfg *config
 		return n, err
 	}
 	var n int
-	if len(workloads.roots) > 0 && !completedReceipt {
+	if workloads != nil && len(workloads.roots) > 0 {
 		n, err = withScopedMOFEDShutdown(ctx, c, opts.Namespace, workloads.mofedScope(ctx, c, refs), removePolicies)
 	} else {
 		n, err = removePolicies(ctx)
@@ -242,18 +153,10 @@ func cleanOCPResourcesWithLogs(ctx context.Context, c client.Client, cfg *config
 	if err := ocpRefsAbsent(ctx, c, refs); err != nil {
 		return deleted, err
 	}
-	// Persist terminal resource proof before discarding its ancestry journal.
-	// A failed checkpoint removal can then be retried without withdrawn APIs.
-	if err := receipt.save(ctx, c, "resources-complete"); err != nil {
-		return deleted, err
-	}
-	if err := workloads.removeCheckpoint(ctx, c); err != nil {
-		return deleted, err
-	}
-	if len(templates) > 0 {
+	if nics != nil && len(nics.devices) > 0 {
 		out.Info("Selected NIC template intent cleared; template deletion does not restore firmware/NV configuration and the API does not acknowledge host udev-rule removal")
 	}
-	if len(policies) > 0 {
+	if sriov != nil && len(sriov.nodes) > 0 {
 		out.Info("Selected SR-IOV PFs report zero VFs and cleared policy intent; firmware defaults and unrelated host configuration are outside this API verification")
 	}
 	return deleted, nil
@@ -355,8 +258,8 @@ func ocpDesired(ref cleanObjectRef) (*unstructured.Unstructured, error) {
 	return ref.Desired, nil
 }
 
-// Signal node policies before their shared NCP, but wait only after every root
-// has received deletion so cross-policy finalizers cannot deadlock the teardown.
+// Preserve reverse deployment order while separating the roots that must all
+// receive deletion before waiting on cross-policy finalizers.
 func partitionOCPRootPolicies(refs []cleanObjectRef) (others, roots []cleanObjectRef) {
 	for _, ref := range refs {
 		if isCleanRootPolicy(ref.GVK) {
@@ -365,18 +268,5 @@ func partitionOCPRootPolicies(refs []cleanObjectRef) (others, roots []cleanObjec
 			others = append(others, ref)
 		}
 	}
-	sort.SliceStable(roots, func(i, j int) bool {
-		return roots[i].GVK.Kind == "NicNodePolicy" && roots[j].GVK.Kind == "NicClusterPolicy"
-	})
 	return others, roots
-}
-
-func ocpCleanPoolRefs(refs []cleanObjectRef) []cleanObjectRef {
-	var pools []cleanObjectRef
-	for _, ref := range refs {
-		if ref.GVK.Group == "nv-ipam.nvidia.com" && ref.GVK.Kind == "IPPool" {
-			pools = append(pools, ref)
-		}
-	}
-	return pools
 }

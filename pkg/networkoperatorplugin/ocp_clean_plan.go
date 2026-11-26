@@ -106,7 +106,20 @@ func ocpCleanDesiredPlan(cfg *config.LaunchKitConfig, artifacts *bundle.Bundle) 
 			return ocpCleanPlan{}, err
 		}
 	}
-	sortCleanRefs(plan.refs)
+	// Match deployment's explicit root phases, followed by bundle order. Cleanup
+	// reverses this sequence; sorting by Kind would discard dependency order.
+	var roots, nodes, others []cleanObjectRef
+	for _, ref := range plan.refs {
+		switch {
+		case isNicClusterPolicy(ref.Desired):
+			roots = append(roots, ref)
+		case ref.GVK.Group == "mellanox.com" && ref.GVK.Kind == "NicNodePolicy":
+			nodes = append(nodes, ref)
+		default:
+			others = append(others, ref)
+		}
+	}
+	plan.refs = append(append(roots, nodes...), others...)
 	return plan, nil
 }
 
@@ -174,6 +187,15 @@ func validateOCPCleanIdentity(cfg *config.LaunchKitConfig, obj *unstructured.Uns
 }
 
 func validateOCPSharedConfigIdentity(cfg *config.LaunchKitConfig, obj *unstructured.Unstructured) error {
+	if isOCPSysctlAllowlistPatch(obj) {
+		return nil
+	}
+	if obj.GetAPIVersion() == "nfd.openshift.io/v1" && obj.GetKind() == "NodeFeatureDiscovery" {
+		names := ocpCleanNamespaces(cfg)
+		if obj.GetNamespace() == names.nfd && obj.GetName() == names.nfdName {
+			return nil
+		}
+	}
 	for _, target := range ocpConfigurationSingletons(cfg) {
 		if target.GroupVersionKind() == obj.GroupVersionKind() && client.ObjectKeyFromObject(target) == client.ObjectKeyFromObject(obj) {
 			return nil

@@ -13,6 +13,7 @@ import (
 
 	"github.com/nvidia/k8s-launch-kit/pkg/config"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	kjson "k8s.io/apimachinery/pkg/util/json"
@@ -36,8 +37,6 @@ type ocpConfigurationJournal struct {
 	Cohorts          []string                         `json:"cohorts"`
 	Fields           []ocpConfigurationField          `json:"fields,omitempty"`
 	Created          map[string]interface{}           `json:"created,omitempty"`
-	NFDOriginal      *ocpConfigurationValue           `json:"nfdOriginal,omitempty"`
-	NFDApplied       string                           `json:"nfdApplied,omitempty"`
 }
 type ocpConfigurationValue struct {
 	Present bool        `json:"present"`
@@ -85,9 +84,6 @@ func readOCPConfigurationJournal(obj *unstructured.Unstructured) (*ocpConfigurat
 			return nil, fmt.Errorf("invalid Subscription restoration field")
 		}
 	}
-	if journal.NFDOriginal != nil && obj.GetKind() != "NodeFeatureDiscovery" {
-		return nil, fmt.Errorf("NFD rollback provenance on a different kind")
-	}
 	if journal.Created != nil {
 		if obj.GetKind() == "Subscription" || isOCPSysctlAllowlistPatch(obj) {
 			return nil, fmt.Errorf("rollback provenance cannot own platform %s", obj.GetKind())
@@ -120,8 +116,6 @@ func validOCPRollbackPath(obj *unstructured.Unstructured, path []string) bool {
 	switch obj.GetKind() {
 	case "SriovOperatorConfig", "MaintenanceOperatorConfig":
 		return len(path) >= 2 && path[0] == "spec"
-	case "NodeFeatureDiscovery":
-		return len(path) >= 4 && path[0] == "nfd" && path[1] == "sources" && path[2] == "pci"
 	case "Subscription":
 		return p == "env/MAINTENANCE_OPERATOR_ENABLED" || p == "env/MAINTENANCE_OPERATOR_REQUESTOR_NAMESPACE"
 	case "ConfigMap":
@@ -131,7 +125,7 @@ func validOCPRollbackPath(obj *unstructured.Unstructured, path []string) bool {
 }
 func additiveOCPRollbackPath(path []string) bool {
 	p := strings.Join(path, "/")
-	return p == "spec/disablePlugins" || p == "nfd/sources/pci/deviceClassWhitelist"
+	return p == "spec/disablePlugins"
 }
 func ocpConfigurationView(obj *unstructured.Unstructured) (map[string]interface{}, error) {
 	if obj.GetKind() == "NodeFeatureDiscovery" {
@@ -278,20 +272,6 @@ func recordOCPConfigurationChange(before, after *unstructured.Unstructured, coho
 			return err
 		}
 	}
-	if before.GetKind() == "NodeFeatureDiscovery" && !created && journal.Created == nil {
-		original, err := ocpConfigurationValueAt(before.Object, []string{"spec", "workerConfig", "configData"})
-		if err != nil {
-			return err
-		}
-		if journal.NFDOriginal == nil {
-			journal.NFDOriginal = &original
-		}
-		applied, _, err := unstructured.NestedString(after.Object, "spec", "workerConfig", "configData")
-		if err != nil {
-			return err
-		}
-		journal.NFDApplied = applied
-	}
 	if created {
 		journal.UID = "" // Bound to the server-assigned UID immediately after Create.
 		journal.Created = ocpCreatedConfigurationIntent(after)
@@ -359,8 +339,13 @@ func preflightOCPOperatorConfigurationRestore(ctx context.Context, c client.Clie
 	}
 	var live []*unstructured.Unstructured
 	for _, target := range targets {
+		if target.Object.GetKind() == "NodeFeatureDiscovery" {
+			if _, err := ocpNFDManifestRules(target.Object); err != nil {
+				return nil, err
+			}
+		}
 		current := target.Object.DeepCopy()
-		if err := c.Get(ctx, client.ObjectKeyFromObject(target.Object), current); apierrors.IsNotFound(err) || target.Optional && ocpOptionalConfigurationAbsent(err) {
+		if err := c.Get(ctx, client.ObjectKeyFromObject(target.Object), current); apierrors.IsNotFound(err) || meta.IsNoMatchError(err) {
 			continue
 		} else if err != nil {
 			return nil, err
@@ -368,13 +353,29 @@ func preflightOCPOperatorConfigurationRestore(ctx context.Context, c client.Clie
 		if target.Optional && !ocpConfigurationHasCohort(current, cohort) {
 			continue
 		}
-		journal, err := readOCPConfigurationJournal(current)
-		if err != nil {
-			return nil, fmt.Errorf("inspect %s %s: %w", current.GetKind(), client.ObjectKeyFromObject(current), err)
-		}
-		if journal != nil && containsOCPString(journal.Cohorts, cohort) {
-			if _, err := ocpConfigurationConsumer(ctx, c, current, journal); err != nil {
+		if isOCPSysctlAllowlistPatch(current) {
+			if _, _, err := ocpSysctlAllowlistCleanupClaims(current, cohort); err != nil {
 				return nil, err
+			}
+			if _, _, err := unstructured.NestedString(current.Object, "data", "allowlist.conf"); err != nil {
+				return nil, fmt.Errorf("read existing sysctl allowlist: %w", err)
+			}
+			if current.GetDeletionTimestamp() != nil {
+				return nil, fmt.Errorf("ConfigMap %s is terminating", client.ObjectKeyFromObject(current))
+			}
+		} else if current.GetKind() == "NodeFeatureDiscovery" {
+			if _, err := ocpConfigurationView(current); err != nil {
+				return nil, err
+			}
+		} else {
+			journal, err := readOCPConfigurationJournal(current)
+			if err != nil {
+				return nil, fmt.Errorf("inspect %s %s: %w", current.GetKind(), client.ObjectKeyFromObject(current), err)
+			}
+			if journal != nil && containsOCPString(journal.Cohorts, cohort) {
+				if _, err := ocpConfigurationConsumer(ctx, c, current, journal); err != nil {
+					return nil, err
+				}
 			}
 		}
 		live = append(live, current)
@@ -421,19 +422,6 @@ func ocpConfigurationRestoreTargets(ctx context.Context, c client.Client, cfg *c
 	return targets, nil
 }
 
-// Release only this bundle's claims, after all its consuming CRs are gone.
-// Missing provenance, other claims and changed fields produce retained messages.
-func restoreOCPOperatorConfiguration(ctx context.Context, c client.Client, targets []*unstructured.Unstructured, cohort string, skipWait bool) ([]string, error) {
-	var messages []string
-	for _, target := range targets {
-		retained, err := restoreOCPConfigurationObject(ctx, c, target, cohort, skipWait)
-		messages = append(messages, retained...)
-		if err != nil {
-			return messages, err
-		}
-	}
-	return messages, nil
-}
 func restoreOCPConfigurationObject(ctx context.Context, c client.Client, target *unstructured.Unstructured, cohort string, skipWait bool) ([]string, error) {
 	messages := []string{}
 	var deleted *unstructured.Unstructured
@@ -575,41 +563,11 @@ func restoreOCPConfigurationObject(ctx context.Context, c client.Client, target 
 				}
 			}
 		}
-		if current.GetKind() == "NodeFeatureDiscovery" && journal.NFDOriginal != nil && len(pending) == 0 {
-			live, _, err := unstructured.NestedString(before.Object, "spec", "workerConfig", "configData")
-			if err != nil {
-				return err
-			}
-			originalObj := before.DeepCopy()
-			if journal.NFDOriginal.Present {
-				if err := unstructured.SetNestedField(originalObj.Object, journal.NFDOriginal.Value, "spec", "workerConfig", "configData"); err != nil {
-					return err
-				}
-			} else {
-				unstructured.RemoveNestedField(originalObj.Object, "spec", "workerConfig", "configData")
-			}
-			originalView, err := ocpConfigurationView(originalObj)
-			if err != nil {
-				return err
-			}
-			if live == journal.NFDApplied && reflect.DeepEqual(originalView, view) {
-				if journal.NFDOriginal.Present {
-					if err := unstructured.SetNestedField(current.Object, journal.NFDOriginal.Value, "spec", "workerConfig", "configData"); err != nil {
-						return err
-					}
-				} else {
-					unstructured.RemoveNestedField(current.Object, "spec", "workerConfig", "configData")
-				}
-			}
-		}
 		if len(journal.Fields) == 0 && len(journal.RestoreEnv) == 0 {
 			retained("no changed fields were recorded; pre-existing or legacy shared settings remain in place and require owner review")
 		}
-		if current.GetKind() == "NodeFeatureDiscovery" || isOCPSysctlAllowlistPatch(current) {
+		if isOCPSysctlAllowlistPatch(current) {
 			path := []string{"data", "allowlist.conf"}
-			if current.GetKind() == "NodeFeatureDiscovery" {
-				path = []string{"spec", "workerConfig", "configData"}
-			}
 			old, err := ocpConfigurationValueAt(before.Object, path)
 			if err != nil {
 				return err
@@ -663,7 +621,7 @@ func restoreOCPConfigurationObject(ctx context.Context, c client.Client, target 
 	if waivedSubscriptionRollout {
 		messages = append(messages, fmt.Sprintf("OpenShift Subscription %s API configuration restored; --skip-wait waived rollout verification; controller adoption remains unverified", client.ObjectKeyFromObject(target)))
 	}
-	if (restoredAPI || deleted != nil) && (target.GetKind() == "NodeFeatureDiscovery" || isOCPSysctlAllowlistPatch(target)) {
+	if (restoredAPI || deleted != nil) && isOCPSysctlAllowlistPatch(target) {
 		messages = append(messages, fmt.Sprintf("OpenShift %s %s API configuration restored; worker propagation is unverified; inspect the platform controllers and workload behavior", target.GetKind(), client.ObjectKeyFromObject(target)))
 	}
 	return messages, nil

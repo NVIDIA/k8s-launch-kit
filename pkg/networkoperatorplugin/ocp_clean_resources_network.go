@@ -13,6 +13,8 @@ import (
 	"time"
 
 	corev1 "k8s.io/api/core/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	"k8s.io/apimachinery/pkg/api/meta"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/types"
@@ -28,32 +30,35 @@ func ocpNetworkAttachments(ctx context.Context, c client.Client, refs []cleanObj
 	if len(refs) == 0 {
 		return nil, nil
 	}
-	nads, err := listCleanNetworkObjects(ctx, c, cleanNADGVK, "")
-	if err != nil {
-		return nil, err
-	}
 	var pending []string
-	for i := range nads {
-		nad := &nads[i]
-		for _, ref := range refs {
-			owned := false
-			for _, owner := range nad.GetOwnerReferences() {
-				gv, err := schema.ParseGroupVersion(owner.APIVersion)
-				if err == nil && gv.Group == ref.GVK.Group && owner.Kind == ref.GVK.Kind && owner.Name == ref.Name && (ref.UID == "" || owner.UID == ref.UID) && (ref.Namespace == "" || ref.Namespace == nad.GetNamespace()) {
-					owned = true
-				}
-			}
-			// Cross-namespace SR-IOV NAD ownership has no UID representation. The
-			// controller's exact kind/group/namespace/name annotation is its contract.
-			annotation := ref.GVK.Kind + "." + ref.GVK.Group + "/" + ref.Namespace + "/" + ref.Name
-			if ref.GVK.Group == cleanSriovGroup && nad.GetAnnotations()["sriovnetwork.openshift.io/owner-ref"] == annotation {
-				owned = true
-			}
-			if owned {
-				pending = append(pending, nad.GetNamespace()+"/"+nad.GetName())
-				break
+	for _, ref := range refs {
+		desired, err := ocpDesired(ref)
+		if err != nil {
+			return nil, err
+		}
+		namespace, _, err := unstructured.NestedString(desired.Object, "spec", "networkNamespace")
+		if err != nil {
+			return nil, fmt.Errorf("inspect %s network namespace: %w", cleanRefString(ref), err)
+		}
+		if namespace == "" {
+			if ref.GVK.Group == cleanSriovGroup {
+				namespace = ref.Namespace
+			} else {
+				namespace = "default"
 			}
 		}
+		// Both operators generate and finalize this exact identity, including
+		// older NADs with no owner annotation. An annotation copied elsewhere
+		// does not establish another generated attachment target.
+		nad := &unstructured.Unstructured{}
+		nad.SetGroupVersionKind(cleanNADGVK)
+		key := client.ObjectKey{Namespace: namespace, Name: ref.Name}
+		if err := c.Get(ctx, key, nad); apierrors.IsNotFound(err) || meta.IsNoMatchError(err) {
+			continue
+		} else if err != nil {
+			return nil, fmt.Errorf("observe generated network attachment %s: %w", key, err)
+		}
+		pending = append(pending, key.String())
 	}
 	return pending, nil
 }
@@ -123,7 +128,7 @@ func prepareOCPNICClean(ctx context.Context, c client.Client, refs []cleanObject
 				return nil, err
 			}
 		}
-		if matched == 0 {
+		if matched == 0 && ref.UID != "" {
 			return nil, fmt.Errorf("no NicDevices observable for selected %s; intent removal cannot be verified", cleanRefString(ref))
 		}
 	}

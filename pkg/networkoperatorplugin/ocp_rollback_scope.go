@@ -28,8 +28,6 @@ func ocpConfigurationSingletons(cfg *config.LaunchKitConfig) []*unstructured.Uns
 	specs := []struct{ api, kind, namespace, name string }{
 		{"sriovnetwork.openshift.io/v1", "SriovOperatorConfig", names.sriov, "default"},
 		{"maintenance.nvidia.com/v1alpha1", "MaintenanceOperatorConfig", names.maintenance, "default"},
-		{"nfd.openshift.io/v1", "NodeFeatureDiscovery", names.nfd, names.nfdName},
-		{"v1", "ConfigMap", "openshift-multus", "cni-sysctl-allowlist"},
 	}
 	objects := make([]*unstructured.Unstructured, 0, len(specs))
 	for _, spec := range specs {
@@ -42,7 +40,6 @@ func ocpConfigurationSingletons(cfg *config.LaunchKitConfig) []*unstructured.Uns
 	}
 	return objects
 }
-func ocpOptionalConfigurationAbsent(err error) bool { return err != nil && meta.IsNoMatchError(err) }
 func ocpConfigurationHasCohort(obj *unstructured.Unstructured, cohort string) bool {
 	raw := obj.GetAnnotations()[ocpRollbackAnnotation]
 	var header struct {
@@ -55,19 +52,16 @@ func ocpConfigurationHasCohort(obj *unstructured.Unstructured, cohort string) bo
 }
 
 // A changed custom namespace/name cannot silently orphan the previous journal.
-// Inspect metadata on just the three shared CR kinds, never broad CR payloads or
+// Inspect metadata on just the two shared CR kinds, never broad CR payloads or
 // operator namespaces. A claim at another identity requires the prior bundle.
 func checkOCPConfigurationMapping(ctx context.Context, c client.Client, cfg *config.LaunchKitConfig, cohort string) error {
 	if c == nil || cfg == nil || cohort == "" {
 		return fmt.Errorf("OpenShift configuration requires client, config and cohort")
 	}
 	for _, expected := range ocpConfigurationSingletons(cfg) {
-		if expected.GetKind() == "ConfigMap" {
-			continue
-		}
 		list := &unstructured.UnstructuredList{}
 		list.SetGroupVersionKind(schema.GroupVersionKind{Group: expected.GroupVersionKind().Group, Version: expected.GroupVersionKind().Version, Kind: expected.GetKind() + "List"})
-		if err := c.List(ctx, list); ocpOptionalConfigurationAbsent(err) {
+		if err := c.List(ctx, list); meta.IsNoMatchError(err) {
 			continue
 		} else if err != nil {
 			return fmt.Errorf("inspect prior OpenShift %s configuration claims: %w", expected.GetKind(), err)

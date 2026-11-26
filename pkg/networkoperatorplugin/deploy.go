@@ -223,7 +223,7 @@ func operatorReadinessError(err error, cfg *config.LaunchKitConfig) error {
 		"Apply the generated operator-install artifacts (00-operator-namespaces.yaml, 00-operatorgroups.yaml, 00-subscriptions.yaml) and wait for the operators to be Ready, then re-run deploy.")
 }
 
-func applyBundleWithInstaller(ctx context.Context, kubeClient client.Client, artifacts *bundle.Bundle, opts DeployOptions, install helmValuesInstaller) (operationErr error) {
+func applyBundleWithInstaller(ctx context.Context, kubeClient client.Client, artifacts *bundle.Bundle, opts DeployOptions, install helmValuesInstaller) error {
 	if ctx == nil {
 		ctx = context.Background()
 	}
@@ -275,15 +275,6 @@ func applyBundleWithInstaller(ctx context.Context, kubeClient client.Client, art
 		return err
 	}
 
-	// OpenShift preflight filters out stray remediation and has no Helm phase.
-	// Hold the deployment lock through every write, retry and readiness poll.
-	if selected.ocpOwner != "" && !opts.DryRun {
-		release, err := acquireOCPOperation(ctx, kubeClient, ocpCleanNamespaces(opts.Config).operator, selected.ocpOwner, "deploy")
-		if err != nil {
-			return err
-		}
-		defer func() { operationErr = errors.Join(operationErr, release()) }()
-	}
 	ncpObj, nnpObjs, otherDocs := selected.ncp, selected.nnps, selected.others
 	if err := policy.configureAfterPreflight(ctx, kubeClient, opts.Config, selected, opts.DryRun); err != nil {
 		return err

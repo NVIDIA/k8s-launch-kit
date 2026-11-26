@@ -10,6 +10,7 @@ import (
 	"sort"
 	"testing"
 
+	"github.com/nvidia/k8s-launch-kit/pkg/bundle"
 	"github.com/nvidia/k8s-launch-kit/pkg/config"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -18,6 +19,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 	"sigs.k8s.io/controller-runtime/pkg/client/interceptor"
 	ctrllog "sigs.k8s.io/controller-runtime/pkg/log"
+	"sigs.k8s.io/yaml"
 )
 
 // ocpInstallTestConfig builds a minimal, valid OCP SR-IOV config for exercising
@@ -574,4 +576,78 @@ func TestDiscoverOCPOperatorInstallErrsOnForbiddenSubscriptionList(t *testing.T)
 	err := DiscoverOCPOperatorInstall(context.Background(), c, cfg, nil)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "list Subscriptions")
+}
+
+func TestDiscoverOCPOperatorInstallPreservesCleanupOwnership(t *testing.T) {
+	for _, tc := range []struct {
+		name        string
+		annotations map[string]string
+		savedRetain bool
+		wantRetain  bool
+	}{
+		{name: "preexisting external", annotations: map[string]string{}, savedRetain: false, wantRetain: true},
+		{name: "already managed", annotations: map[string]string{launchKitVersionAnnotation: "old-version"}, savedRetain: false, wantRetain: false},
+		{name: "explicit live retention", annotations: map[string]string{launchKitVersionAnnotation: "old-version", ocpCleanRetainAnnotation: "true"}, savedRetain: false, wantRetain: true},
+		{name: "saved retention", annotations: map[string]string{launchKitVersionAnnotation: "old-version"}, savedRetain: true, wantRetain: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			cfg := ocpInstallTestConfig(t)
+			ns := cfg.NetworkOperator.Namespace
+			cfg.OCPOperatorInstall = &config.OCPOperatorInstallConfig{Manage: true,
+				Operators:      []config.OCPOperatorSubscription{{Package: olmNetworkOperatorPkg, Namespace: ns, RetainOnClean: tc.savedRetain}},
+				OperatorGroups: []config.OCPOperatorGroup{{Namespace: ns, RetainOnClean: tc.savedRetain}},
+			}
+			sub := ocpTestObject("operators.coreos.com/v1alpha1", "Subscription", ns, "existing-subscription", map[string]interface{}{"spec": map[string]interface{}{"name": olmNetworkOperatorPkg}})
+			group := ocpTestObject("operators.coreos.com/v1", "OperatorGroup", ns, "existing-group", map[string]interface{}{"spec": map[string]interface{}{"targetNamespaces": []interface{}{ns}}})
+			sub.SetAnnotations(tc.annotations)
+			group.SetAnnotations(tc.annotations)
+			manifest := networkOperatorManifest(olmNetworkOperatorPkg, "certified-operators", releaseChannel277)
+			c := fake.NewClientBuilder().WithObjects(manifest, sub, group).Build()
+			require.NoError(t, DiscoverOCPOperatorInstall(context.Background(), c, cfg, nil))
+			assert.Equal(t, tc.wantRetain, operatorSub(t, cfg, olmNetworkOperatorPkg).RetainOnClean)
+			assert.Equal(t, tc.wantRetain, operatorGroup(t, cfg, ns).RetainOnClean)
+			// Packages absent from the cluster keep ordinary managed installation intent.
+			assert.False(t, operatorSub(t, cfg, "nfd").RetainOnClean)
+			assert.False(t, operatorGroup(t, cfg, config.DefaultNFDOperatorNamespace).RetainOnClean)
+
+			rendered, err := (&NetworkOperatorPlugin{LaunchKitVersion: "new-version"}).GenerateProfileDeploymentFiles(loadProfileFromDir(t, "sriov-ethernet-rdma-ocp"), cfg)
+			require.NoError(t, err)
+			for _, name := range []string{"00-subscriptions.yaml", "00-operatorgroups.yaml"} {
+				_, content := fileMatching(t, rendered, name)
+				for _, doc := range parseDocs(t, name, content) {
+					obj := &unstructured.Unstructured{Object: doc}
+					if obj.GetNamespace() != ns {
+						assert.Empty(t, obj.GetAnnotations()[ocpCleanRetainAnnotation])
+						continue
+					}
+					assert.Equal(t, tc.wantRetain, obj.GetAnnotations()[ocpCleanRetainAnnotation] == "true")
+					assert.Equal(t, "new-version", obj.GetAnnotations()[launchKitVersionAnnotation])
+				}
+			}
+			if tc.wantRetain {
+				// The revised bundle's retention is authoritative even if an admin
+				// has not reapplied its newly rendered metadata to existing objects.
+				var files []bundle.File
+				for _, name := range []string{"00-subscriptions.yaml", "00-operatorgroups.yaml"} {
+					_, content := fileMatching(t, rendered, name)
+					for _, doc := range parseDocs(t, name, content) {
+						obj := &unstructured.Unstructured{Object: doc}
+						if obj.GetNamespace() != ns {
+							continue
+						}
+						data, err := yaml.Marshal(doc)
+						require.NoError(t, err)
+						files = append(files, bundle.File{Name: name, Content: string(data)})
+					}
+				}
+				artifacts, err := bundle.FromFiles(files)
+				require.NoError(t, err)
+				plan, err := prepareOCPCleanOperators(context.Background(), c, cfg, artifacts, "test-owner")
+				require.NoError(t, err)
+				assert.False(t, plan.removesSubscription(sub))
+				assert.Empty(t, plan.operators)
+				assert.Empty(t, plan.groups)
+			}
+		})
+	}
 }

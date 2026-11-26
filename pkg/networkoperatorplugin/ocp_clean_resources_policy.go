@@ -6,10 +6,7 @@ package networkoperatorplugin
 
 import (
 	"context"
-	"crypto/sha256"
 	"fmt"
-	"sort"
-	"strings"
 	"sync"
 
 	appsv1 "k8s.io/api/apps/v1"
@@ -23,43 +20,21 @@ import (
 )
 
 type ocpPolicyWorkloadClean struct {
-	mu          sync.Mutex
-	namespace   string
-	retainEmpty bool
-	roots       []cleanObjectRef
-	checkpoint  *corev1.ConfigMap
+	mu        sync.Mutex
+	namespace string
+	roots     []cleanObjectRef
+	known     map[types.UID]bool
 }
 
-func prepareOCPWorkloadClean(ctx context.Context, c client.Client, ns string, refs []cleanObjectRef, retainEmpty bool) (*ocpPolicyWorkloadClean, error) {
-	var roots []cleanObjectRef
-	var identities []string
+func prepareOCPWorkloadClean(ctx context.Context, c client.Client, ns string, refs []cleanObjectRef) (*ocpPolicyWorkloadClean, error) {
+	owned := &ocpPolicyWorkloadClean{namespace: ns, known: make(map[types.UID]bool)}
 	for _, ref := range refs {
 		if isCleanRootPolicy(ref.GVK) {
-			roots = append(roots, ref)
-			identities = append(identities, ref.GVK.Group+"/"+ref.GVK.Kind+"/"+ref.Name)
+			owned.roots = append(owned.roots, ref)
 		}
 	}
-	sort.Strings(identities)
-	digest := fmt.Sprintf("%x", sha256.Sum256([]byte(strings.Join(identities, "\n"))))[:16]
-	checkpoint := &corev1.ConfigMap{ObjectMeta: metav1.ObjectMeta{Namespace: ns, Name: "l8k-ocp-clean-" + digest}, Data: map[string]string{}}
-	if len(roots) == 0 {
-		return &ocpPolicyWorkloadClean{namespace: ns, roots: roots, checkpoint: checkpoint, retainEmpty: retainEmpty}, nil
-	}
-	key := client.ObjectKey{Namespace: ns, Name: "l8k-ocp-clean-" + digest}
-	err := c.Get(ctx, key, checkpoint)
-	if apierrors.IsNotFound(err) {
-		checkpoint.ObjectMeta = metav1.ObjectMeta{Namespace: ns, Name: key.Name, Labels: map[string]string{"app.kubernetes.io/managed-by": "l8k-clean"}}
-		checkpoint.Data = map[string]string{}
-	} else if err != nil {
-		return nil, fmt.Errorf("read scoped workload checkpoint: %w", err)
-	} else if checkpoint.Labels["app.kubernetes.io/managed-by"] != "l8k-clean" || len(checkpoint.Data) == 0 {
-		return nil, fmt.Errorf("unexpected scoped workload checkpoint %s", key)
-	}
-	result := &ocpPolicyWorkloadClean{namespace: ns, roots: roots, checkpoint: checkpoint, retainEmpty: retainEmpty}
-	if _, err := result.observe(ctx, c); err != nil {
-		return nil, err
-	}
-	return result, nil
+	_, err := owned.observe(ctx, c)
+	return owned, err
 }
 
 func (owned *ocpPolicyWorkloadClean) rootOwner(object metav1.Object) bool {
@@ -82,11 +57,8 @@ func (owned *ocpPolicyWorkloadClean) observe(ctx context.Context, c client.Clien
 	}
 	owned.mu.Lock()
 	defer owned.mu.Unlock()
-	known := owned.checkpoint.Data
-	previous := len(known)
 	var pending []string
-	// Retain parent UIDs after garbage collection. A retry must still recognize
-	// Pods whose DaemonSet/ReplicaSet disappeared before this invocation.
+	// Keep owner UIDs for this run while Kubernetes garbage-collects parent workloads.
 	for _, gvk := range []schema.GroupVersionKind{{Group: "apps", Version: "v1", Kind: "Deployment"}, {Group: "apps", Version: "v1", Kind: "DaemonSet"}, {Group: "apps", Version: "v1", Kind: "ReplicaSet"}, {Version: "v1", Kind: "Pod"}} {
 		objects, err := listCleanNetworkObjects(ctx, c, gvk, owned.namespace)
 		if err != nil {
@@ -95,50 +67,21 @@ func (owned *ocpPolicyWorkloadClean) observe(ctx context.Context, c client.Clien
 		for i := range objects {
 			object := &objects[i]
 			owner := metav1.GetControllerOf(object)
-			if !owned.rootOwner(object) && known[string(object.GetUID())] == "" && (owner == nil || known[string(owner.UID)] == "") {
+			if !owned.rootOwner(object) && !owned.known[object.GetUID()] && (owner == nil || !owned.known[owner.UID]) {
 				continue
 			}
 			if object.GetUID() == "" {
 				return nil, fmt.Errorf("selected policy-owned %s %s has no UID", gvk.Kind, object.GetName())
 			}
-			known[string(object.GetUID())] = gvk.Kind + "/" + object.GetName()
+			owned.known[object.GetUID()] = true
 			pending = append(pending, gvk.Kind+" "+object.GetName())
-		}
-	}
-	if previous != len(known) || (owned.retainEmpty && owned.checkpoint.ResourceVersion == "") {
-		// Persist an empty observation too: absent roots on a later retry still
-		// need evidence that ancestry was inventoried before root deletion.
-		known["_ancestry-recorded"] = "true"
-		var err error
-		if owned.checkpoint.ResourceVersion == "" {
-			err = c.Create(ctx, owned.checkpoint)
-		} else {
-			err = c.Update(ctx, owned.checkpoint)
-		}
-		if err != nil {
-			return nil, fmt.Errorf("save selected policy workload ancestry: %w", err)
 		}
 	}
 	return pending, nil
 }
 
-func (owned *ocpPolicyWorkloadClean) removeCheckpoint(ctx context.Context, c client.Client) error {
-	if owned.checkpoint.ResourceVersion == "" {
-		return nil
-	}
-	if err := c.Delete(ctx, owned.checkpoint, client.Preconditions{UID: &owned.checkpoint.UID, ResourceVersion: &owned.checkpoint.ResourceVersion}); client.IgnoreNotFound(err) != nil {
-		return fmt.Errorf("remove selected policy workload checkpoint: %w", err)
-	}
-	return nil
-}
-
-func (owned *ocpPolicyWorkloadClean) mofedCheckpoint() string {
-	return owned.checkpoint.Name + "-mofed"
-}
-
 func (owned *ocpPolicyWorkloadClean) mofedScope(ctx context.Context, c client.Client, refs []cleanObjectRef) *mofedCleanupScope {
 	return &mofedCleanupScope{
-		checkpointName:   owned.mofedCheckpoint(),
 		includeDaemonSet: func(ds *appsv1.DaemonSet) bool { return owned.rootOwner(ds) },
 		includePod: func(pod *corev1.Pod) (bool, error) {
 			parent := metav1.GetControllerOf(pod)
@@ -146,7 +89,7 @@ func (owned *ocpPolicyWorkloadClean) mofedScope(ctx context.Context, c client.Cl
 				return false, nil
 			}
 			owned.mu.Lock()
-			known := owned.checkpoint.Data[string(parent.UID)] != "" || owned.checkpoint.Data[string(pod.UID)] != ""
+			known := owned.known[parent.UID] || owned.known[pod.UID]
 			owned.mu.Unlock()
 			if known {
 				return true, nil
@@ -167,7 +110,7 @@ func (owned *ocpPolicyWorkloadClean) mofedScope(ctx context.Context, c client.Cl
 		},
 		hasIntent: func(ctx context.Context) (bool, error) {
 			for _, ref := range refs {
-				if !isCleanRootPolicy(ref.GVK) {
+				if ref.UID == "" || !isCleanRootPolicy(ref.GVK) {
 					continue
 				}
 				policy, err := ocpDesired(ref)

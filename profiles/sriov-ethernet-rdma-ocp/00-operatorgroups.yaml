@@ -5,6 +5,10 @@ kind: OperatorGroup
 metadata:
   name: "{{ .Name }}"
   namespace: "{{ .Namespace }}"
+  {{- if .RetainOnClean }}
+  annotations:
+    nvidia.kubernetes-launch-kit.ocp-clean-retain: "true"
+  {{- end }}
 spec:
   targetNamespaces: [{{ range $i, $ns := .TargetNamespaces }}{{ if $i }}, {{ end }}"{{ $ns }}"{{ end }}]
 {{- end }}

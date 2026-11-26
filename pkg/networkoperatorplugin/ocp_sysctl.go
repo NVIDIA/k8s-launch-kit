@@ -10,6 +10,7 @@ import (
 	"strings"
 
 	"github.com/nvidia/k8s-launch-kit/pkg/ui"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/client-go/util/retry"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -67,10 +68,6 @@ func mergeOCPSysctlAllowlist(current, desired *unstructured.Unstructured) error 
 }
 
 func ensureOCPSysctlAllowlist(ctx context.Context, c client.Client, desired *unstructured.Unstructured, dryRun bool) error {
-	return ensureOCPSysctlAllowlistForCohort(ctx, c, desired, dryRun, ocpLegacyCohort)
-}
-
-func ensureOCPSysctlAllowlistForCohort(ctx context.Context, c client.Client, desired *unstructured.Unstructured, dryRun bool, cohort string) error {
 	key := client.ObjectKeyFromObject(desired)
 	changed := false
 	err := retry.RetryOnConflict(retry.DefaultRetry, func() error {
@@ -83,9 +80,6 @@ func ensureOCPSysctlAllowlistForCohort(ctx context.Context, c client.Client, des
 		}
 		before := current.DeepCopy()
 		if err := mergeOCPSysctlAllowlist(current, desired); err != nil {
-			return err
-		}
-		if err := recordOCPConfigurationChange(before, current, cohort, false); err != nil {
 			return err
 		}
 		if reflect.DeepEqual(before.Object, current.Object) {
@@ -109,4 +103,118 @@ func ensureOCPSysctlAllowlistForCohort(ctx context.Context, c client.Client, des
 		ui.FromContext(ctx).Info("Configured OpenShift Multus sysctl allowlist (dry-run: %t)", dryRun)
 	}
 	return nil
+}
+
+// removeOCPSysctlAllowlist subtracts the manifest's exact entries from the shared
+// platform ConfigMap. Existing default/site expressions and formatting survive.
+// Old journals protect recorded additions still claimed by another deployment.
+func removeOCPSysctlAllowlist(ctx context.Context, c client.Client, desired, planned *unstructured.Unstructured, cohort string) ([]string, error) {
+	if ctx == nil || c == nil || desired == nil || planned == nil || cohort == "" || !isOCPSysctlAllowlistPatch(desired) || !isOCPSysctlAllowlistPatch(planned) {
+		return nil, fmt.Errorf("OpenShift sysctl cleanup requires client, manifest, planned ConfigMap and cohort")
+	}
+	required, err := sysctlAllowlistPatchEntries(desired)
+	if err != nil {
+		return nil, err
+	}
+	entries := map[string]bool{}
+	for _, line := range strings.Split(required, "\n") {
+		if entry := strings.TrimSpace(line); entry != "" {
+			entries[entry] = true
+		}
+	}
+	var messages []string
+	key := client.ObjectKeyFromObject(desired)
+	err = retry.RetryOnConflict(retry.DefaultRetry, func() error {
+		messages = nil
+		current := planned.DeepCopy()
+		if err := c.Get(ctx, key, current); apierrors.IsNotFound(err) {
+			return nil
+		} else if err != nil {
+			return err
+		}
+		if current.GetUID() != planned.GetUID() {
+			return fmt.Errorf("ConfigMap %s was replaced after cleanup planning", key)
+		}
+		if current.GetDeletionTimestamp() != nil {
+			return fmt.Errorf("ConfigMap %s is terminating", key)
+		}
+		journal, protected, err := ocpSysctlAllowlistCleanupClaims(current, cohort)
+		if err != nil {
+			return err
+		}
+		before := current.DeepCopy()
+		if current.GetAnnotations()[ocpRollbackAnnotation] != "" {
+			if err := writeOCPConfigurationJournal(current, journal); err != nil {
+				return err
+			}
+		}
+		existing, found, err := unstructured.NestedString(current.Object, "data", "allowlist.conf")
+		if err != nil {
+			return fmt.Errorf("read existing sysctl allowlist: %w", err)
+		}
+		if found {
+			kept := strings.Builder{}
+			retained := false
+			for _, line := range strings.SplitAfter(existing, "\n") {
+				entry := strings.TrimSpace(line)
+				if entries[entry] && !protected[entry] {
+					continue
+				}
+				retained = retained || entries[entry] && protected[entry]
+				kept.WriteString(line)
+			}
+			if retained {
+				messages = append(messages, fmt.Sprintf("Retained OpenShift ConfigMap %s allowlist entries recorded for another deployment; clean that deployment before removing its shared entries", key))
+			}
+			if err := unstructured.SetNestedField(current.Object, kept.String(), "data", "allowlist.conf"); err != nil {
+				return err
+			}
+		}
+		if reflect.DeepEqual(before.Object, current.Object) {
+			return nil
+		}
+		return c.Patch(ctx, current, client.MergeFromWithOptions(before, client.MergeFromWithOptimisticLock{}))
+	})
+	if err != nil {
+		return messages, fmt.Errorf("remove OpenShift sysctl allowlist entries %s: %w", key, err)
+	}
+	return messages, nil
+}
+
+// Journals predate manifest-based cleanup. Release this bundle's claim while
+// preserving exact recorded additions that another deployment still claims.
+func ocpSysctlAllowlistCleanupClaims(current *unstructured.Unstructured, cohort string) (*ocpConfigurationJournal, map[string]bool, error) {
+	journal, err := readOCPConfigurationJournal(current)
+	if err != nil {
+		return nil, nil, err
+	}
+	protected := map[string]bool{}
+	if journal == nil {
+		return nil, protected, nil
+	}
+	remaining := []string{}
+	for _, owner := range journal.Cohorts {
+		// The legacy sentinel identifies no separate bundle. An explicit
+		// manifest cleanup can release it alongside this bundle's claim.
+		if owner != cohort && owner != ocpLegacyCohort {
+			remaining = append(remaining, owner)
+		}
+	}
+	if len(remaining) == 0 {
+		return nil, protected, nil
+	}
+	for _, field := range journal.Fields {
+		if strings.Join(field.Path, "/") != "data/allowlist.conf" {
+			continue
+		}
+		for _, addition := range field.Added {
+			entry, ok := addition.(string)
+			if !ok {
+				return nil, nil, fmt.Errorf("invalid recorded sysctl allowlist addition")
+			}
+			protected[strings.TrimSpace(entry)] = true
+		}
+	}
+	journal.Cohorts = remaining
+	return journal, protected, nil
 }

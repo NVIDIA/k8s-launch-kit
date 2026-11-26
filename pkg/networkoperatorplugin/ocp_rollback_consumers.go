@@ -5,10 +5,7 @@ package networkoperatorplugin
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
-	"regexp"
-	"strings"
 
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime/schema"
@@ -25,18 +22,8 @@ func ocpConfigurationConsumer(ctx context.Context, c client.Client, obj *unstruc
 	switch obj.GetKind() {
 	case "SriovOperatorConfig":
 		return ocpRemainingSriovConsumer(ctx, c, obj.GetNamespace())
-	case "NodeFeatureDiscovery":
-		reason, err := ocpRemainingNetworkingConsumer(ctx, c, false)
-		if err != nil || reason != "" {
-			return reason, err
-		}
-		return ocpRemainingSriovConsumer(ctx, c, "")
 	case "MaintenanceOperatorConfig", "Subscription":
 		return ocpRemainingNetworkingConsumer(ctx, c, true)
-	case "ConfigMap":
-		if isOCPSysctlAllowlistPatch(obj) {
-			return ocpRemainingSysctlConsumer(ctx, c, obj, journal)
-		}
 	}
 	return "", nil
 }
@@ -110,79 +97,4 @@ func ocpRemainingNetworkingConsumer(ctx context.Context, c client.Client, mainte
 		}
 	}
 	return "", nil
-}
-func ocpRemainingSysctlConsumer(ctx context.Context, c client.Client, obj *unstructured.Unstructured, journal *ocpConfigurationJournal) (string, error) {
-	current, _, err := unstructured.NestedString(obj.Object, "data", "allowlist.conf")
-	if err != nil {
-		return "", err
-	}
-	present := map[string]bool{}
-	for _, line := range strings.Split(current, "\n") {
-		present[strings.TrimSpace(line)] = true
-	}
-	var expressions []*regexp.Regexp
-	for _, field := range journal.Fields {
-		if strings.Join(field.Path, "/") != "data/allowlist.conf" {
-			continue
-		}
-		for _, addition := range field.Added {
-			pattern, ok := addition.(string)
-			if !ok {
-				return "", fmt.Errorf("invalid sysctl rollback addition")
-			}
-			if !present[pattern] || strings.HasPrefix(pattern, "#") {
-				continue
-			}
-			expression, err := regexp.Compile(pattern)
-			if err != nil {
-				return "", fmt.Errorf("cannot establish consumers of recorded sysctl allowlist expression: %w", err)
-			}
-			expressions = append(expressions, expression)
-		}
-	}
-	if len(expressions) == 0 {
-		return "", nil
-	}
-	nads, err := listCleanNetworkObjects(ctx, c, cleanNADGVK, "")
-	if err != nil {
-		return "", err
-	}
-	for i := range nads {
-		nad := &nads[i]
-		raw, _, err := unstructured.NestedString(nad.Object, "spec", "config")
-		if err != nil {
-			return "", err
-		}
-		if strings.TrimSpace(raw) == "" {
-			continue
-		}
-		var configuration map[string]interface{}
-		if err := json.Unmarshal([]byte(raw), &configuration); err != nil {
-			return "", fmt.Errorf("cannot inspect sysctl dependencies of NetworkAttachmentDefinition %s: %w", client.ObjectKeyFromObject(nad), err)
-		}
-		if ocpCNIUsesSysctl(configuration, expressions) {
-			return fmt.Sprintf("remaining NetworkAttachmentDefinition %s uses a sysctl authorized by the recorded allowlist additions", client.ObjectKeyFromObject(nad)), nil
-		}
-	}
-	return "", nil
-}
-func ocpCNIUsesSysctl(configuration map[string]interface{}, expressions []*regexp.Regexp) bool {
-	if configuration["type"] == "tuning" {
-		sysctls, _ := configuration["sysctl"].(map[string]interface{})
-		for name := range sysctls {
-			for _, expression := range expressions {
-				if expression.MatchString(name) {
-					return true
-				}
-			}
-		}
-	}
-	plugins, _ := configuration["plugins"].([]interface{})
-	for _, entry := range plugins {
-		plugin, ok := entry.(map[string]interface{})
-		if ok && ocpCNIUsesSysctl(plugin, expressions) {
-			return true
-		}
-	}
-	return false
 }

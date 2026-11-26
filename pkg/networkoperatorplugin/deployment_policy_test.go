@@ -165,9 +165,6 @@ var _ = ginkgo.Describe("concrete Host policies through the deployment coordinat
 					return c.List(ctx, list, opts...)
 				},
 				Create: func(ctx context.Context, c client.WithWatch, obj client.Object, opts ...client.CreateOption) error {
-					if obj.GetLabels()["app.kubernetes.io/managed-by"] == ocpOperationManager {
-						return policyTestCreate(ctx, c, obj, opts...)
-					}
 					gomega.Expect(preflightScanned).To(gomega.BeTrue())
 					if obj.GetObjectKind().GroupVersionKind().Kind == "MaintenanceOperatorConfig" {
 						gomega.Expect(applied).To(gomega.BeEmpty())
@@ -257,9 +254,6 @@ var _ = ginkgo.Describe("concrete Host policies through the deployment coordinat
 			writes := 0
 			c := fake.NewClientBuilder().WithInterceptorFuncs(interceptor.Funcs{
 				Create: func(ctx context.Context, c client.WithWatch, obj client.Object, opts ...client.CreateOption) error {
-					if obj.GetLabels()["app.kubernetes.io/managed-by"] == ocpOperationManager {
-						return policyTestCreate(ctx, c, obj, opts...)
-					}
 					writes++
 					return nil
 				},
@@ -296,9 +290,6 @@ var _ = ginkgo.Describe("concrete Host policies through the deployment coordinat
 		gomega.Expect(corev1.AddToScheme(scheme)).To(gomega.Succeed())
 		c := fake.NewClientBuilder().WithScheme(scheme).WithObjects(policyTestOperators()...).WithInterceptorFuncs(interceptor.Funcs{
 			Create: func(ctx context.Context, c client.WithWatch, obj client.Object, opts ...client.CreateOption) error {
-				if obj.GetLabels()["app.kubernetes.io/managed-by"] == ocpOperationManager {
-					return policyTestCreate(ctx, c, obj, opts...)
-				}
 				writes++
 				return nil
 			},
@@ -338,9 +329,6 @@ var _ = ginkgo.Describe("concrete Host policies through the deployment coordinat
 					return c.List(ctx, list, opts...)
 				},
 				Create: func(ctx context.Context, c client.WithWatch, obj client.Object, opts ...client.CreateOption) error {
-					if obj.GetLabels()["app.kubernetes.io/managed-by"] == ocpOperationManager {
-						return policyTestCreate(ctx, c, obj, opts...)
-					}
 					writes++
 					return errors.New("reached configuration")
 				},
@@ -408,9 +396,6 @@ var _ = ginkgo.Describe("concrete Host policies through the deployment coordinat
 		writes := 0
 		c := fake.NewClientBuilder().WithObjects(objects...).WithInterceptorFuncs(interceptor.Funcs{
 			Create: func(ctx context.Context, c client.WithWatch, obj client.Object, opts ...client.CreateOption) error {
-				if obj.GetLabels()["app.kubernetes.io/managed-by"] == ocpOperationManager {
-					return policyTestCreate(ctx, c, obj, opts...)
-				}
 				writes++
 				return nil
 			},

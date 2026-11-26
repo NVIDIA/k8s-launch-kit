@@ -121,12 +121,6 @@ func (openShiftDeploymentPolicy) configureAfterPreflight(ctx context.Context, c 
 	if selected.ocpOwner == "" {
 		return applyOCPOperatorConfiguration(ctx, c, cfg, selected.operatorConfigs, dryRun)
 	}
-	if !dryRun {
-		namespace := ocpCleanNamespaces(cfg).operator
-		if err := invalidateOCPCleanReceipt(ctx, c, namespace, selected.ocpOwner); err != nil {
-			return err
-		}
-	}
 	return applyOCPOperatorConfigurationForCohort(ctx, c, cfg, selected.operatorConfigs, dryRun, selected.ocpOwner)
 }
 
