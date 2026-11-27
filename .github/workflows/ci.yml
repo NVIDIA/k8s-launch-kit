@@ -19,25 +19,29 @@ jobs:
         make build
         python3 scripts/check-docs.py --binary build/l8k
         make build-all
-      test-command: bash scripts/test-ci.sh core
-      validate-command: bash scripts/test-ci.sh validation
+      test-command: ''
 
-  lifecycle-tests:
+  tests:
+    name: Test (${{ matrix.lane }})
+    strategy:
+      fail-fast: false
+      matrix:
+        lane: [packages, deployment-1, deployment-2, deployment-3, deployment-4, deployment-5]
     uses: Mellanox/cloud-orchestration-reusable-workflows/.github/workflows/go-check-reusable.yml@main
     with:
       timeout-minutes: 60
-      command: bash scripts/test-ci.sh lifecycle
+      command: bash scripts/test-ci.sh ${{ strategy.job-index }} ${{ strategy.job-total }}
 
   test-gate:
     name: Complete test suite
     if: ${{ always() }}
-    needs: [ci, lifecycle-tests]
+    needs: [ci, tests]
     runs-on: ubuntu-latest
     steps:
       - name: Require every test lane
         env:
           L8K_CI_RESULT: ${{ needs.ci.result }}
-          L8K_LIFECYCLE_RESULT: ${{ needs['lifecycle-tests'].result }}
+          L8K_TEST_RESULT: ${{ needs.tests.result }}
         run: |
           test "$L8K_CI_RESULT" = success
-          test "$L8K_LIFECYCLE_RESULT" = success
+          test "$L8K_TEST_RESULT" = success
