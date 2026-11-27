@@ -792,4 +792,11 @@ host-specific and are not part of the saved configuration.
 
 ## OpenShift flavor
 
+When `ocpOperatorInstall.manage` is enabled, discovery can reuse an existing
+Subscription or OperatorGroup. The optional `retainOnClean` field on entries in
+`ocpOperatorInstall.operators` and `ocpOperatorInstall.operatorGroups` protects
+those installations during cleanup. Discovery sets it when it finds an existing
+external installation. The generated install manifest carries the retention
+annotation.
+
 See [OpenShift host deployments](../user/openshift.md) for operator prerequisites, separate namespace defaults, supported profiles, and validation behavior. `sriov.operatorNamespace`, `nfd.operatorNamespace`, `nfd.configurationName`, and `maintenance.operatorNamespace` can override their OpenShift defaults.

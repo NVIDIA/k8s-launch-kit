@@ -57,6 +57,7 @@ func effectiveOperatorSubscriptions(cfg *config.LaunchKitConfig) []config.OCPOpe
 			sub.Source = prev.Source
 			sub.SourceNamespace = prev.SourceNamespace
 			sub.InstallPlanApproval = prev.InstallPlanApproval
+			sub.RetainOnClean = prev.RetainOnClean
 		}
 		subs = append(subs, sub)
 	}
@@ -139,6 +140,7 @@ func effectiveOperatorGroups(cfg *config.LaunchKitConfig) []config.OCPOperatorGr
 		if prev, ok := saved[op.namespace]; ok {
 			group.Name = prev.Name
 			group.TargetNamespaces = prev.TargetNamespaces
+			group.RetainOnClean = prev.RetainOnClean
 		}
 		groups = append(groups, group)
 	}
@@ -232,6 +234,7 @@ func DiscoverOCPOperatorInstall(ctx context.Context, c client.Client, cfg *confi
 		}
 		if sub != nil {
 			op.Name = sub.GetName()
+			op.RetainOnClean = op.RetainOnClean || retainDiscoveredOCPInstall(sub)
 		}
 		manifests, ok := byPackage[op.Package]
 		if !ok {
@@ -284,6 +287,7 @@ func DiscoverOCPOperatorInstall(ctx context.Context, c client.Client, cfg *confi
 		}
 		if existing != nil {
 			g.Name = existing.GetName()
+			g.RetainOnClean = g.RetainOnClean || retainDiscoveredOCPInstall(existing)
 			targets, _, _ := unstructured.NestedStringSlice(existing.Object, "spec", "targetNamespaces")
 			if targets == nil {
 				targets = []string{}
@@ -299,6 +303,13 @@ func DiscoverOCPOperatorInstall(ctx context.Context, c client.Client, cfg *confi
 		OperatorGroups: groups,
 	}
 	return nil
+}
+
+// Existing external installations stay external when their identities are reused.
+// Already generated managed objects retain their cleanup behavior on rediscovery.
+func retainDiscoveredOCPInstall(obj *unstructured.Unstructured) bool {
+	annotations := obj.GetAnnotations()
+	return annotations[ocpCleanRetainAnnotation] != "" || annotations[launchKitVersionAnnotation] == ""
 }
 
 // selectPackageManifest picks a package's PackageManifest. When several catalogs

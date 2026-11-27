@@ -56,11 +56,13 @@ resources are also removed. Custom installation namespaces must be supplied by
 flag or config; untrusted in-cluster objects never select the cleanup target.
 
 On OpenShift, cleanup uses the retained OpenShift deployment bundle to select
-individual resources across operator namespaces and keeps the OLM installations.
+individual resources across operator namespaces. A bundle generated with
+--manage-operators also selects its managed OLM installations for removal.
 Pass --deployment-files to select the bundle (default ./deployment).
 
 Cleanup waits for operator reconciliation before removing supporting resources.
-Use --skip-wait for legacy batch deletion with CR finalizer waits only.
+Use --skip-wait to skip worker reconciliation. Kubernetes uses legacy batch
+deletion. OpenShift still observes finalizers and network dependencies.
 The namespace and CustomResourceDefinitions are preserved. Pass
 --keep-helm-chart to retain the Helm release regardless of config.`,
 	Example: `  # Remove Network Operator CRs and uninstall the Helm release
@@ -321,7 +323,7 @@ func init() {
 	cleanCmd.Flags().StringVar(&cleanDeploymentFiles, "deployment-files", "", "Retained OpenShift deployment bundle to clean (defaults to ./deployment on OpenShift)")
 	cleanCmd.Flags().StringVar(&userConfig, "user-config", "", "Cluster config file used to resolve networkOperator.namespace and networkOperator.skipHelmChart")
 	cleanCmd.Flags().StringVar(&networkOperatorNamespace, "network-operator-namespace", "", "Kubernetes operator namespace override; on OpenShift it must match the retained bundle")
-	cleanCmd.Flags().BoolVar(&skipCleanWait, "skip-wait", false, "Use legacy batch deletion and skip controller-specific reconciliation and driver shutdown checks")
+	cleanCmd.Flags().BoolVar(&skipCleanWait, "skip-wait", false, "Skip worker reconciliation and driver shutdown checks (Kubernetes uses legacy batch deletion)")
 	cleanCmd.Flags().DurationVar(&cleanTimeout, "clean-timeout", 0, "Maximum time to wait for custom resource teardown (e.g. 45m). Zero waits until cancelled")
 	cleanCmd.Flags().BoolVar(&keepHelmChart, "keep-helm-chart", false, "Delete Network Operator custom resources but keep the network-operator Helm release installed regardless of config")
 

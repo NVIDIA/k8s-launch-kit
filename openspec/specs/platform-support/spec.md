@@ -51,7 +51,12 @@ Platform adaptations SHALL preserve explicit supported user values and use durab
 #### Scenario: Remove OpenShift deployment configuration
 
 - **WHEN** clean targets an OpenShift cluster with its retained Host bundle
-- **THEN** it verifies the exact identities and live ownership, waits for controller-managed teardown by default, and restores attributable shared settings after removing their consumers. The command preserves externally installed OLM operators. An explicit `--skip-wait` waives controller-specific checks while keeping ownership and finalizer checks.
+- **THEN** it verifies the exact identities and live ownership, removes resources in reverse deployment order, and waits for controller-managed teardown by default. After consumers are removed it restores attributable shared configuration, subtracts the manifest’s Multus allowlist entries and uninstalls operators attributable to the generated `--manage-operators` resources. The command preserves externally installed OLM operators. An explicit `--skip-wait` waives controller-specific checks while keeping ownership and finalizer checks.
+
+#### Scenario: Shared OpenShift node feature discovery
+
+- **WHEN** clean compares the selected NFD instance’s live worker rules with the retained NFD manifest
+- **THEN** an exact rule match with no additional rules selects the instance for deletion. Extra rules select a patch that removes the manifest's PCI entries and preserves the instance and the remaining rules.
 
 #### Scenario: OpenShift interface tuning
 

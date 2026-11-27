@@ -10,7 +10,6 @@ import (
 	"time"
 
 	"github.com/stretchr/testify/require"
-	corev1 "k8s.io/api/core/v1"
 	apiextensions "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
@@ -38,18 +37,6 @@ func TestOpenShiftCleanAPIServerOwnership(t *testing.T) {
 	t.Cleanup(func() { require.NoError(t, testEnv.Stop()) })
 	c, err := client.New(restConfig, client.Options{})
 	require.NoError(t, err)
-	require.NoError(t, c.Create(context.Background(), &corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: "operation-test"}}))
-	lockCtx, cancelLock := context.WithCancel(context.Background())
-	release, err := acquireOCPOperation(lockCtx, c, "operation-test", "test-deployment", "deploy")
-	require.NoError(t, err)
-	_, err = acquireOCPOperation(lockCtx, c, "operation-test", "test-deployment", "clean")
-	require.ErrorContains(t, err, "is held")
-	cancelLock()
-	require.NoError(t, release())
-	release, err = acquireOCPOperation(context.Background(), c, "operation-test", "test-deployment", "clean")
-	require.NoError(t, err)
-	require.NoError(t, release())
-
 	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
 	defer cancel()
 	desired := &unstructured.Unstructured{Object: map[string]any{

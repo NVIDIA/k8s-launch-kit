@@ -71,7 +71,7 @@ func applyOCPOperatorConfigurationForCohort(ctx context.Context, c client.Client
 			return fmt.Errorf("unexpected OpenShift operator configuration %s", desired.GetKind())
 		}
 		if isOCPSysctlAllowlistPatch(desired) {
-			if err := ensureOCPSysctlAllowlistForCohort(ctx, c, desired, dryRun, cohort); err != nil {
+			if err := ensureOCPSysctlAllowlist(ctx, c, desired, dryRun); err != nil {
 				return err
 			}
 		}
@@ -98,6 +98,9 @@ func applyOCPOperatorConfigurationForCohort(ctx context.Context, c client.Client
 					opts = append(opts, client.DryRunAll)
 				}
 				created := desired.DeepCopy()
+				if desired.GetKind() == "NodeFeatureDiscovery" {
+					return c.Create(ctx, created, opts...)
+				}
 				if err := recordOCPConfigurationChange(desired, created, cohort, true); err != nil {
 					return err
 				}
@@ -113,8 +116,10 @@ func applyOCPOperatorConfigurationForCohort(ctx context.Context, c client.Client
 			if err := mergeOCPConfiguration(current, desired); err != nil {
 				return err
 			}
-			if err := recordOCPConfigurationChange(before, current, cohort, false); err != nil {
-				return err
+			if desired.GetKind() != "NodeFeatureDiscovery" {
+				if err := recordOCPConfigurationChange(before, current, cohort, false); err != nil {
+					return err
+				}
 			}
 			if reflect.DeepEqual(before.Object, current.Object) {
 				return nil

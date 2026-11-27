@@ -13,7 +13,6 @@ import (
 	"github.com/onsi/ginkgo/v2"
 	"github.com/onsi/gomega"
 	"github.com/stretchr/testify/require"
-	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime/schema"
@@ -23,7 +22,7 @@ import (
 )
 
 var _ = ginkgo.Describe("OpenShift skip-wait shared rollback", func() {
-	ginkgo.It("can repeat waived cleanup and configure a later deployment without upgrading hardware proof", func() {
+	ginkgo.It("can repeat cleanup from live state and configure a later deployment", func() {
 		ctx := context.Background()
 		cfg, artifacts, root := ocpCleanFixture()
 		owner, err := ocpBundleOwner(artifacts, cfg.NetworkOperator.Namespace)
@@ -69,29 +68,17 @@ var _ = ginkgo.Describe("OpenShift skip-wait shared rollback", func() {
 			gomega.Expect(live.Object["spec"]).To(gomega.Equal(sub.Object["spec"]))
 			gomega.Expect(live.GetAnnotations()).To(gomega.Equal(sub.GetAnnotations()))
 		}
-		receipt := &corev1.ConfigMap{}
-		receiptKey := client.ObjectKey{Namespace: "operator-system", Name: ocpCleanReceiptName(owner)}
-		gomega.Expect(c.Get(ctx, receiptKey, receipt)).To(gomega.Succeed())
-		gomega.Expect(receipt.Data["state"]).To(gomega.Equal("complete-unverified"))
-		// A default retry must still refuse missing historical workload evidence.
 		plan, err := PrepareOpenShiftClean(ctx, c, cfg, artifacts)
 		gomega.Expect(err).NotTo(gomega.HaveOccurred())
-		_, err = plan.Execute(ctx, CleanOptions{PollInterval: time.Millisecond, ResourceTimeout: time.Second})
-		gomega.Expect(err).To(gomega.MatchError(gomega.ContainSubstring("without a prior verified root UID")))
-		gomega.Expect(c.Get(ctx, receiptKey, receipt)).To(gomega.Succeed())
-		gomega.Expect(receipt.Data["state"]).To(gomega.Equal("complete-unverified"))
+		result, err := plan.Execute(ctx, CleanOptions{PollInterval: time.Millisecond, ResourceTimeout: time.Second})
+		gomega.Expect(err).NotTo(gomega.HaveOccurred())
+		gomega.Expect(result.CustomResourcesDeleted).To(gomega.BeZero())
 
-		// Exercise the same receipt invalidation and shared configuration stage used
-		// by deploy, including its ordinary Subscription/Deployment rollout check.
 		policy := openShiftDeploymentPolicy{}
 		selected, err := policy.prepare(artifacts)
 		gomega.Expect(err).NotTo(gomega.HaveOccurred())
 		gomega.Expect(prepareOCPCleanDeployment(ctx, c, cfg, artifacts, &selected)).To(gomega.Succeed())
-		release, err := acquireOCPOperation(ctx, c, "operator-system", owner, "deploy")
-		gomega.Expect(err).NotTo(gomega.HaveOccurred())
-		defer func() { gomega.Expect(release()).To(gomega.Succeed()) }()
 		gomega.Expect(policy.configureAfterPreflight(ctx, c, cfg, selected, false)).To(gomega.Succeed())
-		gomega.Expect(apierrors.IsNotFound(c.Get(ctx, receiptKey, receipt))).To(gomega.BeTrue())
 		live := sub.DeepCopy()
 		gomega.Expect(c.Get(ctx, client.ObjectKeyFromObject(sub), live)).To(gomega.Succeed())
 		journal, err := readOCPConfigurationJournal(live)

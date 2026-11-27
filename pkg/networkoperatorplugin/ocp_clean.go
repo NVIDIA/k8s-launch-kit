@@ -5,10 +5,9 @@ package networkoperatorplugin
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"maps"
-	"sort"
+	"slices"
 
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/types"
@@ -19,12 +18,16 @@ import (
 )
 
 // OpenShiftCleanPlan binds the confirmation to the object incarnations seen in
-// the retained bundle's target cluster. OLM installation is external to deploy.
+// the retained bundle's target cluster.
 type OpenShiftCleanPlan struct {
-	client client.Client
-	config *config.LaunchKitConfig
-	plan   ocpCleanPlan
-	shared []*unstructured.Unstructured
+	client                               client.Client
+	config                               *config.LaunchKitConfig
+	plan                                 ocpCleanPlan
+	shared                               []*unstructured.Unstructured
+	sysctl, sysctlManifest, subscription *unstructured.Unstructured
+	nfdManifest                          *unstructured.Unstructured
+	approvedShared                       map[string]ocpSharedBinding
+	operators                            *ocpCleanOperators
 }
 
 // PrepareOpenShiftClean inspects all deletion targets and shared configuration
@@ -51,7 +54,29 @@ func PrepareOpenShiftClean(ctx context.Context, c client.Client, cfg *config.Lau
 	if err != nil {
 		return nil, err
 	}
-	return &OpenShiftCleanPlan{client: c, config: cfg, plan: plan, shared: shared}, nil
+	operators, err := prepareOCPCleanOperators(ctx, c, cfg, artifacts, plan.owner)
+	if err != nil {
+		return nil, err
+	}
+	clean := &OpenShiftCleanPlan{client: c, config: cfg, plan: plan, operators: operators, approvedShared: ocpSharedIdentities(shared)}
+	for _, manifest := range plan.operatorConfigs {
+		if isOCPSysctlAllowlistPatch(manifest) {
+			clean.sysctlManifest = manifest
+		} else if manifest.GetKind() == "NodeFeatureDiscovery" {
+			clean.nfdManifest = manifest
+		}
+	}
+	for _, obj := range slices.Backward(shared) {
+		switch {
+		case isOCPSysctlAllowlistPatch(obj):
+			clean.sysctl = obj
+		case obj.GetKind() == "Subscription":
+			clean.subscription = obj
+		default:
+			clean.shared = append(clean.shared, obj)
+		}
+	}
+	return clean, nil
 }
 
 // Targets describes the effects the user is being asked to approve.
@@ -59,26 +84,40 @@ func (p *OpenShiftCleanPlan) Targets() []string {
 	if p == nil {
 		return nil
 	}
-	lines := append([]string(nil), p.plan.retained...)
-	for _, ref := range p.plan.refs {
+	var lines []string
+	for _, ref := range slices.Backward(p.plan.refs) {
 		if ref.UID != "" {
 			lines = append(lines, "Delete "+cleanRefString(ref))
 		}
 	}
 	for _, obj := range p.shared {
-		action := "Restore recorded changes to"
-		if !ocpConfigurationHasCohort(obj, p.plan.owner) {
-			action = "Retain"
-		}
-		lines = append(lines, fmt.Sprintf("%s %s %s", action, obj.GetKind(), client.ObjectKeyFromObject(obj)))
+		lines = append(lines, p.sharedAction(obj))
 	}
-	sort.Strings(lines)
-	return lines
+	if p.sysctl != nil {
+		lines = append(lines, "Remove manifest allowlist entries from ConfigMap "+client.ObjectKeyFromObject(p.sysctl).String())
+	}
+	lines = append(lines, p.operators.targets()...)
+	if p.subscription != nil && !p.operators.removesSubscription(p.subscription) {
+		lines = append(lines, p.sharedAction(p.subscription))
+	}
+	return append(lines, p.plan.retained...)
+}
+
+func (p *OpenShiftCleanPlan) sharedAction(obj *unstructured.Unstructured) string {
+	if obj.GetKind() == "NodeFeatureDiscovery" {
+		return "Clean NodeFeatureDiscovery " + client.ObjectKeyFromObject(obj).String() + " (delete if worker rules exactly match the manifest, otherwise patch out its PCI settings)"
+	}
+	action := "Retain"
+	if ocpConfigurationHasCohort(obj, p.plan.owner) {
+		action = "Restore recorded changes to"
+	}
+	return fmt.Sprintf("%s %s %s", action, obj.GetKind(), client.ObjectKeyFromObject(obj))
 }
 
 // Execute tears down consumers while their operators can still reconcile them,
 // then releases the bundle's claims on the shared operator configuration.
-func (p *OpenShiftCleanPlan) Execute(ctx context.Context, opts CleanOptions) (result CleanResult, operationErr error) {
+func (p *OpenShiftCleanPlan) Execute(ctx context.Context, opts CleanOptions) (CleanResult, error) {
+	var result CleanResult
 	if p == nil || p.client == nil || ctx == nil {
 		return result, fmt.Errorf("OpenShift clean requires a prepared plan and context")
 	}
@@ -95,11 +134,6 @@ func (p *OpenShiftCleanPlan) Execute(ctx context.Context, opts CleanOptions) (re
 		ctx, cancel = context.WithTimeout(ctx, opts.ResourceTimeout)
 		defer cancel()
 	}
-	release, err := acquireOCPOperation(ctx, p.client, namespace, p.plan.owner, "clean")
-	if err != nil {
-		return result, err
-	}
-	defer func() { operationErr = errors.Join(operationErr, release()) }()
 	for _, ref := range p.plan.refs {
 		if _, err := inspectOCPDeletionTarget(ctx, p.client, ref); err != nil {
 			return result, err
@@ -109,7 +143,7 @@ func (p *OpenShiftCleanPlan) Execute(ctx context.Context, opts CleanOptions) (re
 	if err != nil {
 		return result, err
 	}
-	if !maps.Equal(ocpSharedIdentities(current), ocpSharedIdentities(p.shared)) {
+	if !maps.Equal(ocpSharedIdentities(current), p.approvedShared) {
 		return result, fmt.Errorf("shared OpenShift configuration changed after planning; inspect cleanup again")
 	}
 	count, err := cleanOCPResources(ctx, p.client, p.config, p.plan.refs, opts)
@@ -117,12 +151,35 @@ func (p *OpenShiftCleanPlan) Execute(ctx context.Context, opts CleanOptions) (re
 	if err != nil {
 		return result, err
 	}
-	retained, err := restoreOCPOperatorConfiguration(ctx, p.client, p.shared, p.plan.owner, opts.SkipWait)
-	result.Retained = append(append([]string(nil), p.plan.retained...), retained...)
-	if err != nil {
-		return result, err
+	result.Retained = slices.Clone(p.plan.retained)
+	for _, target := range p.shared {
+		var messages []string
+		if target.GetKind() == "NodeFeatureDiscovery" {
+			messages, err = cleanOCPNFDConfiguration(ctx, p.client, p.nfdManifest, target)
+		} else {
+			messages, err = restoreOCPConfigurationObject(ctx, p.client, target, p.plan.owner, opts.SkipWait)
+		}
+		result.Retained = append(result.Retained, messages...)
+		if err != nil {
+			return result, err
+		}
 	}
-	return result, completeOCPCleanReceipt(ctx, p.client, namespace, p.plan.owner)
+	if p.sysctl != nil {
+		messages, err := removeOCPSysctlAllowlist(ctx, p.client, p.sysctlManifest, p.sysctl, p.plan.owner)
+		result.Retained = append(result.Retained, messages...)
+		if err != nil {
+			return result, err
+		}
+	}
+	messages, err := p.operators.execute(ctx, p.client, opts)
+	result.Retained = append(result.Retained, messages...)
+	if err == nil && p.subscription != nil {
+		// A deleted Subscription needs no rollout. Restore its environment if an
+		// external installation or a surviving consumer kept it in the cluster.
+		messages, err = restoreOCPConfigurationObject(ctx, p.client, p.subscription, p.plan.owner, opts.SkipWait)
+		result.Retained = append(result.Retained, messages...)
+	}
+	return result, err
 }
 
 // Resource versions can change with status alone. Bind the approved object
@@ -136,7 +193,11 @@ func ocpSharedIdentities(objects []*unstructured.Unstructured) map[string]ocpSha
 	bindings := make(map[string]ocpSharedBinding, len(objects))
 	for _, obj := range objects {
 		key := ocpCleanIdentity(obj.GroupVersionKind(), obj.GetNamespace(), obj.GetName())
-		bindings[key] = ocpSharedBinding{uid: obj.GetUID(), journal: obj.GetAnnotations()[ocpRollbackAnnotation]}
+		binding := ocpSharedBinding{uid: obj.GetUID()}
+		if obj.GetKind() != "NodeFeatureDiscovery" {
+			binding.journal = obj.GetAnnotations()[ocpRollbackAnnotation]
+		}
+		bindings[key] = binding
 	}
 	return bindings
 }

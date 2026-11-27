@@ -23,15 +23,9 @@ import (
 func checkOCPPoolConsumers(ctx context.Context, c client.Client, cfg *config.LaunchKitConfig, refs []cleanObjectRef) error {
 	namespace := ocpCleanNamespaces(cfg).operator
 	pools := map[string]bool{}
-	selected := map[string]bool{}
-	var networks []cleanObjectRef
 	for _, ref := range refs {
-		selected[ocpCleanIdentity(ref.GVK, ref.Namespace, ref.Name)] = true
 		if ref.GVK.Group == "nv-ipam.nvidia.com" && ref.GVK.Kind == "IPPool" && ref.Namespace == namespace {
 			pools[ref.Name] = true
-		}
-		if isCleanNetworkDefinition(ref, ref.Namespace) {
-			networks = append(networks, ref)
 		}
 	}
 	if len(pools) == 0 {
@@ -59,9 +53,6 @@ func checkOCPPoolConsumers(ctx context.Context, c client.Client, cfg *config.Lau
 		}
 		for i := range objects {
 			object := &objects[i]
-			if selected[ocpCleanIdentity(gvk, object.GetNamespace(), object.GetName())] {
-				continue
-			}
 			configuration := ocpPoolCNIConfig{Name: object.GetName()}
 			raw, _, err := unstructured.NestedString(object.Object, "spec", "ipam")
 			if err != nil {
@@ -89,19 +80,12 @@ func checkOCPPoolConsumers(ctx context.Context, c client.Client, cfg *config.Lau
 			}
 		}
 	}
-	proofs, err := ocpPoolNADRemovalProofs(ctx, c, networks)
-	if err != nil {
-		return err
-	}
 	nads, err := listCleanNetworkObjects(ctx, c, cleanNADGVK, "")
 	if err != nil {
 		return fmt.Errorf("inspect surviving NAD pool consumers: %w", err)
 	}
 	for i := range nads {
 		nad := &nads[i]
-		if ocpPoolNADWillBeRemoved(nad, proofs) {
-			continue
-		}
 		raw, found, err := unstructured.NestedString(nad.Object, "spec", "config")
 		if err != nil {
 			return fmt.Errorf("inspect surviving NAD %s config: %w", client.ObjectKeyFromObject(nad), err)
@@ -212,62 +196,4 @@ func ocpNVIPAMPoolReferences(configuration ocpPoolCNIConfig, fallbackName string
 		result = append(result, references...)
 	}
 	return result, nil
-}
-
-type ocpPoolNADRemovalProof struct {
-	ref       cleanObjectRef
-	namespace string
-}
-
-func ocpPoolNADRemovalProofs(ctx context.Context, c client.Client, refs []cleanObjectRef) ([]ocpPoolNADRemovalProof, error) {
-	var proofs []ocpPoolNADRemovalProof
-	for _, ref := range refs {
-		// Annotation-only ancestry cannot bind a vanished parent to an incarnation.
-		if ref.UID == "" {
-			continue
-		}
-		live, err := inspectOCPDeletionTarget(ctx, c, ref)
-		if err != nil {
-			return nil, err
-		}
-		if live == nil {
-			continue
-		}
-		namespace, _, err := unstructured.NestedString(live.Object, "spec", "networkNamespace")
-		if err != nil {
-			return nil, err
-		}
-		if namespace == "" {
-			if ref.GVK.Group == cleanSriovGroup {
-				namespace = ref.Namespace
-			} else {
-				namespace = "default"
-			}
-		}
-		proofs = append(proofs, ocpPoolNADRemovalProof{ref: ref, namespace: namespace})
-	}
-	return proofs, nil
-}
-
-func ocpPoolNADWillBeRemoved(nad *unstructured.Unstructured, proofs []ocpPoolNADRemovalProof) bool {
-	owners := nad.GetOwnerReferences()
-	for _, proof := range proofs {
-		ref := proof.ref
-		// Exactly one matching GC owner is sufficient even if the child was renamed.
-		// With additional owners, deleting this parent cannot guarantee child removal.
-		if len(owners) == 1 {
-			owner := owners[0]
-			gvk := schema.FromAPIVersionAndKind(owner.APIVersion, owner.Kind)
-			if gvk.Group == ref.GVK.Group && gvk.Kind == ref.GVK.Kind && owner.Name == ref.Name && owner.UID == ref.UID && (ref.Namespace == "" || ref.Namespace == nad.GetNamespace()) {
-				return true
-			}
-		}
-		// Cross-namespace SR-IOV finalizers act on the rendered NAD's exact identity.
-		// A copied annotation on another name/namespace supplies no deletion proof.
-		annotation := ref.GVK.Kind + "." + ref.GVK.Group + "/" + ref.Namespace + "/" + ref.Name
-		if len(owners) == 0 && ref.GVK.Group == cleanSriovGroup && nad.GetName() == ref.Name && nad.GetNamespace() == proof.namespace && nad.GetAnnotations()["sriovnetwork.openshift.io/owner-ref"] == annotation {
-			return true
-		}
-	}
-	return false
 }

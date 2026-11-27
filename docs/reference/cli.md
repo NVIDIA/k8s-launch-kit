@@ -184,7 +184,7 @@ root pipeline. The remaining profile flags also apply to discovery.
 
 ## Clean Flags
 
-On OpenShift, pass the retained Host deployment directory. Clean verifies exact resource identities and ownership, removes their configuration, and restores attributable shared settings. OLM installations remain externally managed. See [OpenShift configuration rollback](../user/cleanup.md#openshift-configuration-rollback).
+On OpenShift, pass the retained Host deployment directory. Clean removes the selected manifests in reverse deployment order, restores shared settings and subtracts the entries in the Multus allowlist patch. Bundles generated with `--manage-operators` also select their managed operators for uninstall. See [OpenShift configuration rollback](../user/cleanup.md#openshift-configuration-rollback).
 
 On Kubernetes, `l8k clean` discovers every namespaced custom-resource instance in the resolved
 Network Operator namespace and the known cluster-scoped Network Operator CRs.
@@ -208,7 +208,7 @@ in-cluster objects do not select a destructive cleanup target.
 | Flag | Description |
 | --- | --- |
 | `--deployment-files` | OpenShift deployment root with its generated manifests and resolved config. Defaults to `./deployment` on OpenShift. |
-| `--skip-wait` | Skip the SR-IOV, NIC, network attachment and MOFED reconciliation checks and use legacy batch deletion. See [cleanup](../user/cleanup.md#wait-for-reconciled-teardown). |
+| `--skip-wait` | Skip worker reconciliation and MOFED shutdown verification. Kubernetes uses legacy batch deletion. OpenShift still waits for selected network attachments before removing their pools. See [cleanup](../user/cleanup.md#wait-for-reconciled-teardown). |
 | `--clean-timeout` | Bound the custom-resource and driver teardown stages, e.g. `45m`. Default `0` waits until cancelled. |
 | `--keep-helm-chart` | Delete custom resources but leave the Network Operator Helm release and chart-managed resources installed regardless of config. |
 | `--kubeconfig` | Cluster to clean. Falls back to `$KUBECONFIG` and then `~/.kube/config`. |

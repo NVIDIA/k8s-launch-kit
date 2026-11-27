@@ -121,4 +121,4 @@ read-only `helm list` command. If it was kept, verify it remains deployed.
 
 ## OpenShift
 
-On OpenShift, obtain the original deployment bundle and confirm its identities and kubeconfig context. Use `l8k clean --flavor ocp --deployment-files <deployment-directory>`. Review retained effects in the result. Operators installed separately through OLM remain installed. See the [OpenShift rollback procedure](../../docs/user/cleanup.md#openshift-configuration-rollback).
+On OpenShift, obtain the original deployment bundle and confirm its identities and kubeconfig context. Use `l8k clean --flavor ocp --deployment-files <deployment-directory>`. Review retained effects in the result. Confirm whether the bundle includes `--manage-operators` install manifests. Clean removes matching managed OLM installations after removing their consumers and preserves externally installed operators. See the [OpenShift rollback procedure](../../docs/user/cleanup.md#openshift-configuration-rollback).

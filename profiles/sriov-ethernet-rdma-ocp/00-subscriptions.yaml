@@ -5,6 +5,10 @@ kind: Subscription
 metadata:
   name: "{{ .Name }}"
   namespace: "{{ .Namespace }}"
+  {{- if .RetainOnClean }}
+  annotations:
+    nvidia.kubernetes-launch-kit.ocp-clean-retain: "true"
+  {{- end }}
 spec:
   channel: "{{ .Channel }}"
   name: "{{ .Package }}"

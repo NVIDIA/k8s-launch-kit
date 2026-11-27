@@ -22,16 +22,20 @@ func checkOCPCleanDependencies(ctx context.Context, c client.Client, cfg *config
 	selected := map[string]bool{}
 	for _, ref := range refs {
 		selected[ocpCleanIdentity(ref.GVK, ref.Namespace, ref.Name)] = true
-		if ref.GVK.Group == "mellanox.com" && ref.GVK.Kind == "NicClusterPolicy" {
-			var err error
-			root, err = ocpDesired(ref)
+		if ref.GVK.Group == "mellanox.com" && ref.GVK.Kind == "NicClusterPolicy" && ref.UID != "" {
+			live, err := inspectOCPDeletionTarget(ctx, c, ref)
 			if err != nil {
 				return err
 			}
+			// Retained intent cannot remove a root that is already absent. Its
+			// former dependents therefore do not block cleanup of other targets.
+			if live != nil {
+				root, err = ocpDesired(ref)
+				if err != nil {
+					return err
+				}
+			}
 		}
-	}
-	if err := checkOCPPoolConsumers(ctx, c, cfg, refs); err != nil {
-		return err
 	}
 	if root == nil {
 		return nil

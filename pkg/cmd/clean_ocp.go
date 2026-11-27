@@ -124,11 +124,11 @@ func runOpenShiftClean(ctx context.Context, c client.Client, restConfig *rest.Co
 		return err
 	}
 	out.Section("OpenShift configuration cleanup")
-	out.Info("Network Operator namespace: %s. OLM installations will be retained.", ns)
+	out.Info("Network Operator namespace: %s", ns)
 	for _, target := range plan.Targets() {
 		out.Info("%s", target)
 	}
-	confirmed, err := out.Confirm("Remove the listed deployment configuration and restore recorded changes to shared OpenShift settings?")
+	confirmed, err := out.Confirm("Apply the listed OpenShift cleanup actions?")
 	if err != nil {
 		return err
 	}
@@ -146,7 +146,7 @@ func runOpenShiftClean(ctx context.Context, c client.Client, restConfig *rest.Co
 	for _, effect := range result.Retained {
 		out.Warning("%s", effect)
 	}
-	out.Success("OpenShift cleanup completed: deleted %d custom resource(s)", result.CustomResourcesDeleted)
+	out.Success("OpenShift cleanup completed: deleted %d deployment custom resource(s)", result.CustomResourcesDeleted)
 	finalizeCleanJSON(jsonOutput, ns, result.CustomResourcesDeleted, false, true, result.Retained...)
 	return nil
 }

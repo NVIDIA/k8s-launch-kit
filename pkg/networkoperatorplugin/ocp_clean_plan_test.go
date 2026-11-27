@@ -43,6 +43,29 @@ func ocpCleanFixture() (*config.LaunchKitConfig, *bundle.Bundle, *unstructured.U
 }
 
 var _ = ginkgo.Describe("OpenShift exact cleanup inventory", func() {
+	ginkgo.It("retains deployment phases and source document order instead of sorting by Kind", func() {
+		cfg, _, _ := ocpCleanFixture()
+		var files []bundle.File
+		for _, entry := range []struct{ file, group, kind, namespace, name string }{
+			{"01-network.yaml", "mellanox.com/v1alpha1", "MacvlanNetwork", "", "z-network"},
+			{"02-pools.yaml", "nv-ipam.nvidia.com/v1alpha1", "IPPool", "operator-system", "z-pool"},
+			{"03-node.yaml", "mellanox.com/v1alpha1", "NicNodePolicy", "", "z-node"},
+			{"04-root.yaml", "mellanox.com/v1alpha1", "NicClusterPolicy", "", "root"},
+			{"05-node.yaml", "mellanox.com/v1alpha1", "NicNodePolicy", "", "a-node"},
+		} {
+			files = append(files, bundle.File{Name: entry.file, Content: fmt.Sprintf("apiVersion: %s\nkind: %s\nmetadata:\n  name: %s\n  namespace: %q\nspec:\n  enabled: true\n", entry.group, entry.kind, entry.name, entry.namespace)})
+		}
+		artifacts, err := bundle.FromFiles(files)
+		gomega.Expect(err).NotTo(gomega.HaveOccurred())
+		plan, err := ocpCleanDesiredPlan(cfg, artifacts)
+		gomega.Expect(err).NotTo(gomega.HaveOccurred())
+		var names []string
+		for _, ref := range plan.refs {
+			names = append(names, ref.Name)
+		}
+		gomega.Expect(names).To(gomega.Equal([]string{"root", "z-node", "a-node", "z-network", "z-pool"}))
+	})
+
 	ginkgo.It("accepts legacy live apply provenance and keeps absent exact targets without a deletion UID", func() {
 		cfg, artifacts, live := ocpCleanFixture()
 		c := fake.NewClientBuilder().WithReturnManagedFields().WithObjects(live).Build()
@@ -216,6 +239,17 @@ var _ = ginkgo.Describe("OpenShift exact cleanup inventory", func() {
 		gomega.Expect(plan.refs).To(gomega.HaveLen(3))
 		gomega.Expect(plan.operatorConfigs).To(gomega.HaveLen(1))
 		gomega.Expect(plan.retained).To(gomega.ConsistOf(gomega.ContainSubstring("ConfigMap operator-system/unrelated")))
+	})
+
+	ginkgo.It("accepts an explicit Multus allowlist artifact outside shared singleton fallback", func() {
+		cfg, artifacts, _ := ocpCleanFixture()
+		files := append(artifacts.Files(), bundle.File{Name: ocpSysctlAllowlistPatchFilename, Content: "apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: cni-sysctl-allowlist\n  namespace: openshift-multus\ndata:\n  allowlist.conf: ^net.ipv4.conf.IFNAME.arp_ignore$\n"})
+		combined, err := bundle.FromFiles(files)
+		gomega.Expect(err).NotTo(gomega.HaveOccurred())
+		plan, err := ocpCleanDesiredPlan(cfg, combined)
+		gomega.Expect(err).NotTo(gomega.HaveOccurred())
+		gomega.Expect(plan.operatorConfigs).To(gomega.HaveLen(1))
+		gomega.Expect(isOCPSysctlAllowlistPatch(plan.operatorConfigs[0])).To(gomega.BeTrue())
 	})
 
 	ginkgo.It("rejects wrong namespaces and platform SR-IOV default policies", func() {

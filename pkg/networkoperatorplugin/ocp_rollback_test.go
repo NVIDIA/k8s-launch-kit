@@ -5,7 +5,6 @@ package networkoperatorplugin
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"testing"
 	"time"
@@ -13,6 +12,7 @@ import (
 	"github.com/nvidia/k8s-launch-kit/pkg/config"
 	"github.com/stretchr/testify/require"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	"k8s.io/apimachinery/pkg/api/meta"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/types"
@@ -42,7 +42,7 @@ func applyRollbackConfiguration(t *testing.T, c client.Client, desired *unstruct
 }
 
 func TestOCPConfigurationRollbackCohortsAndAdditiveRedeploy(t *testing.T) {
-	for _, kind := range []string{"SriovOperatorConfig", "NodeFeatureDiscovery", "ConfigMap"} {
+	for _, kind := range []string{"SriovOperatorConfig", "ConfigMap"} {
 		t.Run(kind, func(t *testing.T) {
 			var initial, desired *unstructured.Unstructured
 			switch kind {
@@ -50,10 +50,6 @@ func TestOCPConfigurationRollbackCohortsAndAdditiveRedeploy(t *testing.T) {
 				initial = rollbackObject("sriovnetwork.openshift.io/v1", kind, map[string]interface{}{"disablePlugins": []interface{}{"site"}, "disableDrain": true, "configDaemonNodeSelector": map[string]interface{}{"site-label": "keep"}})
 				desired = initial.DeepCopy()
 				desired.Object["spec"] = map[string]interface{}{"disablePlugins": []interface{}{"mellanox"}, "disableDrain": false, "configDaemonNodeSelector": map[string]interface{}{"l8k-label": "managed"}}
-			case "NodeFeatureDiscovery":
-				initial = rollbackObject("nfd.openshift.io/v1", kind, map[string]interface{}{"workerConfig": map[string]interface{}{"configData": "sources:\n  pci:\n    deviceClassWhitelist: ['01']\n    deviceLabelFields: [class]\nother: keep\n"}})
-				desired = initial.DeepCopy()
-				require.NoError(t, unstructured.SetNestedField(desired.Object, "sources:\n  pci:\n    deviceClassWhitelist: ['02']\n    deviceLabelFields: [vendor]\n", "spec", "workerConfig", "configData"))
 			case "ConfigMap":
 				initial = ocpTestObject("v1", kind, "openshift-multus", "cni-sysctl-allowlist", map[string]interface{}{"data": map[string]interface{}{"allowlist.conf": "# site\nsite-entry", "other": "keep"}})
 				initial.SetUID("allowlist-uid")
@@ -68,16 +64,6 @@ func TestOCPConfigurationRollbackCohortsAndAdditiveRedeploy(t *testing.T) {
 			case "SriovOperatorConfig":
 				require.NoError(t, unstructured.SetNestedSlice(site.Object, []interface{}{"site", "mellanox", "new-site"}, "spec", "disablePlugins"))
 				require.NoError(t, unstructured.SetNestedSlice(desired.Object, []interface{}{"mellanox", "second-l8k"}, "spec", "disablePlugins"))
-			case "NodeFeatureDiscovery":
-				raw, _, _ := unstructured.NestedString(site.Object, "spec", "workerConfig", "configData")
-				raw += "site-added: keep\n"
-				require.NoError(t, unstructured.SetNestedField(site.Object, raw, "spec", "workerConfig", "configData"))
-				// The new whitelist value is user-owned even though a later merge sees it.
-				view, err := ocpConfigurationView(site)
-				require.NoError(t, err)
-				require.NoError(t, unstructured.SetNestedSlice(view, []interface{}{"01", "02", "09"}, "nfd", "sources", "pci", "deviceClassWhitelist"))
-				require.NoError(t, setOCPConfigurationView(site, view))
-				require.NoError(t, unstructured.SetNestedField(desired.Object, "sources:\n  pci:\n    deviceClassWhitelist: ['02','03']\n    deviceLabelFields: [vendor]\n", "spec", "workerConfig", "configData"))
 			case "ConfigMap":
 				require.NoError(t, unstructured.SetNestedField(site.Object, "# site\nsite-entry\nl8k-entry\nnew-site\n", "data", "allowlist.conf"))
 				require.NoError(t, unstructured.SetNestedField(desired.Object, "l8k-entry\nsecond-l8k\n", "data", "allowlist.conf"))
@@ -107,15 +93,6 @@ func TestOCPConfigurationRollbackCohortsAndAdditiveRedeploy(t *testing.T) {
 				require.Equal(t, map[string]string{"site-label": "keep"}, selector)
 				drain, _, _ := unstructured.NestedBool(got.Object, "spec", "disableDrain")
 				require.True(t, drain)
-			case "NodeFeatureDiscovery":
-				view, err := ocpConfigurationView(got)
-				require.NoError(t, err)
-				classes, _, _ := unstructured.NestedStringSlice(view, "nfd", "sources", "pci", "deviceClassWhitelist")
-				require.Equal(t, []string{"01", "09"}, classes)
-				fields, _, _ := unstructured.NestedStringSlice(view, "nfd", "sources", "pci", "deviceLabelFields")
-				require.Equal(t, []string{"class"}, fields)
-				raw, _, _ := unstructured.NestedString(got.Object, "spec", "workerConfig", "configData")
-				require.Contains(t, raw, "site-added: keep")
 			case "ConfigMap":
 				data, _, _ := unstructured.NestedString(got.Object, "data", "allowlist.conf")
 				require.Equal(t, "# site\nsite-entry\nnew-site\n", data)
@@ -124,19 +101,13 @@ func TestOCPConfigurationRollbackCohortsAndAdditiveRedeploy(t *testing.T) {
 	}
 }
 
-func TestOCPConfigurationRollbackExactNFDAndScalarValues(t *testing.T) {
-	for _, kind := range []string{"NodeFeatureDiscovery", "MaintenanceOperatorConfig"} {
+func TestOCPConfigurationRollbackExactScalarValues(t *testing.T) {
+	for _, kind := range []string{"MaintenanceOperatorConfig"} {
 		t.Run(kind, func(t *testing.T) {
 			var initial, desired *unstructured.Unstructured
-			if kind == "NodeFeatureDiscovery" {
-				initial = rollbackObject("nfd.openshift.io/v1", kind, map[string]interface{}{"workerConfig": map[string]interface{}{"configData": "# retained comment\nsources: {pci: {deviceLabelFields: [class]}}\n", "other": "keep"}})
-				desired = initial.DeepCopy()
-				require.NoError(t, unstructured.SetNestedField(desired.Object, "sources: {pci: {deviceLabelFields: [vendor], deviceClassWhitelist: ['02']}}", "spec", "workerConfig", "configData"))
-			} else {
-				initial = rollbackObject("maintenance.nvidia.com/v1alpha1", kind, map[string]interface{}{"maxParallelOperations": int64(0), "unrelated": false})
-				desired = initial.DeepCopy()
-				desired.Object["spec"] = map[string]interface{}{"maxParallelOperations": int64(2), "maxUnavailable": "50%"}
-			}
+			initial = rollbackObject("maintenance.nvidia.com/v1alpha1", kind, map[string]interface{}{"maxParallelOperations": int64(0), "unrelated": false})
+			desired = initial.DeepCopy()
+			desired.Object["spec"] = map[string]interface{}{"maxParallelOperations": int64(2), "maxUnavailable": "50%"}
 			c := fake.NewClientBuilder().WithObjects(initial).Build()
 			applyRollbackConfiguration(t, c, desired, "cohort")
 			// An idempotent second deploy must retain the original baseline.
@@ -338,42 +309,33 @@ func TestOCPConfigurationRollbackWaitsForCreatedObjectFinalizers(t *testing.T) {
 	}
 }
 
-func TestOCPConfigurationRollbackFindsOmittedOptionalSysctlClaim(t *testing.T) {
+func TestOCPConfigurationRollbackLeavesUnselectedSysctlArtifact(t *testing.T) {
 	initial := ocpTestObject("v1", "ConfigMap", "openshift-multus", "cni-sysctl-allowlist", map[string]interface{}{"data": map[string]interface{}{"allowlist.conf": "site-entry"}})
 	initial.SetUID("allowlist-uid")
 	desired := initial.DeepCopy()
 	require.NoError(t, unstructured.SetNestedField(desired.Object, "l8k-entry\n", "data", "allowlist.conf"))
 	c := fake.NewClientBuilder().WithObjects(initial).Build()
-	require.NoError(t, ensureOCPSysctlAllowlistForCohort(context.Background(), c, desired, false, "cohort"))
+	// Simulate a deployment made before manifest-based allowlist cleanup.
+	applyRollbackConfiguration(t, c, desired, "cohort")
+	before := getRollbackObject(t, c, initial)
 	cfg := &config.LaunchKitConfig{NetworkOperator: &config.NetworkOperatorConfig{Namespace: "operator-ns"}}
-	// The regenerated bundle no longer has the ignoreARP artifact.
 	objects, err := preflightOCPOperatorConfigurationRestore(context.Background(), c, cfg, nil, "cohort")
 	require.NoError(t, err)
-	_, err = restoreOCPOperatorConfiguration(context.Background(), c, objects, "cohort", false)
-	require.NoError(t, err)
-	got := getRollbackObject(t, c, initial)
-	raw, _, _ := unstructured.NestedString(got.Object, "data", "allowlist.conf")
-	require.Equal(t, "site-entry", raw)
-	objects, err = preflightOCPOperatorConfigurationRestore(context.Background(), c, cfg, nil, "cohort")
-	require.NoError(t, err)
-	messages, err := restoreOCPOperatorConfiguration(context.Background(), c, objects, "cohort", false)
-	require.NoError(t, err)
-	require.Empty(t, messages, "unclaimed optional configuration is silent")
+	require.Empty(t, objects, "an omitted patch cannot authorize removal of previous entries")
+	require.Equal(t, before.Object, getRollbackObject(t, c, initial).Object)
 }
 
 func TestOCPConfigurationRollbackRejectsChangedSharedIdentity(t *testing.T) {
-	initial := rollbackObject("nfd.openshift.io/v1", "NodeFeatureDiscovery", map[string]interface{}{"workerConfig": map[string]interface{}{"configData": "sources: {pci: {deviceLabelFields: [class]}}"}})
-	initial.SetNamespace("old-nfd-ns")
-	initial.SetName("old-nfd")
+	initial := rollbackObject("maintenance.nvidia.com/v1alpha1", "MaintenanceOperatorConfig", map[string]interface{}{"maxUnavailable": "10%"})
+	initial.SetNamespace("old-maintenance-ns")
 	desired := initial.DeepCopy()
-	require.NoError(t, unstructured.SetNestedField(desired.Object, "sources: {pci: {deviceLabelFields: [vendor]}}", "spec", "workerConfig", "configData"))
+	require.NoError(t, unstructured.SetNestedField(desired.Object, "50%", "spec", "maxUnavailable"))
 	c := fake.NewClientBuilder().WithObjects(initial).Build()
 	applyRollbackConfiguration(t, c, desired, "cohort")
-	cfg := &config.LaunchKitConfig{NetworkOperator: &config.NetworkOperatorConfig{Namespace: "operator-ns"}, NFD: &config.NFDConfig{OperatorNamespace: "new-nfd-ns", ConfigurationName: "new-nfd"}}
+	cfg := &config.LaunchKitConfig{NetworkOperator: &config.NetworkOperatorConfig{Namespace: "operator-ns"}, Maintenance: &config.MaintenanceConfig{OperatorNamespace: "new-maintenance-ns"}}
 	require.ErrorContains(t, checkOCPConfigurationMapping(context.Background(), c, cfg, "cohort"), "use its prior retained bundle")
 	err := applyOCPOperatorConfigurationForCohort(context.Background(), c, cfg, nil, false, "cohort")
-	require.ErrorContains(t, err, "old-nfd-ns/old-nfd")
-	// A different deployment has no authority over this journal or its old scope.
+	require.ErrorContains(t, err, "old-maintenance-ns/default")
 	require.NoError(t, checkOCPConfigurationMapping(context.Background(), c, cfg, "different-cohort"))
 }
 
@@ -487,19 +449,13 @@ func TestOCPConfigurationRollbackRetainsForManualPolicyOnDistinctPF(t *testing.T
 	}
 }
 
-func TestOCPConfigurationRollbackRetainsKnownNFDAndMaintenanceConsumers(t *testing.T) {
-	for _, kind := range []string{"NodeFeatureDiscovery", "MaintenanceOperatorConfig"} {
+func TestOCPConfigurationRollbackRetainsKnownMaintenanceConsumers(t *testing.T) {
+	for _, kind := range []string{"MaintenanceOperatorConfig"} {
 		t.Run(kind, func(t *testing.T) {
 			var initial, desired *unstructured.Unstructured
-			if kind == "NodeFeatureDiscovery" {
-				initial = rollbackObject("nfd.openshift.io/v1", kind, map[string]interface{}{"workerConfig": map[string]interface{}{"configData": "sources: {pci: {deviceLabelFields: [class]}}"}})
-				desired = initial.DeepCopy()
-				require.NoError(t, unstructured.SetNestedField(desired.Object, "sources: {pci: {deviceLabelFields: [vendor]}}", "spec", "workerConfig", "configData"))
-			} else {
-				initial = rollbackObject("maintenance.nvidia.com/v1alpha1", kind, map[string]interface{}{"maxUnavailable": "10%"})
-				desired = initial.DeepCopy()
-				require.NoError(t, unstructured.SetNestedField(desired.Object, "50%", "spec", "maxUnavailable"))
-			}
+			initial = rollbackObject("maintenance.nvidia.com/v1alpha1", kind, map[string]interface{}{"maxUnavailable": "10%"})
+			desired = initial.DeepCopy()
+			require.NoError(t, unstructured.SetNestedField(desired.Object, "50%", "spec", "maxUnavailable"))
 			manual := rollbackObject("mellanox.com/v1alpha1", "NicClusterPolicy", map[string]interface{}{"ofedDriver": map[string]interface{}{"image": "site-driver"}})
 			manual.SetNamespace("")
 			manual.SetName("site-root")
@@ -515,36 +471,6 @@ func TestOCPConfigurationRollbackRetainsKnownNFDAndMaintenanceConsumers(t *testi
 			require.NoError(t, err)
 			got := getRollbackObject(t, c, initial)
 			require.Equal(t, initial.Object["spec"], got.Object["spec"])
-		})
-	}
-}
-
-func TestOCPConfigurationRollbackSysctlConsumerUsesOnlyRemovedExpressions(t *testing.T) {
-	for _, sysctl := range []string{"net.ipv4.conf.IFNAME.arp_ignore", "net.ipv4.conf.IFNAME.site_setting"} {
-		t.Run(sysctl, func(t *testing.T) {
-			initial := ocpTestObject("v1", "ConfigMap", "openshift-multus", "cni-sysctl-allowlist", map[string]interface{}{"data": map[string]interface{}{"allowlist.conf": "^net.ipv4.conf.IFNAME.site_setting$"}})
-			initial.SetUID("allowlist-uid")
-			desired := initial.DeepCopy()
-			require.NoError(t, unstructured.SetNestedField(desired.Object, "^net.ipv4.conf.IFNAME.arp_ignore$\n", "data", "allowlist.conf"))
-			configuration := map[string]interface{}{"cniVersion": "0.3.1", "plugins": []interface{}{map[string]interface{}{"type": "macvlan"}, map[string]interface{}{"type": "tuning", "sysctl": map[string]interface{}{sysctl: "1"}}}}
-			encoded, err := json.Marshal(configuration)
-			require.NoError(t, err)
-			nad := ocpTestObject("k8s.cni.cncf.io/v1", "NetworkAttachmentDefinition", "site-workloads", "site-network", map[string]interface{}{"spec": map[string]interface{}{"config": string(encoded)}})
-			c := fake.NewClientBuilder().WithObjects(initial, nad).Build()
-			require.NoError(t, ensureOCPSysctlAllowlistForCohort(context.Background(), c, desired, false, "cohort"))
-			before := getRollbackObject(t, c, initial)
-			messages, err := restoreLiveOCPConfiguration(context.Background(), c, initial, "cohort", false)
-			require.NoError(t, err)
-			if sysctl == "net.ipv4.conf.IFNAME.arp_ignore" {
-				require.Contains(t, messages[0], "site-workloads/site-network")
-				require.Equal(t, before.Object, getRollbackObject(t, c, initial).Object)
-				require.NoError(t, c.Delete(context.Background(), nad))
-				_, err = restoreLiveOCPConfiguration(context.Background(), c, initial, "cohort", false)
-				require.NoError(t, err)
-			}
-			got := getRollbackObject(t, c, initial)
-			raw, _, _ := unstructured.NestedString(got.Object, "data", "allowlist.conf")
-			require.Equal(t, "^net.ipv4.conf.IFNAME.site_setting$", raw)
 		})
 	}
 }
@@ -626,4 +552,21 @@ func TestOCPConfigurationRollbackCreatedUIDBindingRetriesWithoutAdoptingSiteChan
 			}
 		})
 	}
+}
+
+func TestOCPConfigurationRollbackPreflightAllowsUnservedDesiredAPI(t *testing.T) {
+	// A previous managed-operator cleanup may have removed its served CRD.
+	desired := rollbackObject("sriovnetwork.openshift.io/v1", "SriovOperatorConfig", map[string]interface{}{"disableDrain": false})
+	c := fake.NewClientBuilder().WithInterceptorFuncs(interceptor.Funcs{
+		Get: func(ctx context.Context, c client.WithWatch, key client.ObjectKey, obj client.Object, opts ...client.GetOption) error {
+			if obj.GetObjectKind().GroupVersionKind().Kind == "SriovOperatorConfig" {
+				return &meta.NoKindMatchError{GroupKind: desired.GroupVersionKind().GroupKind(), SearchedVersions: []string{"v1"}}
+			}
+			return c.Get(ctx, key, obj, opts...)
+		},
+	}).Build()
+	cfg := &config.LaunchKitConfig{NetworkOperator: &config.NetworkOperatorConfig{Namespace: "operator-ns"}}
+	targets, err := preflightOCPOperatorConfigurationRestore(context.Background(), c, cfg, []*unstructured.Unstructured{desired}, "cohort")
+	require.NoError(t, err)
+	require.Empty(t, targets)
 }

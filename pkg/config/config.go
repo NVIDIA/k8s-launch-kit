@@ -522,6 +522,8 @@ type OCPOperatorGroup struct {
 	Name             string   `yaml:"name"`
 	Namespace        string   `yaml:"namespace"`
 	TargetNamespaces []string `yaml:"targetNamespaces"`
+	// RetainOnClean preserves an existing installation reused by discovery.
+	RetainOnClean bool `yaml:"retainOnClean,omitempty"`
 }
 
 // UniqueNamespaces lists each operator namespace once; the Namespace artifacts
@@ -554,6 +556,8 @@ type OCPOperatorSubscription struct {
 	SourceNamespace string `yaml:"sourceNamespace"`
 	// InstallPlanApproval defaults to DefaultOCPInstallPlanApproval when empty.
 	InstallPlanApproval string `yaml:"installPlanApproval,omitempty"`
+	// RetainOnClean preserves an existing installation reused by discovery.
+	RetainOnClean bool `yaml:"retainOnClean,omitempty"`
 }
 
 type HostdevConfig struct {

@@ -12,26 +12,23 @@ import (
 	"time"
 
 	corev1 "k8s.io/api/core/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	"k8s.io/apimachinery/pkg/api/meta"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 )
 
 type ocpSriovNodeClean struct {
-	ref                 cleanObjectRef
-	pfs                 map[string]bool
-	requiresProof       bool
-	provedGeneration    int64
-	attemptedGeneration int64
-	nextLogRead         time.Time
+	ref cleanObjectRef
+	pfs map[string]bool
 }
 type ocpSriovClean struct {
-	nodes    map[string]*ocpSriovNodeClean
-	readLogs sriovDaemonLogReader
+	nodes map[string]*ocpSriovNodeClean
 }
 
-func prepareOCPSriovClean(ctx context.Context, c client.Client, refs []cleanObjectRef, readLogs sriovDaemonLogReader) (*ocpSriovClean, error) {
-	reset := &ocpSriovClean{nodes: map[string]*ocpSriovNodeClean{}, readLogs: readLogs}
+func prepareOCPSriovClean(ctx context.Context, c client.Client, refs []cleanObjectRef) (*ocpSriovClean, error) {
+	reset := &ocpSriovClean{nodes: map[string]*ocpSriovNodeClean{}}
 	var policies []cleanObjectRef
 	for _, ref := range refs {
 		if ref.GVK.Group == cleanSriovGroup && ref.GVK.Kind == "SriovNetworkNodePolicy" {
@@ -71,7 +68,13 @@ func prepareOCPSriovClean(ctx context.Context, c client.Client, refs []cleanObje
 			stateRef := cleanObjectRef{GVK: schema.GroupVersionKind{Group: cleanSriovGroup, Version: ref.GVK.Version, Kind: "SriovNetworkNodeState"}, Namespace: ref.Namespace, Name: node.Name}
 			state := objectForCleanRef(stateRef)
 			if err := c.Get(ctx, client.ObjectKeyFromObject(state), state); err != nil {
+				if ref.UID == "" && (apierrors.IsNotFound(err) || meta.IsNoMatchError(err)) {
+					continue
+				}
 				return nil, fmt.Errorf("capture selected SriovNetworkNodeState %s/%s: %w", ref.Namespace, node.Name, err)
+			}
+			if state.GetUID() == "" {
+				return nil, fmt.Errorf("selected SriovNetworkNodeState %s/%s has no UID", ref.Namespace, node.Name)
 			}
 			key := ref.Namespace + "/" + node.Name
 			selected := reset.nodes[key]
@@ -83,17 +86,6 @@ func prepareOCPSriovClean(ctx context.Context, c client.Client, refs []cleanObje
 			interfaces, _, err := unstructured.NestedSlice(state.Object, "status", "interfaces")
 			if err != nil {
 				return nil, err
-			}
-			spec, _, err := unstructured.NestedMap(state.Object, "spec")
-			if err != nil {
-				return nil, err
-			}
-			selected.requiresProof = selected.requiresProof || ref.UID != "" || state.GetGeneration() != 1 || !cleanSriovEmpty(spec)
-			if selected.requiresProof && readLogs == nil {
-				return nil, fmt.Errorf("selected SriovNetworkNodeState %s requires current-generation daemon log evidence; REST config/pods-log access is unavailable", key)
-			}
-			if selected.requiresProof && (state.GetUID() == "" || state.GetCreationTimestamp().Time.IsZero() || state.GetGeneration() <= 0) {
-				return nil, fmt.Errorf("selected SriovNetworkNodeState %s has no stable UID/lifetime/generation for reset proof", key)
 			}
 			matchedPFs := 0
 			for _, value := range interfaces {
@@ -129,7 +121,7 @@ func prepareOCPSriovClean(ctx context.Context, c client.Client, refs []cleanObje
 				return nil, fmt.Errorf("no selected PF is observable on %s for %s; reset scope cannot be verified", node.Name, cleanRefString(ref))
 			}
 		}
-		if matchedNodes == 0 {
+		if matchedNodes == 0 && ref.UID != "" {
 			return nil, fmt.Errorf("no selected nodes are observable for %s; reset scope cannot be verified", cleanRefString(ref))
 		}
 	}
@@ -313,38 +305,7 @@ func (reset *ocpSriovClean) wait(ctx context.Context, c client.Client, interval 
 			}
 			if pending != "" {
 				reasons = append(reasons, key+": "+pending)
-				continue
 			}
-			spec, _, err := unstructured.NestedMap(state.Object, "spec")
-			if err != nil {
-				return "", err
-			}
-			node.requiresProof = node.requiresProof || state.GetGeneration() != 1 || !cleanSriovEmpty(spec)
-			if !node.requiresProof || node.provedGeneration == state.GetGeneration() {
-				continue
-			}
-			now := time.Now()
-			if node.attemptedGeneration != state.GetGeneration() || !now.Before(node.nextLogRead) {
-				node.attemptedGeneration = state.GetGeneration()
-				node.nextLogRead = now.Add(5 * time.Second)
-				latest, err := verifySriovDaemonGenerationWithProof(ctx, c, state, reset.readLogs, ocpSriovLogProvesGeneration)
-				if err != nil {
-					return "", fmt.Errorf("selected SriovNetworkNodeState %s generation %d reset proof unavailable: %w", key, state.GetGeneration(), err)
-				}
-				if latest != nil {
-					pending, err := ocpSriovResetPending(latest, node.pfs)
-					if err != nil {
-						return "", err
-					}
-					if pending != "" {
-						reasons = append(reasons, key+": "+pending)
-						continue
-					}
-					node.provedGeneration = latest.GetGeneration()
-					continue
-				}
-			}
-			reasons = append(reasons, fmt.Sprintf("%s: waiting for current generation %d successful RH daemon apply evidence (logs may be pending, rotated or truncated)", key, state.GetGeneration()))
 		}
 		return joinOCPCleanReasons(reasons), nil
 	})

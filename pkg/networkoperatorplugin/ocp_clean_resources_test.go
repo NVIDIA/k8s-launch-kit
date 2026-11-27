@@ -15,6 +15,7 @@ import (
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -129,14 +130,14 @@ var _ = ginkgo.Describe("OpenShift selected resource reconciliation", func() {
 		gomega.Expect(n).To(gomega.Equal(1))
 		gomega.Expect(err).To(gomega.MatchError(gomega.ContainSubstring("new identity")))
 	})
-	ginkgo.It("waits only for NADs owned by the exact selected network including retries", func() {
+	ginkgo.It("observes exact generated NAD identities without requiring owner metadata on retries", func() {
 		network := ocpResourceObject(cleanSriovGroup, "SriovNetwork", "sriov-system", "selected", map[string]interface{}{"networkNamespace": "application"})
 		ref := ocpResourceRef(network)
 		ref.UID = ""
 		selected := testCleanObject(cleanNADGVK, "application", "selected")
-		selected.SetAnnotations(map[string]string{"sriovnetwork.openshift.io/owner-ref": "SriovNetwork.sriovnetwork.openshift.io/sriov-system/selected"})
+
 		foreign := testCleanObject(cleanNADGVK, "application", "foreign")
-		foreign.SetAnnotations(map[string]string{"sriovnetwork.openshift.io/owner-ref": "SriovNetwork.sriovnetwork.openshift.io/sriov-system/foreign"})
+		foreign.SetAnnotations(map[string]string{"sriovnetwork.openshift.io/owner-ref": "SriovNetwork.sriovnetwork.openshift.io/sriov-system/selected"})
 		c := ocpResourceTestClient(selected, foreign)
 		pending, err := ocpNetworkAttachments(context.Background(), c, []cleanObjectRef{ref})
 		gomega.Expect(err).NotTo(gomega.HaveOccurred())
@@ -146,7 +147,7 @@ var _ = ginkgo.Describe("OpenShift selected resource reconciliation", func() {
 		gomega.Expect(err).NotTo(gomega.HaveOccurred())
 		gomega.Expect(pending).To(gomega.BeEmpty())
 	})
-	ginkgo.It("observes only selected policy workload ancestry across an interrupted retry", func() {
+	ginkgo.It("observes selected workload ancestry in memory as parent controllers disappear", func() {
 		root := ocpResourceObject("mellanox.com", "NicNodePolicy", "", "selected", map[string]interface{}{"ofedDriver": map[string]interface{}{"image": "driver"}})
 		foreignRoot := ocpResourceObject("mellanox.com", "NicNodePolicy", "", "foreign", map[string]interface{}{"ofedDriver": map[string]interface{}{"image": "driver"}})
 		controller := &appsv1.DaemonSet{TypeMeta: metav1.TypeMeta{APIVersion: "apps/v1", Kind: "DaemonSet"}, ObjectMeta: metav1.ObjectMeta{Namespace: "operator-system", Name: "selected-ds", UID: "selected-ds", OwnerReferences: []metav1.OwnerReference{ocpResourceOwner(root)}}}
@@ -156,25 +157,20 @@ var _ = ginkgo.Describe("OpenShift selected resource reconciliation", func() {
 		foreign.UID = "foreign-ds"
 		foreign.OwnerReferences = []metav1.OwnerReference{ocpResourceOwner(foreignRoot)}
 		c := ocpResourceTestClient(root, foreignRoot, controller, pod, foreign)
-		owned, err := prepareOCPWorkloadClean(context.Background(), c, "operator-system", []cleanObjectRef{ocpResourceRef(root)}, true)
+		owned, err := prepareOCPWorkloadClean(context.Background(), c, "operator-system", []cleanObjectRef{ocpResourceRef(root)})
 		gomega.Expect(err).NotTo(gomega.HaveOccurred())
 		pending, err := owned.observe(context.Background(), c)
 		gomega.Expect(err).NotTo(gomega.HaveOccurred())
 		gomega.Expect(pending).To(gomega.ConsistOf("DaemonSet selected-ds", "Pod selected-pod"))
 		gomega.Expect(c.Delete(context.Background(), root)).To(gomega.Succeed())
 		gomega.Expect(c.Delete(context.Background(), controller)).To(gomega.Succeed())
-		ref := ocpResourceRef(root)
-		ref.UID = ""
-		retry, err := prepareOCPWorkloadClean(context.Background(), c, "operator-system", []cleanObjectRef{ref}, true)
-		gomega.Expect(err).NotTo(gomega.HaveOccurred())
-		pending, err = retry.observe(context.Background(), c)
+		pending, err = owned.observe(context.Background(), c)
 		gomega.Expect(err).NotTo(gomega.HaveOccurred())
 		gomega.Expect(pending).To(gomega.Equal([]string{"Pod selected-pod"}))
 		gomega.Expect(c.Delete(context.Background(), pod)).To(gomega.Succeed())
-		pending, err = retry.observe(context.Background(), c)
+		pending, err = owned.observe(context.Background(), c)
 		gomega.Expect(err).NotTo(gomega.HaveOccurred())
 		gomega.Expect(pending).To(gomega.BeEmpty())
-		gomega.Expect(retry.removeCheckpoint(context.Background(), c)).To(gomega.Succeed())
 		gomega.Expect(c.Get(context.Background(), client.ObjectKeyFromObject(foreign), foreign)).To(gomega.Succeed())
 	})
 	ginkgo.It("does not require unrelated MOFED drivers to disappear", func() {
@@ -269,7 +265,7 @@ var _ = ginkgo.Describe("OpenShift selected hardware evidence", func() {
 		})
 		ctx, cancel := context.WithTimeout(context.Background(), time.Second)
 		defer cancel()
-		count, err := cleanOCPResourcesWithLogs(ctx, c, &config.LaunchKitConfig{}, []cleanObjectRef{ocpResourceRef(policy)}, CleanOptions{Namespace: "operator-system", PollInterval: time.Millisecond}, fakeSriovLogReader)
+		count, err := cleanOCPResources(ctx, c, &config.LaunchKitConfig{}, []cleanObjectRef{ocpResourceRef(policy)}, CleanOptions{Namespace: "operator-system", PollInterval: time.Millisecond})
 		gomega.Expect(err).NotTo(gomega.HaveOccurred())
 		gomega.Expect(count).To(gomega.Equal(1))
 		gomega.Expect(observations).To(gomega.BeNumerically(">=", 3))
@@ -318,6 +314,9 @@ var _ = ginkgo.Describe("OpenShift selected hardware evidence", func() {
 		gomega.Expect(base.Get(context.Background(), client.ObjectKeyFromObject(root), root)).To(gomega.Succeed())
 		gomega.Expect(base.Delete(context.Background(), peer)).To(gomega.Succeed())
 		setOCPCleanOwner(root, "root-owner")
+		annotations := root.GetAnnotations()
+		annotations[ocpCleanUIDAnnotation] = string(root.GetUID())
+		root.SetAnnotations(annotations)
 		network := ocpResourceObject(cleanSriovGroup, "SriovNetwork", config.DefaultSriovOperatorNamespace, "omitted-network", map[string]interface{}{"resourceName": "ours"})
 		setOCPCleanOwner(network, "root-owner")
 		c := ocpResourceTestClient(root, network)
@@ -326,144 +325,6 @@ var _ = ginkgo.Describe("OpenShift selected hardware evidence", func() {
 		setOCPCleanOwner(network, "other-root")
 		gomega.Expect(c.Update(context.Background(), network)).To(gomega.Succeed())
 		gomega.Expect(checkOCPCleanDependencies(context.Background(), c, &config.LaunchKitConfig{}, []cleanObjectRef{ocpResourceRef(root)})).To(gomega.Succeed())
-	})
-})
-
-var _ = ginkgo.Describe("OpenShift cleanup verification receipts", func() {
-	ginkgo.It("repeats full-profile cleanup after NCP teardown withdraws NicDevices", func() {
-		root := ocpResourceObject("mellanox.com", "NicClusterPolicy", "", "selected", map[string]interface{}{"nicConfigurationOperator": map[string]interface{}{"logLevel": "info"}})
-		template := ocpResourceObject(cleanNICGroup, "NicConfigurationTemplate", "operator-system", "selected-template", map[string]interface{}{"nodeSelector": map[string]interface{}{"group": "selected"}, "nicSelector": map[string]interface{}{"nicType": "101d", "pciAddresses": []interface{}{"0000:01:00.0"}}})
-		device := ocpResourceObject(cleanNICGroup, "NicDevice", "operator-system", "selected-nic", map[string]interface{}{"configuration": map[string]interface{}{"template": map[string]interface{}{"numVfs": int64(4)}}})
-		device.Object["status"] = map[string]interface{}{"node": "worker", "type": "101d", "ports": []interface{}{map[string]interface{}{"pci": "0000:01:00.0"}}}
-		node := &corev1.Node{ObjectMeta: metav1.ObjectMeta{Name: "worker", Labels: map[string]string{"group": "selected"}}}
-		base := ocpResourceTestClient(root, template, device, node)
-		c := interceptor.NewClient(base, interceptor.Funcs{Delete: func(ctx context.Context, c client.WithWatch, obj client.Object, opts ...client.DeleteOption) error {
-			if err := c.Delete(ctx, obj, opts...); err != nil {
-				return err
-			}
-			if obj.GetName() == template.GetName() {
-				current := device.DeepCopy()
-				if err := c.Get(ctx, client.ObjectKeyFromObject(current), current); err != nil {
-					return err
-				}
-				unstructured.RemoveNestedField(current.Object, "spec", "configuration")
-				current.Object["status"].(map[string]interface{})["conditions"] = []interface{}{map[string]interface{}{"type": "ConfigUpdateInProgress", "status": "False", "reason": "DeviceConfigSpecEmpty", "observedGeneration": int64(2)}}
-				return c.Update(ctx, current)
-			}
-			if obj.GetName() == root.GetName() {
-				return c.Delete(ctx, device)
-			}
-			return nil
-		}})
-		refs := []cleanObjectRef{ocpResourceRef(root), ocpResourceRef(template)}
-		for i := range refs {
-			setOCPCleanOwner(refs[i].Desired, "stable-root-owner")
-		}
-		cfg := &config.LaunchKitConfig{NetworkOperator: &config.NetworkOperatorConfig{Namespace: "operator-system"}}
-		opts := CleanOptions{Namespace: "operator-system", PollInterval: time.Millisecond}
-		n, err := cleanOCPResources(context.Background(), c, cfg, refs, opts)
-		gomega.Expect(err).NotTo(gomega.HaveOccurred())
-		gomega.Expect(n).To(gomega.Equal(2))
-		gomega.Expect(completeOCPCleanReceipt(context.Background(), base, "operator-system", "stable-root-owner")).To(gomega.Succeed())
-		for i := range refs {
-			refs[i].UID = ""
-		}
-		retry := interceptor.NewClient(base, interceptor.Funcs{List: func(ctx context.Context, c client.WithWatch, list client.ObjectList, opts ...client.ListOption) error {
-			if list.GetObjectKind().GroupVersionKind().Kind == "NicDeviceList" {
-				ginkgo.Fail("durable receipt must survive withdrawn NicDevice API")
-			}
-			return c.List(ctx, list, opts...)
-		}})
-		n, err = cleanOCPResources(context.Background(), retry, cfg, refs, opts)
-		gomega.Expect(err).NotTo(gomega.HaveOccurred())
-		gomega.Expect(n).To(gomega.BeZero())
-		receipt := &corev1.ConfigMap{}
-		gomega.Expect(base.Get(context.Background(), client.ObjectKey{Namespace: "operator-system", Name: ocpCleanReceiptName("stable-root-owner")}, receipt)).To(gomega.Succeed())
-		gomega.Expect(receipt.Data["state"]).To(gomega.Equal("resources-complete"))
-		gomega.Expect(completeOCPCleanReceipt(context.Background(), base, "operator-system", "stable-root-owner")).To(gomega.Succeed())
-		gomega.Expect(invalidateOCPCleanReceipt(context.Background(), base, "operator-system", "stable-root-owner")).To(gomega.Succeed())
-		gomega.Expect(base.Get(context.Background(), client.ObjectKeyFromObject(receipt), receipt)).To(gomega.WithTransform(apierrors.IsNotFound, gomega.BeTrue()))
-	})
-	ginkgo.It("does not claim full-profile verification for absent parents without a receipt", func() {
-		template := ocpResourceObject(cleanNICGroup, "NicConfigurationTemplate", "operator-system", "selected-template", map[string]interface{}{"nicSelector": map[string]interface{}{"nicType": "101d"}})
-		ref := ocpResourceRef(template)
-		ref.UID = ""
-		n, err := cleanOCPResources(context.Background(), ocpResourceTestClient(), &config.LaunchKitConfig{}, []cleanObjectRef{ref}, CleanOptions{Namespace: "operator-system", PollInterval: time.Millisecond})
-		gomega.Expect(n).To(gomega.BeZero())
-		gomega.Expect(err).To(gomega.MatchError(gomega.ContainSubstring("no cleanup verification receipt")))
-	})
-	ginkgo.It("binds receipts to the deployment incarnation and blocks deployment during incomplete cleanup", func() {
-		root := ocpResourceObject("mellanox.com", "NicNodePolicy", "", "selected", map[string]interface{}{"rdmaSharedDevicePlugin": map[string]interface{}{"image": "plugin"}})
-		ref := ocpResourceRef(root)
-		setOCPCleanOwner(ref.Desired, "receipt-owner")
-		c := ocpResourceTestClient(root)
-		receipt, verified, err := loadOCPCleanReceipt(context.Background(), c, "operator-system", []cleanObjectRef{ref})
-		gomega.Expect(err).NotTo(gomega.HaveOccurred())
-		gomega.Expect(verified).To(gomega.BeFalse())
-		gomega.Expect(receipt.save(context.Background(), c, "hardware-verified")).To(gomega.Succeed())
-		gomega.Expect(invalidateOCPCleanReceipt(context.Background(), c, "operator-system", "receipt-owner")).To(gomega.MatchError(gomega.ContainSubstring("interrupted cleanup")))
-		replacement := ref
-		replacement.UID = "replacement"
-		_, _, err = loadOCPCleanReceipt(context.Background(), c, "operator-system", []cleanObjectRef{replacement})
-		gomega.Expect(err).To(gomega.MatchError(gomega.ContainSubstring("earlier deployment incarnation")))
-		gomega.Expect(receipt.save(context.Background(), c, "complete")).To(gomega.Succeed())
-		gomega.Expect(invalidateOCPCleanReceipt(context.Background(), c, "operator-system", "receipt-owner")).To(gomega.Succeed())
-	})
-})
-
-var _ = ginkgo.Describe("OpenShift selected SRIOV generation proof", func() {
-	ginkgo.It("supports RH 4.18 serialized-handler and RH 4.20 reconcileID logs", func() {
-		state := ocpResourceObject(cleanSriovGroup, "SriovNetworkNodeState", "sriov-system", "worker", map[string]interface{}{})
-		legacy := []byte("1970-01-01T00:03:20Z 1970-01-01T00:03:20Z\tINFO\tnodeStateSyncHandler(): new generation\t{\"generation\":2}\n1970-01-01T00:03:21Z 1970-01-01T00:03:21Z\tINFO\tnodeStateSyncHandler(): sync succeeded\n")
-		gomega.Expect(ocpSriovLogProvesGeneration(legacy, state, time.Unix(101, 0))).To(gomega.BeTrue())
-		gomega.Expect(ocpSriovLogProvesGeneration(sriovGenerationLog("worker", "sriov-system", "reconcile", 2, true), state, time.Unix(101, 0))).To(gomega.BeTrue())
-		gomega.Expect(ocpSriovLogProvesGeneration([]byte("1970-01-01T00:03:20Z {\"msg\":\"nodeStateSyncHandler(): new generation\",\"generation\":2}\n1970-01-01T00:03:21Z {\"msg\":\"nodeStateSyncHandler(): sync succeeded\"}\n"), state, time.Unix(101, 0))).To(gomega.BeTrue())
-		invalid := []string{
-			"1970-01-01T00:03:20Z INFO nodeStateSyncHandler(): new generation {\"generation\":1}\n1970-01-01T00:03:21Z INFO nodeStateSyncHandler(): sync succeeded\n",
-			"1970-01-01T00:03:21Z INFO nodeStateSyncHandler(): sync succeeded\n",
-			"1970-01-01T00:03:20Z INFO nodeStateSyncHandler(): new generation {\"generation\":2}\n1970-01-01T00:03:21Z INFO Successfully synced\n",
-			"1970-01-01T00:03:20Z INFO nodeStateSyncHandler(): new generation {\"generation\":2}\n1970-01-01T00:03:21Z INFO nodeStateSyncHandler(): new generation {\"generation\":3}\n1970-01-01T00:03:22Z INFO nodeStateSyncHandler(): sync succeeded\n",
-		}
-		for _, logs := range invalid {
-			gomega.Expect(ocpSriovLogProvesGeneration([]byte(logs), state, time.Unix(101, 0))).To(gomega.BeFalse())
-		}
-		gomega.Expect(ocpSriovLogProvesGeneration(legacy, state, time.Unix(300, 0))).To(gomega.BeFalse())
-	})
-	ginkgo.It("does not mistake an earlier empty status for applying the current empty generation", func() {
-		state := ocpResourceObject(cleanSriovGroup, "SriovNetworkNodeState", "sriov-system", "worker", map[string]interface{}{})
-		state.Object["status"] = map[string]interface{}{"syncStatus": "Succeeded", "interfaces": []interface{}{map[string]interface{}{"pciAddress": "0000:01:00.0", "numVfs": int64(0)}}}
-		c := ocpResourceTestClient(state, sriovDaemonPod("worker", "sriov-system"))
-		reset := &ocpSriovClean{nodes: map[string]*ocpSriovNodeClean{"sriov-system/worker": {ref: ocpResourceRef(state), pfs: map[string]bool{"0000:01:00.0": true}, requiresProof: true}}, readLogs: func(context.Context, string, string, string, metav1.Time) ([]byte, error) {
-			return sriovGenerationLog("worker", "sriov-system", "old-empty", 1, true), nil
-		}}
-		ctx, cancel := context.WithTimeout(context.Background(), 20*time.Millisecond)
-		defer cancel()
-		err := reset.wait(ctx, c, time.Millisecond)
-		gomega.Expect(errors.Is(err, context.DeadlineExceeded)).To(gomega.BeTrue())
-		gomega.Expect(err).To(gomega.MatchError(gomega.ContainSubstring("current generation 2")))
-	})
-	ginkgo.It("rejects known competing selected-PF claims before deleting intent", func() {
-		policy := ocpResourceObject(cleanSriovGroup, "SriovNetworkNodePolicy", "sriov-system", "selected", map[string]interface{}{"nicSelector": map[string]interface{}{"rootDevices": []interface{}{"0000:01:00.0"}}})
-		competing := policy.DeepCopy()
-		competing.SetName("foreign-policy")
-		competing.SetUID("foreign-policy")
-		node := &corev1.Node{ObjectMeta: metav1.ObjectMeta{Name: "worker"}}
-		state := ocpResourceObject(cleanSriovGroup, "SriovNetworkNodeState", "sriov-system", "worker", map[string]interface{}{})
-		state.Object["status"] = map[string]interface{}{"syncStatus": "Succeeded", "interfaces": []interface{}{map[string]interface{}{"pciAddress": "0000:01:00.0", "numVfs": int64(0)}}}
-		c := ocpResourceTestClient(policy, competing, node, state)
-		_, err := prepareOCPSriovClean(context.Background(), c, []cleanObjectRef{ocpResourceRef(policy)}, fakeSriovLogReader)
-		gomega.Expect(err).To(gomega.MatchError(gomega.ContainSubstring("unselected policy sriov-system/foreign-policy")))
-		gomega.Expect(c.Get(context.Background(), client.ObjectKeyFromObject(policy), policy)).To(gomega.Succeed())
-	})
-	ginkgo.It("requires a daemon log reader before deleting selected non-pristine policy intent", func() {
-		policy := ocpResourceObject(cleanSriovGroup, "SriovNetworkNodePolicy", "sriov-system", "selected", map[string]interface{}{"nicSelector": map[string]interface{}{"rootDevices": []interface{}{"0000:01:00.0"}}})
-		state := ocpResourceObject(cleanSriovGroup, "SriovNetworkNodeState", "sriov-system", "worker", map[string]interface{}{})
-		state.Object["status"] = map[string]interface{}{"syncStatus": "Succeeded", "interfaces": []interface{}{map[string]interface{}{"pciAddress": "0000:01:00.0", "numVfs": int64(0)}}}
-		c := ocpResourceTestClient(policy, state, &corev1.Node{ObjectMeta: metav1.ObjectMeta{Name: "worker"}})
-		n, err := cleanOCPResources(context.Background(), c, &config.LaunchKitConfig{}, []cleanObjectRef{ocpResourceRef(policy)}, CleanOptions{Namespace: "operator-system", PollInterval: time.Millisecond})
-		gomega.Expect(n).To(gomega.BeZero())
-		gomega.Expect(err).To(gomega.MatchError(gomega.ContainSubstring("log evidence")))
-		gomega.Expect(c.Get(context.Background(), client.ObjectKeyFromObject(policy), policy)).To(gomega.Succeed())
 	})
 })
 
@@ -479,7 +340,7 @@ var _ = ginkgo.Describe("OpenShift selected driver shutdown", func() {
 		c := interceptor.NewClient(base, interceptor.Funcs{Watch: func(context.Context, client.WithWatch, client.ObjectList, ...client.ListOption) (watch.Interface, error) {
 			return stream, nil
 		}})
-		scope := &mofedCleanupScope{checkpointName: "scoped-driver-proof", includeDaemonSet: func(*appsv1.DaemonSet) bool { return false }, includePod: func(candidate *corev1.Pod) (bool, error) { return candidate.UID == pod.UID, nil }, hasIntent: func(context.Context) (bool, error) { return true, nil }}
+		scope := &mofedCleanupScope{includeDaemonSet: func(*appsv1.DaemonSet) bool { return false }, includePod: func(candidate *corev1.Pod) (bool, error) { return candidate.UID == pod.UID, nil }, hasIntent: func(context.Context) (bool, error) { return true, nil }}
 		ctx, cancel := context.WithTimeout(context.Background(), time.Second)
 		defer cancel()
 		count, err := withScopedMOFEDShutdown(ctx, c, pod.Namespace, scope, func(ctx context.Context) (int, error) {
@@ -539,28 +400,6 @@ var _ = ginkgo.Describe("OpenShift selected finalizer ordering", func() {
 	})
 })
 
-var _ = ginkgo.Describe("OpenShift selected absent-target evidence", func() {
-	ginkgo.It("refuses first-time absent resources without manufacturing a receipt", func() {
-		root := ocpResourceObject("mellanox.com", "NicClusterPolicy", "", "selected", map[string]interface{}{"nvIpam": map[string]interface{}{"enableWebhook": false}})
-		ref := ocpResourceRef(root)
-		ref.UID = ""
-		c := ocpResourceTestClient()
-		n, err := cleanOCPResources(context.Background(), c, &config.LaunchKitConfig{}, []cleanObjectRef{ref}, CleanOptions{Namespace: "operator-system", PollInterval: time.Millisecond})
-		gomega.Expect(n).To(gomega.BeZero())
-		gomega.Expect(err).To(gomega.MatchError(gomega.ContainSubstring("--skip-wait")))
-		objects := &corev1.ConfigMapList{}
-		gomega.Expect(c.List(context.Background(), objects)).To(gomega.Succeed())
-		gomega.Expect(objects.Items).To(gomega.BeEmpty())
-		n, err = cleanOCPResources(context.Background(), c, &config.LaunchKitConfig{}, []cleanObjectRef{ref}, CleanOptions{Namespace: "operator-system", SkipWait: true, PollInterval: time.Millisecond})
-		gomega.Expect(err).NotTo(gomega.HaveOccurred())
-		gomega.Expect(n).To(gomega.BeZero())
-		receipt, verified, err := loadOCPCleanReceipt(context.Background(), c, "operator-system", []cleanObjectRef{ref})
-		gomega.Expect(err).NotTo(gomega.HaveOccurred())
-		gomega.Expect(verified).To(gomega.BeFalse())
-		gomega.Expect(receipt.object.Data["state"]).To(gomega.Equal("resources-unverified"))
-	})
-})
-
 var _ = ginkgo.Describe("OpenShift selected controller dependency protection", func() {
 	ginkgo.DescribeTable("retains foreign controller consumers in both wait modes", func(group, kind, component string) {
 		for _, skip := range []bool{false, true} {
@@ -580,67 +419,237 @@ var _ = ginkgo.Describe("OpenShift selected controller dependency protection", f
 	}, ginkgo.Entry("NV-IPAM CIDRPool", "nv-ipam.nvidia.com", "CIDRPool", "nvIpam"), ginkgo.Entry("NIC firmware source", cleanNICGroup, "NicFirmwareSource", "nicConfigurationOperator"))
 })
 
-var _ = ginkgo.Describe("OpenShift selected missing-root history", func() {
-	ginkgo.It("refuses a missing root even when its IPPool still survives", func() {
-		root := ocpResourceObject("mellanox.com", "NicClusterPolicy", "", "selected", map[string]interface{}{"nvIpam": map[string]interface{}{"enableWebhook": false}})
-		pool := ocpResourceObject("nv-ipam.nvidia.com", "IPPool", "operator-system", "surviving-pool", map[string]interface{}{"subnet": "192.0.2.0/24"})
-		rootRef := ocpResourceRef(root)
-		rootRef.UID = ""
-		base := ocpResourceTestClient(pool)
-		c := interceptor.NewClient(base, interceptor.Funcs{Delete: func(context.Context, client.WithWatch, client.Object, ...client.DeleteOption) error {
-			ginkgo.Fail("surviving pool does not qualify missing root ancestry")
-			return nil
-		}})
-		count, err := cleanOCPResources(context.Background(), c, &config.LaunchKitConfig{}, []cleanObjectRef{rootRef, ocpResourceRef(pool)}, CleanOptions{Namespace: "operator-system", PollInterval: time.Millisecond})
-		gomega.Expect(count).To(gomega.BeZero())
-		gomega.Expect(err).To(gomega.MatchError(gomega.ContainSubstring("prior verified root UID and workload ancestry")))
-		gomega.Expect(base.Get(context.Background(), client.ObjectKeyFromObject(pool), pool)).To(gomega.Succeed())
+var _ = ginkgo.Describe("OpenShift reverse deployment cleanup", func() {
+	ginkgo.It("waits for an unmarked asynchronous NAD before its pool in both modes", func() {
+		for _, skip := range []bool{false, true} {
+			cfg, root, pool, refs := ocpPoolConsumerFixture()
+			nodeRoot := ocpResourceObject("mellanox.com", "NicNodePolicy", "", "selected-node-root", map[string]interface{}{"rdmaSharedDevicePlugin": map[string]interface{}{"image": "plugin"}})
+			network := ocpResourceObject(cleanSriovGroup, "SriovNetwork", config.DefaultSriovOperatorNamespace, "selected-network", map[string]interface{}{"networkNamespace": "unrelated-application", "ipam": `{"type":"nv-ipam","poolName":"selected-pool"}`})
+			nad := ocpConsumerNAD(network.GetName(), `{"type":"sriov","ipam":{"type":"nv-ipam","poolName":"selected-pool"}}`)
+			base := ocpResourceTestClient(root, nodeRoot, pool, network, nad)
+			var deleted []string
+			observations := 0
+			c := interceptor.NewClient(base, interceptor.Funcs{
+				Get: func(ctx context.Context, c client.WithWatch, key client.ObjectKey, obj client.Object, opts ...client.GetOption) error {
+					if obj.GetObjectKind().GroupVersionKind() == cleanNADGVK && key.Name == network.GetName() && len(deleted) > 0 {
+						observations++
+						if observations == 3 {
+							if err := c.Delete(ctx, nad); err != nil {
+								return err
+							}
+						}
+					}
+					return c.Get(ctx, key, obj, opts...)
+				},
+				Delete: func(ctx context.Context, c client.WithWatch, obj client.Object, opts ...client.DeleteOption) error {
+					if obj.GetName() == pool.GetName() {
+						gomega.Expect(observations).To(gomega.BeNumerically(">=", 3))
+					}
+					deleted = append(deleted, obj.GetName())
+					return c.Delete(ctx, obj, opts...)
+				},
+			})
+			refs = []cleanObjectRef{refs[0], ocpResourceRef(nodeRoot), refs[1], ocpResourceRef(network)}
+			ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+			count, err := cleanOCPResources(ctx, c, cfg, refs, CleanOptions{Namespace: "operator-system", SkipWait: skip, PollInterval: time.Millisecond})
+			cancel()
+			gomega.Expect(err).NotTo(gomega.HaveOccurred())
+			gomega.Expect(count).To(gomega.Equal(4))
+			gomega.Expect(deleted).To(gomega.Equal([]string{network.GetName(), pool.GetName(), nodeRoot.GetName(), root.GetName()}))
+		}
 	})
-	ginkgo.DescribeTable("does not promote tentative or waived receipts into root teardown proof", func(state string) {
-		root := ocpResourceObject("mellanox.com", "NicClusterPolicy", "", "selected", map[string]interface{}{"nvIpam": map[string]interface{}{"enableWebhook": false}})
-		pool := ocpResourceObject("nv-ipam.nvidia.com", "IPPool", "operator-system", "surviving-pool", map[string]interface{}{"subnet": "192.0.2.0/24"})
-		refs := []cleanObjectRef{ocpResourceRef(root), ocpResourceRef(pool)}
-		base := ocpResourceTestClient(pool)
-		receipt, _, err := loadOCPCleanReceipt(context.Background(), base, "operator-system", refs)
-		gomega.Expect(err).NotTo(gomega.HaveOccurred())
-		receipt.ancestryCheckpoint = "unqualified-history"
-		receipt.ancestryUID = "unqualified-history"
-		gomega.Expect(receipt.save(context.Background(), base, state)).To(gomega.Succeed())
-		refs[0].UID = ""
-		c := interceptor.NewClient(base, interceptor.Funcs{Delete: func(context.Context, client.WithWatch, client.Object, ...client.DeleteOption) error {
-			ginkgo.Fail("waived/tentative history must not authorize deletion")
+
+	ginkgo.It("accepts a fully removed deployment without creating cleanup records", func() {
+		cfg, _, _, refs := ocpPoolConsumerFixture()
+		for i := range refs {
+			refs[i].UID = ""
+		}
+		base := ocpResourceTestClient()
+		c := interceptor.NewClient(base, interceptor.Funcs{Create: func(context.Context, client.WithWatch, client.Object, ...client.CreateOption) error {
+			ginkgo.Fail("already absent deployment must not create cleanup records")
 			return nil
 		}})
-		count, err := cleanOCPResources(context.Background(), c, &config.LaunchKitConfig{}, refs, CleanOptions{Namespace: "operator-system", PollInterval: time.Millisecond})
-		gomega.Expect(count).To(gomega.BeZero())
-		gomega.Expect(err).To(gomega.MatchError(gomega.ContainSubstring("prior verified root UID and workload ancestry")))
-	}, ginkgo.Entry("active cleanup", "cleanup-active"), ginkgo.Entry("waived resource stage", "resources-unverified"), ginkgo.Entry("completed waiver", "complete-unverified"))
-	ginkgo.It("retains completed proof if ancestry checkpoint deletion is interrupted", func() {
-		root := ocpResourceObject("mellanox.com", "NicClusterPolicy", "", "selected", map[string]interface{}{"nvIpam": map[string]interface{}{"enableWebhook": false}})
-		ref := ocpResourceRef(root)
-		setOCPCleanOwner(ref.Desired, "completion-order-owner")
-		base := ocpResourceTestClient(root)
-		failed := false
-		c := interceptor.NewClient(base, interceptor.Funcs{Delete: func(ctx context.Context, c client.WithWatch, obj client.Object, opts ...client.DeleteOption) error {
-			if _, ok := obj.(*corev1.ConfigMap); ok && !failed {
-				failed = true
-				return errors.New("checkpoint deletion interrupted")
-			}
-			return c.Delete(ctx, obj, opts...)
-		}})
-		opts := CleanOptions{Namespace: "operator-system", PollInterval: time.Millisecond}
-		count, err := cleanOCPResources(context.Background(), c, &config.LaunchKitConfig{}, []cleanObjectRef{ref}, opts)
-		gomega.Expect(count).To(gomega.Equal(1))
-		gomega.Expect(err).To(gomega.MatchError(gomega.ContainSubstring("checkpoint deletion interrupted")))
-		receipt := &corev1.ConfigMap{}
-		gomega.Expect(base.Get(context.Background(), client.ObjectKey{Namespace: "operator-system", Name: ocpCleanReceiptName("completion-order-owner")}, receipt)).To(gomega.Succeed())
-		gomega.Expect(receipt.Data["state"]).To(gomega.Equal("resources-complete"))
-		witness := receipt.Data["workload-checkpoint-uid"]
-		ref.UID = ""
-		count, err = cleanOCPResources(context.Background(), base, &config.LaunchKitConfig{}, []cleanObjectRef{ref}, opts)
+		count, err := cleanOCPResources(context.Background(), c, cfg, refs, CleanOptions{Namespace: "operator-system", PollInterval: time.Millisecond})
 		gomega.Expect(err).NotTo(gomega.HaveOccurred())
 		gomega.Expect(count).To(gomega.BeZero())
-		gomega.Expect(base.Get(context.Background(), client.ObjectKeyFromObject(receipt), receipt)).To(gomega.Succeed())
-		gomega.Expect(receipt.Data["workload-checkpoint-uid"]).To(gomega.Equal(witness))
+	})
+
+	ginkgo.It("does not inspect consumers of an already absent pool", func() {
+		cfg, _, _, refs := ocpPoolConsumerFixture()
+		refs = refs[1:]
+		refs[0].UID = ""
+		foreign := ocpConsumerNAD("unrelated-network", `{"type":"sriov","ipam":{"type":"nv-ipam","poolName":"selected-pool"}}`)
+		c := ocpResourceTestClient(foreign)
+		count, err := cleanOCPResources(context.Background(), c, cfg, refs, CleanOptions{Namespace: "operator-system", PollInterval: time.Millisecond})
+		gomega.Expect(err).NotTo(gomega.HaveOccurred())
+		gomega.Expect(count).To(gomega.BeZero())
+	})
+})
+
+var _ = ginkgo.Describe("OpenShift shared reset barriers", func() {
+	ginkgo.It("deletes every selected SR-IOV policy before waiting on their shared PF", func() {
+		policy := ocpResourceObject(cleanSriovGroup, "SriovNetworkNodePolicy", "sriov-system", "first-policy", map[string]interface{}{"nicSelector": map[string]interface{}{"rootDevices": []interface{}{"0000:01:00.0"}}})
+		second := policy.DeepCopy()
+		second.SetName("second-policy")
+		second.SetUID("second-policy-uid")
+		state := ocpResourceObject(cleanSriovGroup, "SriovNetworkNodeState", "sriov-system", "worker", map[string]interface{}{"interfaces": []interface{}{map[string]interface{}{"pciAddress": "0000:01:00.0", "numVfs": int64(4)}}})
+		state.Object["status"] = map[string]interface{}{"syncStatus": "Succeeded", "interfaces": []interface{}{map[string]interface{}{"pciAddress": "0000:01:00.0", "numVfs": int64(4)}}}
+		base := ocpResourceTestClient(policy, second, state, &corev1.Node{ObjectMeta: metav1.ObjectMeta{Name: "worker"}})
+		var deleted []string
+		c := interceptor.NewClient(base, interceptor.Funcs{Delete: func(ctx context.Context, c client.WithWatch, obj client.Object, opts ...client.DeleteOption) error {
+			if err := c.Delete(ctx, obj, opts...); err != nil {
+				return err
+			}
+			deleted = append(deleted, obj.GetName())
+			if len(deleted) == 2 {
+				current := state.DeepCopy()
+				if err := c.Get(ctx, client.ObjectKeyFromObject(current), current); err != nil {
+					return err
+				}
+				current.Object["spec"] = map[string]interface{}{}
+				current.Object["status"] = map[string]interface{}{"syncStatus": "Succeeded", "interfaces": []interface{}{map[string]interface{}{"pciAddress": "0000:01:00.0", "numVfs": int64(0)}}}
+				return c.Update(ctx, current)
+			}
+			return nil
+		}})
+		ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+		defer cancel()
+		count, err := cleanOCPResources(ctx, c, &config.LaunchKitConfig{}, []cleanObjectRef{ocpResourceRef(policy), ocpResourceRef(second)}, CleanOptions{Namespace: "operator-system", PollInterval: time.Millisecond})
+		gomega.Expect(err).NotTo(gomega.HaveOccurred())
+		gomega.Expect(count).To(gomega.Equal(2))
+		gomega.Expect(deleted).To(gomega.Equal([]string{second.GetName(), policy.GetName()}))
+	})
+
+	ginkgo.It("signals node and cluster roots before waiting on cross-root finalizers", func() {
+		root := ocpResourceObject("mellanox.com", "NicClusterPolicy", "", "root", map[string]interface{}{"secondaryNetwork": map[string]interface{}{"enable": true}})
+		node := ocpResourceObject("mellanox.com", "NicNodePolicy", "", "node", map[string]interface{}{"rdmaSharedDevicePlugin": map[string]interface{}{"image": "plugin"}})
+		root.SetFinalizers([]string{"test/cross-policy"})
+		node.SetFinalizers([]string{"test/cross-policy"})
+		base := ocpResourceTestClient(root, node)
+		var deleted []string
+		c := interceptor.NewClient(base, interceptor.Funcs{
+			Delete: func(ctx context.Context, c client.WithWatch, obj client.Object, opts ...client.DeleteOption) error {
+				deleted = append(deleted, obj.GetName())
+				return c.Delete(ctx, obj, opts...)
+			},
+			Get: func(ctx context.Context, c client.WithWatch, key client.ObjectKey, obj client.Object, opts ...client.GetOption) error {
+				err := c.Get(ctx, key, obj, opts...)
+				if err == nil && obj.GetDeletionTimestamp() != nil && len(deleted) == 2 {
+					obj.SetFinalizers(nil)
+					if err := c.Update(ctx, obj); err != nil {
+						return err
+					}
+					return c.Get(ctx, key, obj, opts...)
+				}
+				return err
+			},
+		})
+		ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+		defer cancel()
+		count, err := cleanOCPResources(ctx, c, &config.LaunchKitConfig{}, []cleanObjectRef{ocpResourceRef(root), ocpResourceRef(node)}, CleanOptions{Namespace: "operator-system", SkipWait: true, PollInterval: time.Millisecond})
+		gomega.Expect(err).NotTo(gomega.HaveOccurred())
+		gomega.Expect(count).To(gomega.Equal(2))
+		gomega.Expect(deleted).To(gomega.Equal([]string{node.GetName(), root.GetName()}))
+	})
+})
+
+var _ = ginkgo.Describe("OpenShift cleanup live retry state", func() {
+	ginkgo.DescribeTable("allows missing SR-IOV observation state only after the selected policy is absent", func(apiMissing bool) {
+		for _, policyPresent := range []bool{false, true} {
+			policy := ocpResourceObject(cleanSriovGroup, "SriovNetworkNodePolicy", "sriov-system", "selected", map[string]interface{}{"nicSelector": map[string]interface{}{"rootDevices": []interface{}{"0000:01:00.0"}}})
+			ref := ocpResourceRef(policy)
+			objects := []client.Object{&corev1.Node{ObjectMeta: metav1.ObjectMeta{Name: "worker"}}}
+			if policyPresent {
+				objects = append(objects, policy)
+			} else {
+				ref.UID = ""
+			}
+			c := interceptor.NewClient(ocpResourceTestClient(objects...), interceptor.Funcs{Get: func(ctx context.Context, c client.WithWatch, key client.ObjectKey, obj client.Object, opts ...client.GetOption) error {
+				if apiMissing && obj.GetObjectKind().GroupVersionKind().Kind == "SriovNetworkNodeState" {
+					return &meta.NoKindMatchError{GroupKind: schema.GroupKind{Group: cleanSriovGroup, Kind: "SriovNetworkNodeState"}, SearchedVersions: []string{"v1"}}
+				}
+				return c.Get(ctx, key, obj, opts...)
+			}})
+			count, err := cleanOCPResources(context.Background(), c, &config.LaunchKitConfig{}, []cleanObjectRef{ref}, CleanOptions{Namespace: "operator-system", PollInterval: time.Millisecond})
+			gomega.Expect(count).To(gomega.BeZero())
+			if policyPresent {
+				gomega.Expect(err).To(gomega.MatchError(gomega.ContainSubstring("capture selected SriovNetworkNodeState")))
+				gomega.Expect(c.Get(context.Background(), client.ObjectKeyFromObject(policy), policy)).To(gomega.Succeed())
+			} else {
+				gomega.Expect(err).NotTo(gomega.HaveOccurred())
+			}
+		}
+	}, ginkgo.Entry("state removed", false), ginkgo.Entry("API uninstalled", true))
+
+	ginkgo.It("still waits for observable nonzero VFs after the selected policy is absent", func() {
+		policy := ocpResourceObject(cleanSriovGroup, "SriovNetworkNodePolicy", "sriov-system", "selected", map[string]interface{}{"nicSelector": map[string]interface{}{"rootDevices": []interface{}{"0000:01:00.0"}}})
+		ref := ocpResourceRef(policy)
+		ref.UID = ""
+		state := ocpResourceObject(cleanSriovGroup, "SriovNetworkNodeState", "sriov-system", "worker", map[string]interface{}{})
+		state.Object["status"] = map[string]interface{}{"syncStatus": "Succeeded", "interfaces": []interface{}{map[string]interface{}{"pciAddress": "0000:01:00.0", "numVfs": int64(4)}}}
+		c := ocpResourceTestClient(state, &corev1.Node{ObjectMeta: metav1.ObjectMeta{Name: "worker"}})
+		ctx, cancel := context.WithTimeout(context.Background(), 20*time.Millisecond)
+		defer cancel()
+		count, err := cleanOCPResources(ctx, c, &config.LaunchKitConfig{}, []cleanObjectRef{ref}, CleanOptions{Namespace: "operator-system", PollInterval: time.Millisecond})
+		gomega.Expect(count).To(gomega.BeZero())
+		gomega.Expect(errors.Is(err, context.DeadlineExceeded)).To(gomega.BeTrue())
+		gomega.Expect(err).To(gomega.MatchError(gomega.ContainSubstring("still reports VFs")))
+	})
+
+	ginkgo.It("allows an absent NIC template after its observation API is uninstalled", func() {
+		template := ocpResourceObject(cleanNICGroup, "NicConfigurationTemplate", "operator-system", "selected", map[string]interface{}{"nicSelector": map[string]interface{}{"nicType": "ConnectX"}})
+		ref := ocpResourceRef(template)
+		ref.UID = ""
+		c := interceptor.NewClient(ocpResourceTestClient(), interceptor.Funcs{List: func(ctx context.Context, c client.WithWatch, list client.ObjectList, opts ...client.ListOption) error {
+			if list.GetObjectKind().GroupVersionKind().Kind == "NicDeviceList" {
+				return &meta.NoKindMatchError{GroupKind: schema.GroupKind{Group: cleanNICGroup, Kind: "NicDevice"}, SearchedVersions: []string{"v1alpha1"}}
+			}
+			return c.List(ctx, list, opts...)
+		}})
+		count, err := cleanOCPResources(context.Background(), c, &config.LaunchKitConfig{}, []cleanObjectRef{ref}, CleanOptions{Namespace: "operator-system", PollInterval: time.Millisecond})
+		gomega.Expect(count).To(gomega.BeZero())
+		gomega.Expect(err).NotTo(gomega.HaveOccurred())
+	})
+})
+
+var _ = ginkgo.Describe("OpenShift live root dependency boundary", func() {
+	ginkgo.It("cleans surviving targets when their retained root is absent and an independent node policy exists", func() {
+		cfg, _, pool, refs := ocpPoolConsumerFixture()
+		refs[0].UID = ""
+		independent := ocpResourceObject("mellanox.com", "NicNodePolicy", "", "independent", map[string]interface{}{"rdmaSharedDevicePlugin": map[string]interface{}{"image": "plugin"}})
+		c := ocpResourceTestClient(pool, independent)
+		count, err := cleanOCPResources(context.Background(), c, cfg, refs, CleanOptions{Namespace: "operator-system", PollInterval: time.Millisecond})
+		gomega.Expect(err).NotTo(gomega.HaveOccurred())
+		gomega.Expect(count).To(gomega.Equal(1))
+		gomega.Expect(c.Get(context.Background(), client.ObjectKeyFromObject(independent), independent)).To(gomega.Succeed())
+	})
+
+	ginkgo.It("does not protect former dependencies when a previously observed root has since disappeared", func() {
+		cfg, _, _, refs := ocpPoolConsumerFixture()
+		independent := ocpResourceObject("mellanox.com", "NicNodePolicy", "", "independent", map[string]interface{}{"rdmaSharedDevicePlugin": map[string]interface{}{"image": "plugin"}})
+		c := ocpResourceTestClient(independent)
+		gomega.Expect(checkOCPCleanDependencies(context.Background(), c, cfg, refs)).To(gomega.Succeed())
+	})
+
+	ginkgo.It("retains a live shared root when an omitted dependent appears during earlier cleanup", func() {
+		for _, skip := range []bool{false, true} {
+			cfg, root, _, refs := ocpPoolConsumerFixture()
+			network := ocpResourceObject(cleanSriovGroup, "SriovNetwork", config.DefaultSriovOperatorNamespace, "selected-network", map[string]interface{}{"networkNamespace": "application"})
+			independent := ocpResourceObject("mellanox.com", "NicNodePolicy", "", "new-dependent", map[string]interface{}{"rdmaSharedDevicePlugin": map[string]interface{}{"image": "plugin"}})
+			independent.SetResourceVersion("")
+			base := ocpResourceTestClient(root, network)
+			c := interceptor.NewClient(base, interceptor.Funcs{Delete: func(ctx context.Context, c client.WithWatch, obj client.Object, opts ...client.DeleteOption) error {
+				gomega.Expect(obj.GetName()).To(gomega.Equal(network.GetName()))
+				if err := c.Delete(ctx, obj, opts...); err != nil {
+					return err
+				}
+				return c.Create(ctx, independent)
+			}})
+			refs = []cleanObjectRef{refs[0], ocpResourceRef(network)}
+			count, err := cleanOCPResources(context.Background(), c, cfg, refs, CleanOptions{Namespace: "operator-system", SkipWait: skip, PollInterval: time.Millisecond})
+			gomega.Expect(count).To(gomega.Equal(1))
+			gomega.Expect(err).To(gomega.MatchError(gomega.ContainSubstring("omitted NicNodePolicy /new-dependent")))
+			gomega.Expect(c.Get(context.Background(), client.ObjectKeyFromObject(root), root)).To(gomega.Succeed())
+		}
 	})
 })
