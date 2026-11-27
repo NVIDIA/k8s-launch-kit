@@ -282,8 +282,20 @@ type LaunchKitConfig struct {
 	Profile                    *Profile                     `yaml:"profile,omitempty"`
 	ClusterConfig              []ClusterConfig              `yaml:"clusterConfig,omitempty"`
 	DiscoveredSecondaryNetwork *SecondaryNetworkObservation `yaml:"discoveredSecondaryNetwork,omitempty"`
+	DiscoveredOCPOperators     []DiscoveredOCPOperator      `yaml:"discoveredOCPOperators,omitempty"`
 	DiscoveredDOCAHost         []DOCAHostObservation        `yaml:"discoveredDocaHost,omitempty"`
 	DiscoveredDOCAHostScope    *DOCAHostScope               `yaml:"discoveredDocaHostScope,omitempty"`
+}
+
+// DiscoveredOCPOperator records one inspected installation independently of
+// operator-management intent. Issue is empty when its CSV and API were ready;
+// Version is the observed CSV version, checked against later release choices.
+type DiscoveredOCPOperator struct {
+	Package   string `yaml:"package"`
+	Namespace string `yaml:"namespace"`
+	CSV       string `yaml:"csv,omitempty"`
+	Version   string `yaml:"version,omitempty"`
+	Issue     string `yaml:"issue,omitempty"`
 }
 
 type NetworkOperatorConfig struct {
@@ -510,6 +522,8 @@ const DefaultOCPInstallPlanApproval = "Automatic"
 // OCPOperatorInstallConfig is the opt-in OLM install block. Manage=false (or a
 // nil parent) keeps generate's output byte-for-byte identical to today.
 type OCPOperatorInstallConfig struct {
+	// DiscoveryError defers an optional identity inspection failure until managed generation.
+	DiscoveryError string                    `yaml:"discoveryError,omitempty"`
 	Manage         bool                      `yaml:"manage"`
 	Operators      []OCPOperatorSubscription `yaml:"operators,omitempty"`
 	OperatorGroups []OCPOperatorGroup        `yaml:"operatorGroups,omitempty"`

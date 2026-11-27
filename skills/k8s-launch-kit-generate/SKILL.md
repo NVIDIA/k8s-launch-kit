@@ -391,8 +391,22 @@ and makes no cluster changes. OpenShift deploy merges this artifact into
 `openshift-multus/cni-sysctl-allowlist` before applying networks; external manifest
 application must preserve existing site entries when merging the patch.
 
-See `docs/user/openshift.md` for the required external operators and full
-generate-to-acceptance procedure.
+Generation checks saved `discoveredOCPOperators` observations without querying
+the cluster. Issues for required operators block generation unless
+`--manage-operators` or saved `ocpOperatorInstall.manage: true` enables their OLM
+install artifacts.
+
+```bash
+l8k generate --flavor ocp --manage-operators \
+  --user-config ./cluster-config.yaml \
+  --save-deployment-files ./ocp-deployment
+```
+
+After external installation or repair, rerun discovery to refresh the snapshot.
+Older or manual configurations without the observation remain compatible with
+offline generation. Apply operator-install artifacts separately and wait for
+readiness. `deploy` always checks live prerequisites. See `docs/user/openshift.md`
+for the full generate-to-acceptance procedure.
 
 ## Custom Workloads And Validation
 

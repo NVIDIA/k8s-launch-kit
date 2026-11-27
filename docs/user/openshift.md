@@ -5,11 +5,11 @@ SPDX-License-Identifier: Apache-2.0
 
 # OpenShift host deployments
 
-This procedure prepares **SR-IOV Ethernet RDMA** on an existing OpenShift cluster with externally installed operators. Other standard OpenShift profiles are preview workflows: confirm runtime support for the selected hardware, operator release and profile before use. Spectrum-X has no OpenShift variant. The example uses Network Operator release `26.7`; choose an operator release compatible with your OpenShift version and hardware.
+This procedure prepares **SR-IOV Ethernet RDMA** on an existing OpenShift cluster. Operators can be installed externally or through generated OLM install artifacts. Other standard OpenShift profiles are preview workflows: confirm runtime support for the selected hardware, operator release and profile before use. Spectrum-X has no OpenShift variant. The example uses Network Operator release `26.7`; choose an operator release compatible with your OpenShift version and hardware.
 
 ## Before you start
 
-Install the certified [NVIDIA Network Operator for OpenShift](https://docs.nvidia.com/networking/display/kubernetes2670/openshift/deployment-guide-openshift.html), the [Red Hat SR-IOV Network Operator](https://docs.redhat.com/en/documentation/openshift_container_platform/4.22/html/networking_operators/sr-iov-operator), [Node Feature Discovery](https://docs.redhat.com/en/documentation/openshift_container_platform/4.22/pdf/hardware_accelerators/index), and [NVIDIA Maintenance Operator](https://github.com/Mellanox/maintenance-operator#deployment) through their own installation workflows. Confirm release compatibility with the operator owners. Launch Kit configures those installations; it does not install their Helm charts. Check the successful CSVs, required APIs, and the NVIDIA Network Operator OLM Subscription before continuing. The Subscription may have any name if its `spec.name` selects the NVIDIA package. Launch Kit persists maintenance settings through it, and configuration changes can roll controllers.
+Before deployment, install the certified [NVIDIA Network Operator for OpenShift](https://docs.nvidia.com/networking/display/kubernetes2670/openshift/deployment-guide-openshift.html), the [Red Hat SR-IOV Network Operator](https://docs.redhat.com/en/documentation/openshift_container_platform/4.22/html/networking_operators/sr-iov-operator), [Node Feature Discovery](https://docs.redhat.com/en/documentation/openshift_container_platform/4.22/pdf/hardware_accelerators/index), and [NVIDIA Maintenance Operator](https://github.com/Mellanox/maintenance-operator#deployment) through their own installation workflows or use the [generated OLM install artifacts](#generate-operator-install-artifacts-optional). SR-IOV profiles require the SR-IOV operator. All OpenShift profiles require the other three. Confirm release compatibility with the operator owners. Launch Kit configures those installations; it does not install their Helm charts. Before deployment, check the successful CSVs, required APIs, and the NVIDIA Network Operator OLM Subscription. The Subscription may have any name if its `spec.name` selects the NVIDIA package. Launch Kit persists maintenance settings through it, and configuration changes can roll controllers.
 
 ```bash
 oc config current-context
@@ -20,7 +20,7 @@ oc api-resources | grep -E 'NicClusterPolicy|SriovNetworkNodePolicy|NodeFeatureD
 l8k version
 ```
 
-Confirm permission to run privileged discovery, create the generated resources, and later create temporary validation namespaces and SCCs. Obtain approved worker/PF scope, switch settings, unused addressing, VF capacity, MTU, and maintenance limits from the site owners. See [deployment planning](profiles.md#check-prerequisites-and-site-inputs). Resolve failed CSVs, absent APIs, and admission restrictions with the operator owners first.
+Confirm permission to run privileged discovery, create the generated resources, and later create temporary validation namespaces and SCCs. Obtain approved worker/PF scope, switch settings, unused addressing, VF capacity, MTU, and maintenance limits from the site owners. See [deployment planning](profiles.md#check-prerequisites-and-site-inputs). Resolve failed CSVs, absent APIs, and admission restrictions with the operator owners before deployment. Discovery can run before these operators are installed.
 
 For `profile.ignoreARP: true`, Kubernetes and OpenShift emit the same tuning
 parameters: `arp_ignore=1`, `arp_announce=2`, and `rp_filter=0` under both
@@ -59,19 +59,34 @@ pod attachment; verify those during workload validation.
 
 ### Generate operator-install artifacts (optional)
 
-By default Launch Kit expects the operators above to be installed out of band.
-Pass `--manage-operators` to `discover` or `generate` to also emit their OLM
-install artifacts — one `Namespace`, one `OperatorGroup` per unique namespace,
+By default Launch Kit expects the required operators to be installed out of band.
+Discovery works before installation and saves `discoveredOCPOperators` with each
+operator's namespace, observed CSV name and version, and any prerequisite issue.
+Missing or not-ready operators produce warnings. Permission, transport, and
+ambiguous identity errors during readiness inspection stop discovery.
+
+Generation stops on recorded unmet prerequisites for required operators unless
+`--manage-operators` or `ocpOperatorInstall.manage: true` enables OLM install
+artifacts. After external installation or repair, rerun discovery to refresh the
+snapshot. Older or manual configurations without observations still support
+offline generation. Deployment checks live readiness independently.
+
+Discovery also refreshes existing Subscription and OperatorGroup identities and
+cleanup retention in `ocpOperatorInstall`. An install-planning problem, such as a
+selector-based OperatorGroup, is recorded without blocking unmanaged discovery.
+Resolve it and rerun discovery before generating operator-install artifacts.
+
+Pass `--manage-operators` to `discover` or `generate` to enable OLM
+install-artifact generation — one `Namespace`, one `OperatorGroup` per unique namespace,
 and one `Subscription` per operator — into the bundle as
 `00-operator-namespaces.yaml`, `00-operatorgroups.yaml`, and
-`00-subscriptions.yaml`. Every supported OpenShift profile emits them; default
-output (without the flag) is unchanged.
+`00-subscriptions.yaml`. Every supported OpenShift profile supports this option.
 
-`discover` reads each operator's channel, catalog source, and source namespace
-from its OLM `PackageManifest`. The NVIDIA Network Operator channel is pinned to
+With operator management enabled, `discover` reads each operator's channel,
+catalog source, and source namespace from its OLM `PackageManifest`. The NVIDIA Network Operator channel is pinned to
 the release-specific channel named for `networkOperator.selectedRelease` (e.g.
 `v26.7`), so Automatic upgrades stay on that line instead of following a moving
-channel such as `stable`; discovery fails fast when no such channel exists, or
+channel such as `stable`. Discovery fails when no such channel exists, or
 when a package resolves ambiguously to more than one catalog. Without a prior
 `discover`, `generate` fills offline defaults: the Network Operator uses the
 release-specific channel for `selectedRelease`, the other operators use `stable`,
@@ -134,16 +149,23 @@ l8k discover --flavor ocp \
   --save-cluster-config ./discovered-cluster-config.yaml
 ```
 
-Review workers, PFs, rails, labels, profile, release, and namespaces in the discovered file. Set site-approved IP ranges, gateways, driver settings, and maintenance budget before generation; discovery cannot prove that a default range is unused elsewhere.
+Review workers, PFs, rails, labels, profile, release, namespaces, and `discoveredOCPOperators` in the discovered file. Set site-approved IP ranges, gateways, driver settings, and maintenance budget before generation; discovery cannot prove that a default range is unused elsewhere.
 
 ## 2. Generate and review
 
+When discovery reports unmet operator prerequisites, include `--manage-operators`
+to generate their installation resources.
+
 ```bash
-l8k generate --flavor ocp \
+l8k generate --flavor ocp --manage-operators \
   --user-config ./discovered-cluster-config.yaml \
   --fabric ethernet --deployment-type sriov \
   --save-deployment-files ./ocp-deployment
 ```
+
+If all required operators were ready at discovery and are managed externally,
+omit `--manage-operators` to generate only their configuration. Apply generated
+operator-install resources and wait for readiness before deploying the bundle.
 
 Compatible groups with the same GPU type and east-west rail count share a pool, network, drain pool, and validation DaemonSet across their exact worker union. Hardware policies follow the same render scope as Kubernetes: one per compatible bucket, or one per selected source group for a strict subset. A group with multiple workers does not produce one policy per hostname. Groups with different rail counts get distinct networks. SR-IOV CRs live in the Red Hat operator namespace; NV-IPAM pools live in the NVIDIA operator namespace. The `SriovNetwork` creates NADs in requested workload namespaces and requests `openshift.io/<resourceName>`. The drain pool carries `maintenance.maxUnavailable` to Red Hat's native drainer.
 

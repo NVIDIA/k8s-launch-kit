@@ -48,6 +48,12 @@ Platform adaptations SHALL preserve explicit supported user values and use durab
 - **WHEN** the selected platform requires an externally installed operator
 - **THEN** deployment honors that installation boundary and reports missing prerequisites rather than claiming it installed the operator.
 
+#### Scenario: OpenShift discovery before operator installation
+
+- **WHEN** required OpenShift operators are absent or not ready during hardware discovery
+- **THEN** discovery saves inventory with refreshed CSV identities, versions and prerequisite issues in `discoveredOCPOperators` and reports those issues. Permission, transport and ambiguous identity errors during readiness inspection remain failures.
+- **AND** generation rejects known unmet prerequisites for required operators unless effective operator management enables OLM install artifacts. Legacy or manual configurations without observations remain compatible with offline generation. Rediscovery refreshes the snapshot after external installation, and deployment checks current live readiness independently.
+
 #### Scenario: Remove OpenShift deployment configuration
 
 - **WHEN** clean targets an OpenShift cluster with its retained Host bundle

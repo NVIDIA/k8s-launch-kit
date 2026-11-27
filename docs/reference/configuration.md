@@ -34,9 +34,10 @@ Fresh discovery treats the selected reference file as a user layer except for
 its sample `profile`, which is discarded before hardware defaults are derived.
 Explicit non-profile values such as `docaDriver.enable: false` are preserved.
 
-Discovery with `--user-config` replaces `clusterConfig`, `discoveredSecondaryNetwork`,
-and `discoveredDocaHost`, and clears any previously generated `discoveredDocaHostScope`.
-It preserves every other loaded section, then applies explicit CLI flags. It does not fill
+Discovery with `--user-config` refreshes `clusterConfig`, `discoveredSecondaryNetwork`,
+`discoveredDocaHost`, and `discoveredOCPOperators`, and clears any previously generated
+`discoveredDocaHostScope`. On OpenShift it also refreshes observed OLM installation
+identities under `ocpOperatorInstall`. It then applies explicit CLI flags. It does not fill
 missing profile fields, recompute validation settings, or expand a release
 selected only in YAML, except that an enabled `nvaieRelease` also persists the
 matching catalog coordinates required by its release constraint.
@@ -231,6 +232,7 @@ deployment intent changes.
 | `discoveredDocaHost` | Discovery-time per-node host `doca-host` package status and complete version; used for driver defaults and DOCA release compatibility. |
 | `discoveredDocaHostScope` | Generated host-evidence membership (`workerNodes`, `membershipKnown`), preserved independently of render topology with host observations. Rediscovery clears it. |
 | `discoveredSecondaryNetwork` | Optional read-only API observations of Multus and reference CNI plugin installers; separate from desired policy. |
+| `discoveredOCPOperators` | OpenShift discovery snapshot of required operators, observed CSV names and versions, and prerequisite issues. Known unmet prerequisites block generation unless OLM install artifacts are enabled. Rediscovery refreshes it. Omitted observations preserve offline compatibility. |
 
 ## Secondary-network ownership
 
@@ -792,8 +794,8 @@ host-specific and are not part of the saved configuration.
 
 ## OpenShift flavor
 
-When `ocpOperatorInstall.manage` is enabled, discovery can reuse an existing
-Subscription or OperatorGroup. The optional `retainOnClean` field on entries in
+Discovery records existing Subscriptions and OperatorGroups so that generation can
+reuse them when operator management is enabled. The optional `retainOnClean` field on entries in
 `ocpOperatorInstall.operators` and `ocpOperatorInstall.operatorGroups` protects
 those installations during cleanup. Discovery sets it when it finds an existing
 external installation. The generated install manifest carries the retention
