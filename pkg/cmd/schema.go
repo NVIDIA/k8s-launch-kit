@@ -236,7 +236,7 @@ var schemaCmd = &cobra.Command{
 				"--manage-operators": {
 					Type:        "bool",
 					Default:     "false",
-					Description: "Also generate the OpenShift OLM install artifacts (Namespace, OperatorGroup, Subscription) for the operators l8k configures. Opt-in; default off emits only operator configuration CRs.",
+					Description: "Also generate OpenShift OLM install artifacts (Namespace, OperatorGroup, Subscription). Allows generation with recorded unmet operator prerequisites. Otherwise install prerequisites externally and rerun discovery.",
 				},
 				"--dry-run": {
 					Type:        "bool",

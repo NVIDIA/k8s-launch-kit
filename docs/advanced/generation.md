@@ -6,6 +6,11 @@ SPDX-License-Identifier: Apache-2.0
 # Manifest Generation
 
 `l8k generate` resolves a profile against `cluster-config.yaml` and renders a reviewable deployment bundle. Generation does not require cluster access unless `--deploy` is also set.
+On OpenShift, saved `discoveredOCPOperators` issues for required operators stop
+generation unless `--manage-operators` or `ocpOperatorInstall.manage: true` enables
+OLM install artifacts. Rerun discovery after an external installation to refresh
+those observations. Configurations without this observation remain compatible
+with offline generation. See [OpenShift prerequisites](../user/openshift.md#generate-operator-install-artifacts-optional).
 
 ```bash
 l8k generate \

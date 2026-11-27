@@ -26,6 +26,13 @@ bundled snapshot, supported release and qualification limits.
 - At least one Ready, schedulable node with a discoverable NVIDIA or Mellanox NIC. BlueFields in zero-trust (`restricted`) mode do not count because NIC Configuration Operator does not publish `NicDevice` resources for them.
 - Image pull access on eligible nodes to the configured NIC Configuration Daemon image.
 
+Pre-installed networking operators are not required. On OpenShift, discovery
+records missing or not-ready operator prerequisites in `discoveredOCPOperators`
+and warns while saving hardware inventory. Permission, transport, or ambiguous
+operator identity errors during readiness inspection still stop discovery. See
+[OpenShift operator prerequisites](openshift.md#generate-operator-install-artifacts-optional)
+for the generation gate and installation choices.
+
 For a private registry, forward one or more pull secrets:
 
 ```bash
@@ -94,7 +101,7 @@ If a worker is missing, check its readiness, image pull, discovery pod,
 4. Runs a temporary NIC Configuration Daemon on the eligible nodes.
 5. Detects nodes with NVIDIA NICs through a PCI vendor `0x15b3` sysfs probe and excludes BlueFields whose host trust level is `restricted`.
 6. Reads the published `NicDevice` resources and probes GPU, NIC, fabric, NUMA, and rail data. It does not walk kernel-module holder graphs.
-7. Groups nodes, writes Launch Kit node labels, and saves the result. Fresh discovery resolves profile settings; with `--user-config`, `clusterConfig`, `discoveredSecondaryNetwork`, and `discoveredDocaHost` are replaced.
+7. Groups nodes, writes Launch Kit node labels, and saves the result. Fresh discovery resolves profile settings. With `--user-config`, it refreshes inventory and observations as described under [Saved Configuration](#saved-configuration).
 8. Deletes the temporary namespace and cluster-scoped bootstrap RBAC. The CRDs remain installed.
 
 The bootstrap namespace is fixed. `--network-operator-namespace` is accepted for compatibility but ignored by discovery.
@@ -259,9 +266,11 @@ l8k discover \
 
 On a fresh run without `--user-config`, the example profile in the installed
 reference configuration is ignored. With `--user-config`, discovery replaces
-`clusterConfig`, `discoveredSecondaryNetwork`, and `discoveredDocaHost`, and clears
-any previously generated `discoveredDocaHostScope`. It preserves every other loaded section and value,
-including explicit `false` values, and then applies explicit CLI overrides.
+`clusterConfig`, `discoveredSecondaryNetwork`, `discoveredDocaHost`, and
+`discoveredOCPOperators`, and clears any previously generated `discoveredDocaHostScope`.
+On OpenShift it also refreshes observed external Subscription and OperatorGroup
+names and cleanup retention in `ocpOperatorInstall`. Other settings, including
+explicit `false` values, are preserved before explicit CLI overrides apply.
 An enabled `nvaieRelease` also persists its matching Network Operator catalog
 coordinates.
 Missing profile values are not filled during this refresh; supply them in the
@@ -469,9 +478,11 @@ Debug logs include node eligibility, sysfs NIC and BlueField trust probing, mach
 ## Saved Configuration
 
 If `--save-cluster-config` is omitted, discovery rewrites the `--user-config`
-file or creates `cluster-config.yaml` in the current directory. For a user
-config refresh, only `clusterConfig`, `discoveredSecondaryNetwork`, `discoveredDocaHost`,
-previously generated `discoveredDocaHostScope`, and explicit CLI overrides change. Source
+file or creates `cluster-config.yaml` in the current directory. A user
+config refresh updates `clusterConfig`, `discoveredSecondaryNetwork`,
+`discoveredDocaHost`, `discoveredOCPOperators`, and OpenShift installation
+identities and cleanup retention in `ocpOperatorInstall`. It clears previously
+generated `discoveredDocaHostScope` and applies explicit CLI overrides. Source
 comments are retained where possible, and a generated-file banner identifies
 the discovery output.
 

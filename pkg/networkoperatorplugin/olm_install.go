@@ -40,6 +40,7 @@ func fallbackOLMSource(packageName string) string {
 // effectiveOperatorSubscriptions derives the operator set and namespaces from cfg
 // (authoritative) and carries catalog coordinates and install-plan approval over
 // from any saved descriptor of the same package, leaving unset fields empty.
+// Saved identities apply only within the same or an unspecified namespace.
 func effectiveOperatorSubscriptions(cfg *config.LaunchKitConfig) []config.OCPOperatorSubscription {
 	saved := map[string]config.OCPOperatorSubscription{}
 	if cfg.OCPOperatorInstall != nil {
@@ -52,12 +53,14 @@ func effectiveOperatorSubscriptions(cfg *config.LaunchKitConfig) []config.OCPOpe
 	for _, op := range required {
 		sub := config.OCPOperatorSubscription{Package: op.packageName, Namespace: op.namespace}
 		if prev, ok := saved[op.packageName]; ok {
-			sub.Name = prev.Name
+			if prev.Namespace == "" || prev.Namespace == op.namespace {
+				sub.Name = prev.Name
+				sub.RetainOnClean = prev.RetainOnClean
+			}
 			sub.Channel = prev.Channel
 			sub.Source = prev.Source
 			sub.SourceNamespace = prev.SourceNamespace
 			sub.InstallPlanApproval = prev.InstallPlanApproval
-			sub.RetainOnClean = prev.RetainOnClean
 		}
 		subs = append(subs, sub)
 	}
@@ -201,27 +204,47 @@ var packageManifestListGVK = schema.GroupVersionKind{
 // result in cfg.OCPOperatorInstall. A package with no manifest keeps the offline
 // fallback and warns.
 func DiscoverOCPOperatorInstall(ctx context.Context, c client.Client, cfg *config.LaunchKitConfig, out ui.Output) error {
+	return discoverOCPOperatorInstall(ctx, c, cfg, out, true)
+}
+
+// DiscoverOCPOperatorInstallIdentities saves existing OLM identities without
+// opting into management or reading PackageManifests. A later managed generation
+// can then reuse external installations without claiming them for cleanup.
+// Only existing or configured descriptors are saved; generation supplies defaults.
+// Callers retain inspection errors: an unverified identity must not be replaced
+// by an offline default when generating installation artifacts.
+func DiscoverOCPOperatorInstallIdentities(ctx context.Context, c client.Client, cfg *config.LaunchKitConfig) error {
+	return discoverOCPOperatorInstall(ctx, c, cfg, nil, false)
+}
+
+func discoverOCPOperatorInstall(ctx context.Context, c client.Client, cfg *config.LaunchKitConfig, out ui.Output, withCatalog bool) error {
 	if cfg == nil || cfg.Flavor != config.FlavorOCP {
 		return nil
 	}
+	if ctx == nil || c == nil {
+		return fmt.Errorf("OpenShift operator install discovery requires a context and Kubernetes client")
+	}
 	operators := effectiveOperatorSubscriptions(cfg)
 
-	list := &unstructured.UnstructuredList{}
-	list.SetGroupVersionKind(packageManifestListGVK)
-	if err := c.List(ctx, list); err != nil {
-		return fmt.Errorf("list OLM PackageManifests: %w", err)
-	}
-
-	byPackage := make(map[string][]*unstructured.Unstructured, len(list.Items))
-	for i := range list.Items {
-		item := &list.Items[i]
-		name, _, _ := unstructured.NestedString(item.Object, "status", "packageName")
-		if name == "" {
-			name = item.GetName()
+	var byPackage map[string][]*unstructured.Unstructured
+	if withCatalog {
+		list := &unstructured.UnstructuredList{}
+		list.SetGroupVersionKind(packageManifestListGVK)
+		if err := c.List(ctx, list); err != nil {
+			return fmt.Errorf("list OLM PackageManifests: %w", err)
 		}
-		byPackage[name] = append(byPackage[name], item)
+		byPackage = make(map[string][]*unstructured.Unstructured, len(list.Items))
+		for i := range list.Items {
+			item := &list.Items[i]
+			name, _, _ := unstructured.NestedString(item.Object, "status", "packageName")
+			if name == "" {
+				name = item.GetName()
+			}
+			byPackage[name] = append(byPackage[name], item)
+		}
 	}
 
+	var observedOperators []config.OCPOperatorSubscription
 	for i := range operators {
 		op := &operators[i]
 		// Always read the live Subscription name so a saved name does not go stale
@@ -235,6 +258,38 @@ func DiscoverOCPOperatorInstall(ctx context.Context, c client.Client, cfg *confi
 		if sub != nil {
 			op.Name = sub.GetName()
 			op.RetainOnClean = op.RetainOnClean || retainDiscoveredOCPInstall(sub)
+			if !withCatalog {
+				// Without catalog enrichment, preserve the existing installation's
+				// coordinates rather than redirect it to offline fallback sources.
+				if op.Channel == "" {
+					op.Channel, _, _ = unstructured.NestedString(sub.Object, "spec", "channel")
+				}
+				if op.Source == "" {
+					op.Source, _, _ = unstructured.NestedString(sub.Object, "spec", "source")
+				}
+				if op.SourceNamespace == "" {
+					op.SourceNamespace, _, _ = unstructured.NestedString(sub.Object, "spec", "sourceNamespace")
+				}
+				if op.InstallPlanApproval == "" {
+					op.InstallPlanApproval, _, _ = unstructured.NestedString(sub.Object, "spec", "installPlanApproval")
+				}
+			}
+		} else {
+			// Clear stale retention after removal, but preserve an observed
+			// CSV-only install that OLM could adopt through a new Subscription.
+			op.RetainOnClean = false
+			for _, observed := range cfg.DiscoveredOCPOperators {
+				if observed.Package == op.Package && observed.Namespace == op.Namespace && observed.CSV != "" {
+					op.RetainOnClean = true
+					break
+				}
+			}
+		}
+		if !withCatalog {
+			if op.Name != "" || op.Channel != "" || op.Source != "" || op.SourceNamespace != "" || op.InstallPlanApproval != "" || op.RetainOnClean {
+				observedOperators = append(observedOperators, *op)
+			}
+			continue
 		}
 		manifests, ok := byPackage[op.Package]
 		if !ok {
@@ -274,9 +329,14 @@ func DiscoverOCPOperatorInstall(ctx context.Context, c client.Client, cfg *confi
 		}
 	}
 
-	fillOperatorDefaults(operators)
+	if withCatalog {
+		fillOperatorDefaults(operators)
+	} else {
+		operators = observedOperators
+	}
 
 	groups := effectiveOperatorGroups(cfg)
+	var observedGroups []config.OCPOperatorGroup
 	for i := range groups {
 		g := &groups[i]
 		// Always read the live namespace: a saved name goes stale if the group is
@@ -293,12 +353,22 @@ func DiscoverOCPOperatorInstall(ctx context.Context, c client.Client, cfg *confi
 				targets = []string{}
 			}
 			g.TargetNamespaces = targets
+		} else {
+			g.RetainOnClean = false
+		}
+		if !withCatalog && (g.Name != "" || g.TargetNamespaces != nil) {
+			observedGroups = append(observedGroups, *g)
 		}
 	}
-	fillOperatorGroupDefaults(groups)
+	if withCatalog {
+		fillOperatorGroupDefaults(groups)
+	} else {
+		groups = observedGroups
+	}
 
+	manage := withCatalog || cfg.OCPOperatorInstall != nil && cfg.OCPOperatorInstall.Manage
 	cfg.OCPOperatorInstall = &config.OCPOperatorInstallConfig{
-		Manage:         true,
+		Manage:         manage,
 		Operators:      operators,
 		OperatorGroups: groups,
 	}

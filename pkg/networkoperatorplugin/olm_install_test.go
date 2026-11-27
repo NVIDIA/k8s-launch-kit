@@ -651,3 +651,242 @@ func TestDiscoverOCPOperatorInstallPreservesCleanupOwnership(t *testing.T) {
 		})
 	}
 }
+
+func TestDiscoverOCPOperatorInstallIdentitiesWithoutCatalog(t *testing.T) {
+	cfg := ocpInstallTestConfig(t)
+	ns := config.DefaultNFDOperatorNamespace
+	sub := ocpTestObject("operators.coreos.com/v1alpha1", "Subscription", ns, "site-nfd", map[string]interface{}{
+		"spec": map[string]interface{}{
+			"name": "nfd", "channel": "site-stable", "source": "site-catalog",
+			"sourceNamespace": "site-marketplace", "installPlanApproval": "Manual",
+		},
+	})
+	group := ocpTestObject("operators.coreos.com/v1", "OperatorGroup", ns, "site-group", map[string]interface{}{
+		"spec": map[string]interface{}{"targetNamespaces": []interface{}{}},
+	})
+	c := fake.NewClientBuilder().WithObjects(sub, group).WithInterceptorFuncs(interceptor.Funcs{
+		List: func(ctx context.Context, cl client.WithWatch, list client.ObjectList, opts ...client.ListOption) error {
+			if list.GetObjectKind().GroupVersionKind().Kind == "PackageManifestList" {
+				return errors.New("catalog access is unavailable")
+			}
+			return cl.List(ctx, list, opts...)
+		},
+	}).Build()
+
+	require.NoError(t, DiscoverOCPOperatorInstallIdentities(context.Background(), c, cfg))
+	require.NotNil(t, cfg.OCPOperatorInstall)
+	assert.False(t, cfg.OCPOperatorInstall.Manage, "observing identities does not opt into installation")
+	op := operatorSub(t, cfg, "nfd")
+	assert.Equal(t, "site-nfd", op.Name)
+	assert.Equal(t, "site-stable", op.Channel)
+	assert.Equal(t, "site-catalog", op.Source)
+	assert.Equal(t, "site-marketplace", op.SourceNamespace)
+	assert.Equal(t, "Manual", op.InstallPlanApproval)
+	assert.True(t, op.RetainOnClean)
+	og := operatorGroup(t, cfg, ns)
+	assert.Equal(t, "site-group", og.Name)
+	assert.Empty(t, og.TargetNamespaces)
+	require.NotNil(t, og.TargetNamespaces, "an existing global group must stay global")
+	assert.True(t, og.RetainOnClean)
+	for _, absent := range cfg.OCPOperatorInstall.Operators {
+		assert.NotEqual(t, olmNetworkOperatorPkg, absent.Package, "absent operators need no offline install descriptor yet")
+	}
+
+	// Delayed --manage-operators uses the saved identities and retention without
+	// a catalog or live operator query during generation.
+	cfg.OCPOperatorInstall.Manage = true
+	rendered, err := (&NetworkOperatorPlugin{}).GenerateProfileDeploymentFiles(loadProfileFromDir(t, "sriov-ethernet-rdma-ocp"), cfg)
+	require.NoError(t, err)
+	for _, filename := range []string{"00-subscriptions.yaml", "00-operatorgroups.yaml"} {
+		_, content := fileMatching(t, rendered, filename)
+		found := false
+		for _, doc := range parseDocs(t, filename, content) {
+			obj := &unstructured.Unstructured{Object: doc}
+			if obj.GetNamespace() != ns {
+				continue
+			}
+			found = true
+			assert.Equal(t, "true", obj.GetAnnotations()[ocpCleanRetainAnnotation])
+			if obj.GetKind() == "Subscription" {
+				assert.Equal(t, "site-nfd", obj.GetName())
+				assert.Equal(t, "site-catalog", specString(t, doc, "source"))
+			} else {
+				assert.Equal(t, "site-group", obj.GetName())
+				targets, _, err := unstructured.NestedStringSlice(obj.Object, "spec", "targetNamespaces")
+				require.NoError(t, err)
+				assert.Empty(t, targets)
+			}
+		}
+		assert.True(t, found)
+	}
+}
+
+func TestDiscoverOCPOperatorInstallIdentitiesPreservesManagedOwnership(t *testing.T) {
+	cfg := ocpInstallTestConfig(t)
+	cfg.OCPOperatorInstall = &config.OCPOperatorInstallConfig{Manage: true}
+	sub := ocpTestObject("operators.coreos.com/v1alpha1", "Subscription", cfg.NetworkOperator.Namespace, olmNetworkOperatorPkg,
+		map[string]interface{}{"spec": map[string]interface{}{"name": olmNetworkOperatorPkg}})
+	sub.SetAnnotations(map[string]string{launchKitVersionAnnotation: "existing-version"})
+	c := fake.NewClientBuilder().WithObjects(sub).Build()
+	require.NoError(t, DiscoverOCPOperatorInstallIdentities(context.Background(), c, cfg))
+	assert.True(t, cfg.OCPOperatorInstall.Manage)
+	assert.False(t, operatorSub(t, cfg, olmNetworkOperatorPkg).RetainOnClean)
+}
+
+func TestDiscoverOCPOperatorInstallIdentitiesDoesNotSavePartialResult(t *testing.T) {
+	cfg := ocpInstallTestConfig(t)
+	group := ocpTestObject("operators.coreos.com/v1", "OperatorGroup", cfg.NetworkOperator.Namespace, "site-group", map[string]interface{}{
+		"spec": map[string]interface{}{"selector": map[string]interface{}{"matchLabels": map[string]interface{}{"team": "network"}}},
+	})
+	c := fake.NewClientBuilder().WithObjects(group).Build()
+	err := DiscoverOCPOperatorInstallIdentities(context.Background(), c, cfg)
+	require.ErrorContains(t, err, "selector-based")
+	assert.Nil(t, cfg.OCPOperatorInstall, "an unverified descriptor set must not be published")
+}
+
+func TestDiscoverOCPOperatorInstallIdentitiesRequiresClient(t *testing.T) {
+	cfg := ocpInstallTestConfig(t)
+	require.ErrorContains(t, DiscoverOCPOperatorInstallIdentities(context.Background(), nil, cfg), "requires a context and Kubernetes client")
+	assert.Nil(t, cfg.OCPOperatorInstall)
+}
+
+func TestOCPOperatorInstallSavedIdentityScope(t *testing.T) {
+	for _, namespace := range []string{"old-namespace", "", "network-operator"} {
+		t.Run(namespace, func(t *testing.T) {
+			cfg := ocpInstallTestConfig(t)
+			cfg.OCPOperatorInstall = &config.OCPOperatorInstallConfig{Operators: []config.OCPOperatorSubscription{{
+				Package: olmNetworkOperatorPkg, Namespace: namespace, Name: "saved-subscription", RetainOnClean: true,
+				Channel: "v26.7", Source: "saved-catalog", SourceNamespace: "saved-marketplace", InstallPlanApproval: "Manual",
+			}}}
+			op := DefaultOCPOperatorSubscriptions(cfg)[0]
+			assert.Equal(t, cfg.NetworkOperator.Namespace, op.Namespace)
+			assert.Equal(t, "saved-catalog", op.Source)
+			assert.Equal(t, "saved-marketplace", op.SourceNamespace)
+			assert.Equal(t, "Manual", op.InstallPlanApproval)
+			if namespace == "old-namespace" {
+				assert.Equal(t, olmNetworkOperatorPkg, op.Name)
+				assert.False(t, op.RetainOnClean)
+			} else {
+				assert.Equal(t, "saved-subscription", op.Name)
+				assert.True(t, op.RetainOnClean, "offline explicit retention remains meaningful in its configured scope")
+			}
+		})
+	}
+}
+
+func TestDiscoverOCPOperatorInstallIdentitiesPreservesConfiguredCoordinates(t *testing.T) {
+	cfg := ocpInstallTestConfig(t)
+	cfg.OCPOperatorInstall = &config.OCPOperatorInstallConfig{Operators: []config.OCPOperatorSubscription{{
+		Package: "nfd", Channel: "configured-channel", Source: "configured-catalog", SourceNamespace: "configured-marketplace", InstallPlanApproval: "Manual",
+	}}}
+	sub := ocpTestObject("operators.coreos.com/v1alpha1", "Subscription", config.DefaultNFDOperatorNamespace, "site-nfd", map[string]interface{}{
+		"spec": map[string]interface{}{"name": "nfd", "channel": "live-channel", "source": "live-catalog", "installPlanApproval": "Automatic"},
+	})
+	c := fake.NewClientBuilder().WithObjects(sub).Build()
+	require.NoError(t, DiscoverOCPOperatorInstallIdentities(context.Background(), c, cfg))
+	op := operatorSub(t, cfg, "nfd")
+	assert.Equal(t, "configured-channel", op.Channel)
+	assert.Equal(t, "configured-catalog", op.Source)
+	assert.Equal(t, "configured-marketplace", op.SourceNamespace)
+	assert.Equal(t, "Manual", op.InstallPlanApproval)
+}
+
+func TestDiscoverOCPOperatorInstallIdentitiesReleasesRemovedExternalInstallation(t *testing.T) {
+	cfg := ocpInstallTestConfig(t)
+	ns := cfg.NetworkOperator.Namespace
+	sub := ocpTestObject("operators.coreos.com/v1alpha1", "Subscription", ns, "site-subscription", map[string]interface{}{"spec": map[string]interface{}{"name": olmNetworkOperatorPkg}})
+	group := ocpTestObject("operators.coreos.com/v1", "OperatorGroup", ns, "site-group", map[string]interface{}{"spec": map[string]interface{}{"targetNamespaces": []interface{}{ns}}})
+	c := fake.NewClientBuilder().WithObjects(sub, group).Build()
+	require.NoError(t, DiscoverOCPOperatorInstallIdentities(context.Background(), c, cfg))
+	assert.True(t, operatorSub(t, cfg, olmNetworkOperatorPkg).RetainOnClean)
+	assert.True(t, operatorGroup(t, cfg, ns).RetainOnClean)
+	require.NoError(t, c.Delete(context.Background(), sub))
+	require.NoError(t, c.Delete(context.Background(), group))
+	require.NoError(t, DiscoverOCPOperatorInstallIdentities(context.Background(), c, cfg))
+	assert.False(t, operatorSub(t, cfg, olmNetworkOperatorPkg).RetainOnClean)
+	assert.False(t, operatorGroup(t, cfg, ns).RetainOnClean)
+	assert.Equal(t, "site-subscription", operatorSub(t, cfg, olmNetworkOperatorPkg).Name, "retain a deliberate name in the same namespace")
+	assert.False(t, cfg.OCPOperatorInstall.Manage)
+}
+
+func TestDiscoverOCPOperatorInstallIdentitiesDefersMissingOperatorDefaults(t *testing.T) {
+	cfg := ocpInstallTestConfig(t)
+	c := fake.NewClientBuilder().Build()
+	require.NoError(t, DiscoverOCPOperatorInstallIdentities(context.Background(), c, cfg))
+	require.NotNil(t, cfg.OCPOperatorInstall)
+	require.Empty(t, cfg.OCPOperatorInstall.Operators)
+	require.Empty(t, cfg.OCPOperatorInstall.OperatorGroups)
+	sub := ocpTestObject("operators.coreos.com/v1alpha1", "Subscription", config.DefaultNFDOperatorNamespace, "site-nfd", map[string]interface{}{
+		"spec": map[string]interface{}{"name": "nfd", "channel": "site-stable", "source": "site-catalog", "sourceNamespace": "site-marketplace", "installPlanApproval": "Manual"},
+	})
+	require.NoError(t, c.Create(context.Background(), sub))
+	require.NoError(t, DiscoverOCPOperatorInstallIdentities(context.Background(), c, cfg))
+	cfg.OCPOperatorInstall.Manage = true
+	rendered, err := (&NetworkOperatorPlugin{}).GenerateProfileDeploymentFiles(loadProfileFromDir(t, "sriov-ethernet-rdma-ocp"), cfg)
+	require.NoError(t, err)
+	_, content := fileMatching(t, rendered, "00-subscriptions.yaml")
+	found := false
+	for _, doc := range parseDocs(t, "00-subscriptions.yaml", content) {
+		if specString(t, doc, "name") != "nfd" {
+			continue
+		}
+		found = true
+		assert.Equal(t, "site-nfd", metaString(t, doc, "name"))
+		assert.Equal(t, "site-stable", specString(t, doc, "channel"))
+		assert.Equal(t, "site-catalog", specString(t, doc, "source"))
+		assert.Equal(t, "site-marketplace", specString(t, doc, "sourceNamespace"))
+		assert.Equal(t, "Manual", specString(t, doc, "installPlanApproval"))
+	}
+	assert.True(t, found, "managed generation must include the observed NFD installation")
+}
+
+func TestDiscoverOCPOperatorInstallRetainsCSVOnlyInstallation(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		managed bool
+	}{{name: "delayed management", managed: false}, {name: "managed discovery", managed: true}} {
+		t.Run(tc.name, func(t *testing.T) {
+			ctx := context.Background()
+			cfg := ocpInstallTestConfig(t)
+			op := requiredOCPOperators(cfg, true)[0]
+			objects := readyOCPOperatorObjects(op, "26.7.0")
+			csv := objects[1].(*unstructured.Unstructured)
+			c := fake.NewClientBuilder().WithObjects(objects[1:]...).Build()
+			var err error
+			cfg.DiscoveredOCPOperators, err = DiscoverOCPOperators(ctx, c, cfg)
+			require.NoError(t, err)
+			if tc.managed {
+				require.NoError(t, DiscoverOCPOperatorInstall(ctx, c, cfg, nil))
+			} else {
+				require.NoError(t, DiscoverOCPOperatorInstallIdentities(ctx, c, cfg))
+				assert.False(t, cfg.OCPOperatorInstall.Manage)
+				assert.Empty(t, operatorSub(t, cfg, op.packageName).Name, "a retained bare descriptor must survive filtering")
+				cfg.OCPOperatorInstall.Manage = true
+			}
+			require.True(t, operatorSub(t, cfg, op.packageName).RetainOnClean)
+			rendered, err := (&NetworkOperatorPlugin{LaunchKitVersion: "test-version"}).GenerateProfileDeploymentFiles(loadProfileFromDir(t, "sriov-ethernet-rdma-ocp"), cfg)
+			require.NoError(t, err)
+			_, content := fileMatching(t, rendered, "00-subscriptions.yaml")
+			found := false
+			for _, doc := range parseDocs(t, "00-subscriptions.yaml", content) {
+				if specString(t, doc, "name") != op.packageName {
+					continue
+				}
+				found = true
+				sub := &unstructured.Unstructured{Object: doc}
+				require.Equal(t, "true", sub.GetAnnotations()[ocpCleanRetainAnnotation])
+				data, err := yaml.Marshal(doc)
+				require.NoError(t, err)
+				artifacts, err := bundle.FromFiles([]bundle.File{{Name: "00-subscriptions.yaml", Content: string(data)}})
+				require.NoError(t, err)
+				require.NoError(t, unstructured.SetNestedField(sub.Object, csv.GetName(), "status", "installedCSV"))
+				require.NoError(t, c.Create(ctx, sub))
+				plan, err := prepareOCPCleanOperators(ctx, c, cfg, artifacts, "test-owner")
+				require.NoError(t, err)
+				assert.False(t, plan.removesSubscription(sub))
+				assert.Empty(t, plan.operators, "the retained Subscription must not authorize uninstalling its adopted CSV")
+			}
+			require.True(t, found)
+		})
+	}
+}

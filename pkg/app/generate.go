@@ -21,6 +21,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"github.com/nvidia/k8s-launch-kit/pkg/bundle"
 	"github.com/nvidia/k8s-launch-kit/pkg/config"
@@ -134,6 +135,18 @@ func (l *Launcher) executeGeneration(configPath string) error {
 	fullConfig, err = l.resolveProfileInput(resolvedInput)
 	if err != nil {
 		return err
+	}
+	if fullConfig.Flavor == config.FlavorOCP && fullConfig.OCPOperatorInstall != nil && fullConfig.OCPOperatorInstall.Manage {
+		if issue := fullConfig.OCPOperatorInstall.DiscoveryError; issue != "" {
+			return apperrors.NewValidationError("could not prepare OpenShift operator installation manifests: "+issue, nil,
+				"Resolve the OLM issue and rerun discover --manage-operators before generating installation manifests.")
+		}
+	} else {
+		if issues := networkoperatorplugin.MissingOCPOperatorPrerequisites(fullConfig); len(issues) > 0 {
+			return apperrors.NewValidationError(
+				"discovery reported unmet OpenShift operator prerequisites: "+strings.Join(issues, "; "), nil,
+				"Run generate with --manage-operators to include OLM installation manifests, or install the prerequisites and rerun discover.")
+		}
 	}
 	for _, issue := range releases.DOCAHostIssues(fullConfig) {
 		l.ui.Warning("%s", issue)
